@@ -70,6 +70,7 @@ For the current modules:
 | Slang research | retired | retired | 黑话资产并入观测页 |
 | Incident handling | `incidentPilot.enabled` | `incidentPilot.graduated` | `incidents` / 异常处理 |
 | Long-term semantic memory | `livingMemory.enabled` | `livingMemory.graduated` | `living-memory` / 长期记忆 |
+| Personality growth memory | `personalityMemory.enabled` | `personalityMemory.graduated` | `personality-memory` / 人格成长 |
 | Group games | `groupGame.enabled`（默认关） | —（无固化开关） | `settings` / 设置页的「实验功能」开关与「群游戏」分区 |
 
 ## 4. API And Persistence

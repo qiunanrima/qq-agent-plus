@@ -283,6 +283,7 @@ state.personaParseCache = { text: null, card: null };
 
 /** 卡库里的一张卡：草稿中的那张会高亮，真正生效且绑着卡文件的那张挂「使用中」。 */
 /** 卡库简介（取自「你是谁」第一段）按卡正文缓存 —— 卡库每次重画都要用 5 次。 */
+state.personalityMemory = { loading: false, data: null, scope: '' };
 const personaDescCache = new Map();
 
 export {

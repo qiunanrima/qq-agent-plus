@@ -17,6 +17,7 @@ import { normalizeTokenSaverMode } from './token-saver.js';   // 零依赖模块
 import { normalizeMomentWindows } from '../features/moment-schedule.js';
 import { PLATFORM_GATE_KEYS, PRIVATE_FILE_DEFAULT_MAX_KIB, privateFileMaxKiB } from './platform-gates.js';
 import { LIVING_MEMORY_DEFAULTS, normalizeLivingMemoryConfig } from '../living-memory/config.js';
+import { PERSONALITY_MEMORY_DEFAULTS, normalizePersonalityMemoryConfig } from '../personality-memory/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 控制台把 updateConfig 的校验失败映射成 400：用显式标记，不靠匹配错误文案
@@ -902,6 +903,7 @@ export const DEFAULT_CONFIG = {
   },
   // 长期语义记忆：独立服务 + 向量库，默认关闭且先走 shadow，不改变既有 MemoryStore 行为。
   livingMemory: structuredClone(LIVING_MEMORY_DEFAULTS),
+  personalityMemory: structuredClone(PERSONALITY_MEMORY_DEFAULTS),
   // 技能包（Skill Pack）：只读 Markdown 流程 + 工具白名单，不执行第三方代码。
   // enabled=false 时不注册 skill_list / skill_use，也不读技能目录。
   skills: {
@@ -2162,6 +2164,7 @@ export function updateConfig(patch, { force = false } = {}) {
   next.tokenSaver = { ...(next.tokenSaver || {}), mode: normalizeTokenSaverMode(next.tokenSaver?.mode) };
   next.timeControl = normalizeTimeControl(next.timeControl);
   next.livingMemory = normalizeLivingMemoryConfig(next.livingMemory);
+  next.personalityMemory = normalizePersonalityMemoryConfig(next.personalityMemory);
   next.dailyMoments.scheduleWindows = normalizeMomentWindows(next.dailyMoments.scheduleWindows);
   if (!['observe', 'active'].includes(next.runtime?.mode)) throw invalidConfig('Invalid runtime mode');
   if (!['legacy', 'threaded', 'lifecycle'].includes(next.conversation?.mode)) {

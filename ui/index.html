@@ -142,6 +142,7 @@
         <button class="tab" data-icon="database" data-tab="memory" data-group-start data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ"><span class="tab-label"><b>会话记忆</b><i>每条会话记了什么</i></span></button>
         <button class="tab" data-icon="users" data-tab="people-memory" data-page-node-id="qpeoplememorynav"><span class="tab-label"><b>人物记忆</b><i>群友的长期画像</i></span></button>
         <button class="tab hidden" data-icon="brain" data-tab="living-memory" data-feature-nav="living-memory"><span class="tab-label"><b>长期记忆</b><i>语义检索与知识图谱</i></span></button>
+        <button class="tab hidden" data-icon="brain" data-tab="personality-memory" data-feature-nav="personality-memory"><span class="tab-label"><b>人格成长</b><i>偏好、经历与关系</i></span></button>
         <button class="tab" data-icon="idcard" data-tab="identity" data-feature-nav="identity"><span class="tab-label"><b>人物印象</b><i>印象与关系档案</i></span></button>
         <button class="tab" data-icon="userplus" data-tab="friends" data-feature-nav="auto-friend"><span class="tab-label"><b>好友管理</b><i>好友申请与派发</i></span></button>
         <button class="tab" data-icon="activity" data-tab="assets" data-group-start data-page-node-id="qassetobserve"><span class="tab-label"><b>观测</b><i>素材与实验状态</i></span></button>
@@ -314,6 +315,9 @@
     <section id="view-living-memory" class="view">
       <div id="living-memory-page" class="living-memory-page"></div>
     </section>
+    <section id="view-personality-memory" class="view">
+      <div id="personality-memory-page"></div>
+    </section>
 
     <!-- 正式功能：固定随服务启动，不再由实验功能开关控制 -->
     <section id="view-identity" class="view">
@@ -452,6 +456,7 @@
   <script type="module" src="/pages/chat.js"></script>
   <script type="module" src="/pages/memory.js"></script>
   <script type="module" src="/pages/living-memory.js"></script>
+  <script type="module" src="/pages/personality-memory.js"></script>
     <script type="module" src="/pages/plugin-settings.js"></script>
   <script type="module" src="/pages/plugin-pending.js"></script>
     <script type="module" src="/pages/plugin-pagination.js"></script>

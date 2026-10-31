@@ -15,6 +15,7 @@ import { $, $$, esc } from '../core/dom.js';
 import { chatNameOf, fmtTime, formatChatTitle } from '../core/format.js';
 import { state } from '../core/state.js';
 import { saveConfig } from './settings-save.js';
+import { renderPersonalityMemoryExperiment } from './personality-memory.js';
 function renderExperimentalSettingsSectionImpl(c) {
   const enabled = c.identityPilot?.enabled === true;
   const incident = c.incidentPilot || {};
@@ -83,6 +84,7 @@ function renderExperimentalSettingsSectionImpl(c) {
           </div>
         </div>
       </div>
+      ${renderPersonalityMemoryExperiment(c)}
       <div class="hint">群游戏（数字炸弹 / 谁是卧底 / 狼人杀）的详细设置与「正在进行的局」在 <b>设置 → 群游戏</b>；
         这里只控制它是否运行（生命周期）。默认关、白名单制、每群同时一局。</div>
       <div class="hint" id="experiment-launch-result"></div>

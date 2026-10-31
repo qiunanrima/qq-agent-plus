@@ -35,7 +35,8 @@ function graduatedFeatureState(c = state.config || {}) {
     // 不随 friendProposal 的退役隐藏——只隐藏会把入站审批一起藏掉。
     slang: c.slangPilot?.graduated === true,
     incidents: c.incidentPilot?.graduated === true,
-    'living-memory': c.livingMemory?.graduated === true
+    'living-memory': c.livingMemory?.graduated === true,
+    'personality-memory': c.personalityMemory?.graduated === true
   };
 }
 

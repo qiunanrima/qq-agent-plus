@@ -500,6 +500,7 @@ export class Orchestrator {
     store,
     memory,
     livingMemory = null,
+    personalityMemory = null,
     stickers,
     sender,
     sessions,
@@ -517,6 +518,7 @@ export class Orchestrator {
     this.store = store;
     this.memory = memory;
     this.livingMemory = livingMemory;
+    this.personalityMemory = personalityMemory;
     this.stickers = stickers;
     this.sender = sender;
     this.sessions = sessions;
@@ -2220,6 +2222,7 @@ export class Orchestrator {
     const pluginToolDefs = this.getPlugins?.()?.toolDefsFor?.() ?? [];
     const mcpToolDefs = this.getMcp?.()?.toolDefsFor?.() ?? [];
     const builtinToolDefs = toolDefs;   // 前缀哈希用它（见下），插件/MCP 工具只按名字参与
+    toolDefs.push(...(this.personalityMemory?.toolDefs({ chatKey, persona }) || []));
     if (pluginToolDefs.length) toolDefs.push(...pluginToolDefs);
     if (mcpToolDefs.length) toolDefs.push(...mcpToolDefs);
     const openAiTools = toOpenAiTools(toolDefs);
@@ -2249,9 +2252,15 @@ export class Orchestrator {
       log.warn(`[living-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error);
     }
     const triggerText = (triggerEntries || []).map((entry) => String(entry?.text || '')).join('\n');
+    let personalityRecall = '';
+    try {
+      personalityRecall = this.personalityMemory?.prompt({ chatKey, persona,
+        participantIds: (triggerEntries || []).map((entry) => entry.senderId) }) || '';
+    } catch (error) { log.warn(`[personality-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error); }
     const humanLines = [
       personaStateLine,
       livingRecall.text,
+      personalityRecall,
       memeDensityPrompt(cfg),
       memesForPrompt(chatKey, triggerText, { level: cfg?.humanize?.memeUse?.level })
     ].filter(Boolean).join('\n\n');

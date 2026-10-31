@@ -979,6 +979,7 @@ async function auditServer(args) {
     'incident-pilot.sqlite',
     'identity-pilot.sqlite',
     'relationship-pilot.sqlite',
+    'personality-memory.sqlite',
     path.join('memory', 'search.sqlite'),
     path.join('living-memory', 'living-memory.sqlite')
   ]) {

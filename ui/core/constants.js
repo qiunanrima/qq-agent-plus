@@ -37,6 +37,7 @@ const TOOL_META = {
   memory_append:     { name: '记一条',     cat: '记忆',   icon: '🧠' },
   memory_query:      { name: '查记忆',     cat: '记忆',   icon: '🧠' },
   person_memory_lookup: { name: '查人物记忆', cat: '记忆', icon: '🧠' },
+  remember_personality: { name: '积累人格记忆', cat: '记忆', icon: '🧠' },
   friend_request_propose: { name: '提议加好友', cat: '记忆', icon: '＋' },
   memory_remove:     { name: '删记忆',     cat: '记忆',   icon: '🧹' },
   // 联网

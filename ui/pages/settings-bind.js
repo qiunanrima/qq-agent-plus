@@ -1,7 +1,5 @@
-// 由 ui/app.js 机械拆出（2026-10-01，改进方案 §11「UI 结构治理」第二轮：设置域）。
 // 设置页事件绑定；跨文件引用走 import，可变状态挂 state（见 AGENTS.md）。
 'use strict';
-
 import { currentThinkingRaw, loadSettings, refreshStatus, renderSettings, switchTab } from '../app.js';
 import { api } from '../core/api.js';
 import { ASR_SERVICES, MODEL_SERVICES_UI, QZONE_RUN_LABELS } from '../core/constants.js';
@@ -29,6 +27,7 @@ import { bindImageGenPreset, bindTtsControls } from './settings-voice.js';
 import { bindHumanizePreset, bindHumanizeRecommend, bindProactiveWindowEditor, loadHumanizeState } from './chat.js';
 import { bindSearchTest } from './search-test.js';
 import { hydrateExtensionStatus } from './settings-extensions.js';
+import { bindPersonalityMemoryExperiment } from './personality-memory.js';
 import {
   openBlocklistModal, openModelAddModal, openModelDeleteModal, openModelPicker, openPriceDialog,
   openWhitelistPicker, renderTimeRuleEditor, startListPoller, syncThinkingUi
@@ -301,6 +300,7 @@ function bindSettingsSaveAndSections() {
   });
 
   if ((state.settingsSection || 'api') === 'experiments') {
+    bindPersonalityMemoryExperiment();
     loadExperimentalFeatureStatuses();
     $('#lm-open-console')?.addEventListener('click', () => switchTab('living-memory'));
     $('#lm-ungraduate')?.addEventListener('click', () => cancelLivingMemoryGraduation().catch(() => {}));

@@ -29,6 +29,8 @@ import { ChatStore } from '../core/store.js';
 import { MemoryStore } from '../memory/memory.js';
 import { resetAllMemory } from '../memory/reset.js';
 import { LivingMemoryRuntime } from '../living-memory/runtime.js';
+import { PersonalityMemory } from '../personality-memory/index.js';
+import { registerPersonalityMemoryRoutes } from '../personality-memory/routes.js';
 import { StickerManager } from '../onebot/sticker-manager.js';
 import { SendQueue } from '../onebot/sender.js';
 import { SessionRegistry, personaLabelOfPrompt } from '../core/sessions.js';
@@ -590,6 +592,7 @@ export function createApp({
     });
   };
   // 长期语义记忆是独立的实验模块：即使服务端未部署/未配置令牌，也只降级它自己，绝不影响聊天主链路。
+  const personalityMemory = new PersonalityMemory({ dataDir: DATA_DIR, getConfig, emit });
   const livingMemory = new LivingMemoryRuntime({
     getConfig,
     dataDir: DATA_DIR,
@@ -712,6 +715,7 @@ export function createApp({
     store,
     memory,
     livingMemory,
+    personalityMemory,
     stickers,
     sender,
     sessions,
@@ -3982,13 +3986,14 @@ export function createApp({
     if (body.confirm !== true || body.scope !== 'all' || body.includeArchive !== true) return json(res, 409, { error: '清除所有记忆与消息存档需要显式确认：confirm=true、scope=all、includeArchive=true；请刷新控制台后确认完整删除范围' });
     try {
       const result = resetAllMemory({
-        dataDir: DATA_DIR, memory, livingMemory, store, assets: assetObserver, orchestrator,
+        dataDir: DATA_DIR, memory, livingMemory, personalityMemory, store, assets: assetObserver, orchestrator,
         identityBusy: Boolean(identityPilot?.friendReviewTasks?.size)
       });
       auditWrite('memory.reset-all', 'memory:all', { req, backupId: result.backupId, cleared: result.cleared });
       emit('chat-update', { chatKey: '', phase: 'reset-all' });
       emit('memory-update', { chatKey: '', phase: 'reset-all' });
       emit('living-memory-update', { phase: 'reset-all' });
+      emit('personality-memory-update', { phase: 'reset-all' });
       return json(res, 200, result);
     } catch (error) {
       return json(res, error.statusCode || 500, { error: String(error.message || error) });
@@ -4139,6 +4144,7 @@ export function createApp({
   });
 
   // ── 长期语义记忆（实验模块，数据与向量服务归 LivingMemoryRuntime 所有） ─────
+  registerPersonalityMemoryRoutes({ router, memory: personalityMemory, readBody, json, emit, auditWrite });
   const livingMemoryScopes = (values) => [...new Set((Array.isArray(values) ? values : [values])
     .map((value) => String(value || '').trim())
     .filter((value) => /^(group|private):\d+$/.test(value) || value === 'owner-global'))];
@@ -6843,6 +6849,7 @@ export function createApp({
     store,
     memory,
     livingMemory,
+    personalityMemory,
     stickers,
     sender,
     sessions,

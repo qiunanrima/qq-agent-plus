@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // 只协调各模块公开的备份/清理接口，不直接访问其它模块的数据表或文件。
-export function resetAllMemory({ dataDir, memory, livingMemory, store, assets, orchestrator, identityBusy = false }) {
+export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemory, store, assets, orchestrator, identityBusy = false }) {
   orchestrator.setPaused(true, 'memory-reset');
   if (orchestrator.runningChats.size || orchestrator.consolidating.size
     || livingMemory.activeFlushes || identityBusy) {
@@ -21,11 +21,14 @@ export function resetAllMemory({ dataDir, memory, livingMemory, store, assets, o
   store.createResetBackup(path.join(directory, 'messages.sqlite'));
   write('identity-profiles.json', assets.memoryResetSnapshot());
   livingMemory.createResetBackup(path.join(directory, 'living-memory.sqlite'));
-  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'identity-profiles', 'living-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
+  personalityMemory?.createResetBackup(path.join(directory, 'personality-memory.sqlite'));
+  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'identity-profiles', 'living-memory', 'personality-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
   write('manifest.json', manifest);
-  let stage = 'living-memory';
+  let stage = 'personality-memory';
   const cleared = {};
   try {
+    cleared.personality = personalityMemory?.clearAll() || { entries: 0 };
+    stage = 'living-memory';
     cleared.semantic = livingMemory.clearAll();
     stage = 'person-memory';
     cleared.people = memory.clearAll();

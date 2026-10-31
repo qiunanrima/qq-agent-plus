@@ -98,6 +98,7 @@
 - 删除前先把各模块快照写到 `DATA_DIR/memory-reset-backups/<备份编号>/`，目录 0700、文件 0600；消息库 `messages.sqlite` 和长期语义库均使用 SQLite 一致性快照。旧版 `messages/group_*.json`、`private_*.json` 也先复制到备份中的 `legacy-messages/` 再清除。任一备份失败则不开始删除。备份不在模型读取范围内，也不会自动恢复。
 - 跨模块清理并非一个数据库事务；中途失败会明确报告阶段和备份编号，可能已有部分清除，不自动重试。需要恢复时先停止服务，按备份里的 `manifest.json` 核对范围后由运维恢复，不能将快照 JSON 直接替换成 `config.json`。
 - 从未启用的语义记忆不会因清空操作创建数据库；禁用但已有数据的语义库也会清空。
+- [人格成长记忆](PERSONALITY_MEMORY.md) 中的自身偏好、共同经历和关系变化也包含在本次备份及清除范围；停用时已有数据同样清除，从未启用则不新建人格库。
 
 管理接口：`POST /api/memory/reset-all`，要求控制台鉴权与 JSON `{ "confirm": true, "scope": "all", "includeArchive": true }`。旧版确认请求返回 409，要求刷新页面以确认扩大的删除范围。成功返回清除计数和备份编号，不返回记忆正文。
 

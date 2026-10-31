@@ -25,6 +25,7 @@ const { setRuntimeConfig, DEFAULT_CONFIG } = await import('../src/core/config.js
 const { ReminderStore } = await import('../src/core/reminders.js');
 const { timeControlState } = await import('../src/core/time-control.js');
 const { canRun } = await import('../src/core/access.js');
+const { PersonalityMemory } = await import('../src/personality-memory/index.js');
 const { todayKey } = await import('../src/core/util.js');
 const { currentTraceId, lastTraceId } = await import('../src/core/logger.js');
 
@@ -156,6 +157,39 @@ describe('Orchestrator', () => {
     });
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
+
+  it('人格记忆在真实回合中注入并提供采集工具，关闭后撤回；模块故障不阻断聊天', async (t) => {
+    const { runner, cfg, store, append } = fixture(t);
+    cfg.personalityMemory.enabled = true;
+    runner.personalityMemory = new PersonalityMemory({ dataDir: fs.mkdtempSync(path.join(root, 'personality-')), getConfig: () => cfg });
+    const source = store.appendSelf('group:1', { text: '我更喜欢绿茶', ts: Date.now() });
+    let body;
+    let calls = 0;
+    globalThis.fetch = async (_url, options) => {
+      body = JSON.parse(options.body);
+      calls++;
+      const tools = calls === 1 ? [{ id: 'capture', type: 'function', function: { name: 'remember_personality', arguments: JSON.stringify({
+        kind: 'preference', topic: '饮品', content: '我更喜欢绿茶', evidence: [{ messageId: source.id, quote: '我更喜欢绿茶' }]
+      }) } }] : [];
+      tools.push({ id: `done-${calls}`, type: 'function', function: { name: 'finish', arguments: JSON.stringify({ summary: '已处理本轮消息' }) } });
+      return Response.json({ choices: [{ message: { tool_calls: tools } }], usage: { total_tokens: 10 } });
+    };
+    append(1);
+    await runner.wake('group:1');
+    assert.ok(body.tools.some((tool) => tool.function.name === 'remember_personality'));
+    assert.match(JSON.stringify(body.messages), /人格成长记忆/);
+    assert.equal(runner.personalityMemory.list().length, 1);
+    cfg.personalityMemory.enabled = false;
+    append(2);
+    await runner.wake('group:1');
+    assert.equal(body.tools.some((tool) => tool.function.name === 'remember_personality'), false);
+    assert.doesNotMatch(JSON.stringify(body.messages), /【人格成长记忆】/);
+    cfg.personalityMemory.enabled = true;
+    runner.personalityMemory.prompt = () => { throw new Error('broken personality database'); };
+    append(3);
+    await runner.wake('group:1');
+    assert.equal(store.findByMid('group:1', '3').state, 'acked');
+  });
 
   it('direct interactions use the short wake delay; ordinary group messages keep batching', async (t) => {
     const { runner, store, cfg } = fixture(t);

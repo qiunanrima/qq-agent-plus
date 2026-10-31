@@ -45,6 +45,7 @@ import {
 } from './pages/features.js';
 import { loadMemoryView, renderMemoryList } from './pages/memory.js';
 import { loadLivingMemoryPage } from './pages/living-memory.js';
+import { loadPersonalityMemoryPage } from './pages/personality-memory.js';
 import { loadPluginsPage } from './pages/plugins.js';
 import { refreshPendingBadge } from './pages/plugin-pending.js';
 import { loadSkillsPage } from './pages/skills.js';
@@ -291,6 +292,7 @@ function switchTab(name) {
   if (name === 'chats') loadChats();
   if (name === 'memory') loadMemoryView();
   if (name === 'living-memory') loadLivingMemoryPage({ force: true });
+  if (name === 'personality-memory') loadPersonalityMemoryPage();
   if (name === 'identity') loadIdentityFeaturePage();
   if (name === 'friends') loadFriendFeaturePage();
   if (name === 'slang') loadSlangFeaturePage();
@@ -1165,6 +1167,9 @@ function connectSSE() {
   es.addEventListener('chat-update', () => {
     if (state.tab === 'chats') scheduleChatsRefresh();
     scheduleStatusRefresh();
+  });
+  es.addEventListener('personality-memory-update', () => {
+    if (state.tab === 'personality-memory') void loadPersonalityMemoryPage();
   });
   es.addEventListener('memory-update', (ev) => {
     let data = {};
