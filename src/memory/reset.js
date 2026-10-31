@@ -18,9 +18,10 @@ export function resetAllMemory({ dataDir, memory, livingMemory, store, assets, o
   // 所有备份完成之前，不删除任何活动数据。备份目录不属于模型的记忆读取范围。
   write('person-memory.json', memory.resetSnapshot());
   write('context.json', store.contextResetSnapshot());
+  store.createResetBackup(path.join(directory, 'messages.sqlite'));
   write('identity-profiles.json', assets.memoryResetSnapshot());
   livingMemory.createResetBackup(path.join(directory, 'living-memory.sqlite'));
-  const manifest = { id, at: Date.now(), status: 'prepared', preserves: ['chat-history', 'member-notes', 'configuration', 'previous-backups'] };
+  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'identity-profiles', 'living-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
   write('manifest.json', manifest);
   let stage = 'living-memory';
   const cleared = {};
@@ -30,8 +31,8 @@ export function resetAllMemory({ dataDir, memory, livingMemory, store, assets, o
     cleared.people = memory.clearAll();
     stage = 'identity-profiles';
     cleared.identity = assets.clearMemoryProfiles();
-    stage = 'context';
-    cleared.context = store.clearAllContext();
+    stage = 'chat-archive';
+    cleared.context = store.clearAllArchive();
     write('manifest.json', { ...manifest, status: 'complete', cleared });
     return { ok: true, paused: true, backupId: id, cleared };
   } catch (cause) {

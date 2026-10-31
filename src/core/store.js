@@ -73,6 +73,7 @@ function normalizeSynchronous(value) {
 export class ChatStore {
   constructor(maxPerChat = 0, { dataDir = DATA_DIR, filename, synchronous = 'FULL' } = {}) {
     this.maxPerChat = Math.max(0, Number(maxPerChat) || 0);
+    this.legacyMessagesDir = path.join(dataDir, 'messages');
     this.transactionDepth = 0;
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     // filename 只用于测试隔离：给相对名时按 dataDir 解析，避免落到进程 CWD（2026-09-28 踩过：
@@ -983,6 +984,35 @@ export class ChatStore {
       turns: this.db.prepare('SELECT * FROM thread_turns').all(),
       checkpoints: this.db.prepare('SELECT * FROM thread_checkpoints').all()
     };
+  }
+  createResetBackup(file) {
+    this.db.prepare('VACUUM INTO ?').run(file);
+    fs.chmodSync(file, 0o600);
+    for (const name of this.legacyArchiveNames()) {
+      const directory = path.join(path.dirname(file), 'legacy-messages');
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const source = path.join(this.legacyMessagesDir, name);
+      if (!fs.lstatSync(source).isFile()) throw new Error(`Invalid legacy message archive: ${name}`);
+      const target = path.join(directory, name);
+      fs.copyFileSync(source, target);
+      fs.chmodSync(target, 0o600);
+    }
+  }
+  legacyArchiveNames() {
+    if (!fs.existsSync(this.legacyMessagesDir)) return [];
+    return fs.readdirSync(this.legacyMessagesDir).filter((name) => /^(group|private)_\d+\.json$/.test(name));
+  }
+  clearAllArchive() {
+    // 旧版 JSON 一并移出活动存档；备份已完成，失败则由协调器报告阶段，不自动重试。
+    const legacy = this.legacyArchiveNames();
+    for (const name of legacy) fs.unlinkSync(path.join(this.legacyMessagesDir, name));
+    return this.#transaction(() => {
+      const messages = Number(this.db.prepare('SELECT COUNT(*) AS n FROM messages').get().n);
+      const context = this.clearAllContext();
+      this.db.exec('DELETE FROM messages; UPDATE chats SET message_count=0;');
+      // 保留 next_id 和外部发送账本，避免旧引用撞上新消息或未知发送被再次执行。
+      return { messages, legacyFiles: legacy.length, ...context };
+    });
   }
   clearAllContext() {
     return this.#transaction(() => {

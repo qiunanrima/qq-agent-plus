@@ -507,12 +507,12 @@ import { saveMemberNote } from './pages/memory.js';
     button.disabled = true;
     const status = document.getElementById('gm-reset-status');
     try {
-      const confirmed = await askForConfirmation('清除所有群聊和私聊的记忆与群友印象？\n\n将清除：全部人物印象与熟悉度、人物档案中的印象、会话交接、线程上下文与检查点、长期语义记忆及其向量和来源回合。\n\n操作会暂停机器人并先备份；有在途任务时本次不会删除，请等任务结束后重试。\n\n保留：聊天原始存档、备注、白名单、角色卡、模型配置及已有备份。恢复回复后，旧聊天存档仍可能被读取或重新提炼为记忆。\n\n清除后保持暂停，由你检查结果并手动恢复回复。');
+      const confirmed = await askForConfirmation('清除所有群聊和私聊的记忆、群友印象与消息存档？\n\n将清除：全部聊天原始存档（含图片等媒体引用）、人物印象与熟悉度、人物档案中的印象、会话交接、线程上下文与检查点、长期语义记忆及其向量和来源回合。\n\n操作会暂停机器人并先备份；有在途任务时本次不会删除，请等任务结束后重试。\n\n保留：备注、白名单、角色卡、模型配置、发送安全台账及已有备份。备份不供模型读取；本操作不撤回 QQ 消息，不删除独立媒体缓存。\n\n清除后保持暂停，由你检查结果并手动恢复回复。之后新收到的消息仍会正常存档。');
       if (!confirmed) return;
       searchSeq++; // 清空前发出的检索响应不能把旧印象重新显示到页面。
       if (status) status.textContent = '正在暂停、备份并清除，请勿重复操作…';
       const result = await api('/api/memory/reset-all', {
-        method: 'POST', body: JSON.stringify({ confirm: true, scope: 'all' })
+        method: 'POST', body: JSON.stringify({ confirm: true, scope: 'all', includeArchive: true })
       });
       state.paused = true;
       selectedKey = '';

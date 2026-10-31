@@ -7,7 +7,7 @@ test('记忆全量清除：确认范围、取消零写入、确认只发一次�
   let writes = 0;
   await page.route('**/api/memory/reset-all', async (route) => {
     writes++;
-    expect(route.request().postDataJSON()).toEqual({ confirm: true, scope: 'all' });
+    expect(route.request().postDataJSON()).toEqual({ confirm: true, scope: 'all', includeArchive: true });
     await route.fulfill({ json: { ok: true, paused: true, backupId: 'browser-fixture-backup' } });
   });
   await login(page);
@@ -18,6 +18,7 @@ test('记忆全量清除：确认范围、取消零写入、确认只发一次�
   await button.click();
   await expect(page.locator('[data-confirm-accept]')).toBeVisible();
   await expect(page.locator('.model-modal-body')).toContainText('聊天原始存档');
+  await expect(page.locator('.model-modal-body')).toContainText('将清除：全部聊天原始存档');
   fs.mkdirSync('_staging', { recursive: true });
   await page.screenshot({ path: '_staging/memory-reset-desktop.png', fullPage: true });
   await page.locator('[data-confirm-cancel]').click();
