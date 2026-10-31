@@ -36,7 +36,7 @@ import { pendingSessionDetail, refreshIntervalMs, startUpdateProgressTicker, sta
 
 // 导航/主题等静态节点上的 data-icon 在启动时统一注入 SVG（幂等，可重复调用）
 applyIcons(document);
-import { loadChats } from './pages/chat.js';
+import { invalidateChatArchive, loadChats } from './pages/chat.js';
 import { loadOverview } from './pages/overview.js';
 import {
   loadAssetObservatory, loadExperimentalFeatureStatuses, loadFriendOpportunities, loadFriendProposals,
@@ -1164,7 +1164,10 @@ function connectSSE() {
       loadSessionDetail(id, { quiet: true });
     }
   });
-  es.addEventListener('chat-update', () => {
+  es.addEventListener('chat-update', (event) => {
+    try {
+      if (JSON.parse(event.data)?.phase === 'reset-all') invalidateChatArchive();
+    } catch { /* 旧事件可能仅包含 chatKey 字符串 */ }
     if (state.tab === 'chats') scheduleChatsRefresh();
     scheduleStatusRefresh();
   });

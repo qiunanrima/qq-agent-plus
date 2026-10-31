@@ -6,6 +6,7 @@ import { esc } from './core/dom.js';
 import { askForConfirmation, setBoxError, setHtmlIfChanged } from './core/dom-util.js';
 import { state } from './core/state.js';
 import { saveMemberNote } from './pages/memory.js';
+import { invalidateChatArchive } from './pages/chat.js';
 (function globalPersonMemoryConsole() {
   let people = [];
   let selectedKey = '';
@@ -515,12 +516,16 @@ import { saveMemberNote } from './pages/memory.js';
         method: 'POST', body: JSON.stringify({ confirm: true, scope: 'all', includeArchive: true })
       });
       state.paused = true;
+      if (!Number.isInteger(result?.cleared?.context?.messages)) {
+        throw new Error('当前服务未确认消息存档已清除，可能仍在运行旧版本。请更新 Agent 源码并重新部署后检查；不要重复点击');
+      }
+      invalidateChatArchive();
       selectedKey = '';
       noteDraft = { key: '', value: '' };
       const search = document.getElementById('gm-search-results');
       if (search) search.innerHTML = '';
       await loadGlobalMemory(true);
-      if (status) status.textContent = `已清除，机器人保持暂停。备份编号：${result.backupId}。检查后可在顶部恢复回复。`;
+      if (status) status.textContent = `已清除 ${result.cleared.context.messages} 条消息及全部记忆，机器人保持暂停。备份编号：${result.backupId}。检查后可在顶部恢复回复。`;
     } catch (error) {
       if (status) status.textContent = `未确认全部清除成功：${error?.message || error}。请检查状态，不要重复点击。`;
     } finally { button.disabled = false; }

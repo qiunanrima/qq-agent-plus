@@ -102,6 +102,8 @@
 
 管理接口：`POST /api/memory/reset-all`，要求控制台鉴权与 JSON `{ "confirm": true, "scope": "all", "includeArchive": true }`。旧版确认请求返回 409，要求刷新页面以确认扩大的删除范围。成功返回清除计数和备份编号，不返回记忆正文。
 
+清除成功提示会显示实际删除的消息条数。仅返回旧版上下文计数、没有消息删除计数时，不应视为存档清除成功。更新时注意：控制台自动更新只跟随已发布 Release，推送 `main` 不会触发它；需要使用新克隆的源码运行 `deploy.sh`，不要复用此前下载的临时源码目录。可读取 `DATA_DIR/deployed-revision` 核对部署提交。浏览器存档缓存会在清除成功及清除事件后失效，迟到的旧分页响应被忽略。
+
 ## 相关
 
 - 记忆可见性：`src/core/memory-visibility.js`

@@ -19,6 +19,7 @@ const state = {
   chats: [],
   currentChatKey: null,
   chatMessages: [],
+  chatArchiveEpoch: 0,
   config: null,
   personaTemplates: {},
   status: null,

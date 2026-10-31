@@ -571,17 +571,36 @@ return `
 
 // ── 存档视图 ──
 async function loadChats({ quiet = false } = {}) {
+  const epoch = state.chatArchiveEpoch;
   try {
     const data = await api('/api/chats');
+    if (epoch !== state.chatArchiveEpoch) return;
     state.chats = data.chats || [];
     renderChatList();
     if (state.currentChatKey) {
       // 打开着某群详情时也刷新该群消息。
       // keepView=true：只更新内容，不动分页与滚动位置 ——
       // 否则用户滚出来的内容会被每 15 秒的轮询刷回去。
-      loadChatMessages(state.currentChatKey, { keepView: true });
+      await loadChatMessages(state.currentChatKey, { keepView: true });
     }
   } catch (e) { if (!quiet) console.error(e); }
+}
+
+function resetChatMessageCache() {
+  state.chatArchiveEpoch++;
+  state.chatMessages = [];
+  state.chatHasMore = false;
+  state.chatNextBefore = 0;
+  state.chatLoadingOlder = false;
+}
+
+// 清除成功后使所有在途列表、增量和旧分页响应失效，不让它们把已删消息放回页面。
+function invalidateChatArchive() {
+  resetChatMessageCache();
+  state.chats = state.chats.map((chat) => ({ ...chat, total: 0, unread: 0, failed: 0,
+    lastText: '', lastTs: 0, thread: null, lastDecision: null }));
+  renderChatList();
+  if (state.currentChatKey) renderChatMessages();
 }
 
 function chatControlIcon(chat) {
@@ -771,6 +790,7 @@ function renderChatList() {
 }
 
 async function selectChat(key) {
+  resetChatMessageCache();
   state.currentChatKey = key;
   renderChatList();
   $('#chat-detail').innerHTML = '<div class="empty-hint">加载中…</div>';
@@ -790,6 +810,7 @@ async function selectChat(key) {
  *    —— 表现为"明明滚下去了，过一会儿自己弹回上面"。
  */
 async function loadChatMessages(key, { keepView = false } = {}) {
+  const epoch = state.chatArchiveEpoch;
   // 注册给滚动加载器（模块求值期不碰 state：真 ESM 环境里有 TDZ / 环引用风险）
   state.chatLoadOlder = loadOlderChatMessages;
   try {
@@ -798,9 +819,15 @@ async function loadChatMessages(key, { keepView = false } = {}) {
       // 轮询只取"比当前最新一条更新的"，不再整页重拉（否则已加载的更早分页会被冲掉）
       const lastId = Number(state.chatMessages[state.chatMessages.length - 1]?.id) || 0;
       const data = await api(`${base}?limit=${CHAT_MSG_PAGE}&after=${lastId}`);
-      if (state.currentChatKey !== key) return;
+      if (state.currentChatKey !== key || epoch !== state.chatArchiveEpoch) return;
+      // 增量接口空响应不表示存档未变：全量清除/保留期回收都可能使原有缓存失效。
+      if (typeof data.total === 'number' && data.total < state.chatMessages.length) {
+        resetChatMessageCache();
+        await loadChatMessages(key);
+        return;
+      }
       const fresh = data.messages || [];
-      if (!fresh.length) return;
+      if (!fresh.length) { updateChatMessagesBody(true); return; }
       // 必须换新数组：chatMessagesNewestFirst() 用数组引用做排序缓存 key，
       // 原地 push 会让缓存永远命中，新消息渲染不出来；顺带按 id 去重（两个轮询重叠时
       // 会各自拉到同一批）。
@@ -814,14 +841,18 @@ async function loadChatMessages(key, { keepView = false } = {}) {
 
     const data = await api(`${base}?limit=${CHAT_MSG_PAGE}`);
     // 期间用户可能切走了会话，那就别覆盖当前视图
-    if (state.currentChatKey !== key) return;
+    if (state.currentChatKey !== key || epoch !== state.chatArchiveEpoch) return;
     state.chatMessages = data.messages || [];
     state.chatHasMore = data.hasMore === true;
     state.chatNextBefore = Number(data.nextBefore) || 0;
     state.chatMsgLimit = CHAT_MSG_PAGE;
+    if (typeof data.total === 'number') {
+      const meta = state.chats.find((chat) => chat.key === key);
+      if (meta) meta.total = data.total;
+    }
     renderChatMessages();
   } catch (e) {
-    if (state.currentChatKey !== key) return;
+    if (state.currentChatKey !== key || epoch !== state.chatArchiveEpoch) return;
     const box = $('#chat-detail');
     if (box) box.innerHTML = `<div class="empty-hint">加载失败：${esc(e.message)}</div>`;
   }
@@ -831,10 +862,11 @@ async function loadChatMessages(key, { keepView = false } = {}) {
 async function loadOlderChatMessages() {
   if (state.chatLoadingOlder || !state.chatHasMore || !state.chatNextBefore) return 0;
   const key = state.currentChatKey;
+  const epoch = state.chatArchiveEpoch;
   state.chatLoadingOlder = true;
   try {
     const data = await api(`/api/chats/${key.replace(':', '_')}/messages?limit=${CHAT_MSG_PAGE}&before=${state.chatNextBefore}`);
-    if (state.currentChatKey !== key) return 0;
+    if (state.currentChatKey !== key || epoch !== state.chatArchiveEpoch) return 0;
     state.chatHasMore = data.hasMore === true;
     state.chatNextBefore = Number(data.nextBefore) || 0;
     const older = data.messages || [];
@@ -844,7 +876,7 @@ async function loadOlderChatMessages() {
   } catch {
     return 0;
   } finally {
-    state.chatLoadingOlder = false;
+    if (epoch === state.chatArchiveEpoch) state.chatLoadingOlder = false;
   }
 }
 
@@ -1018,9 +1050,9 @@ function updateChatMessagesMeta(newestFirst) {
   const cnt = $('#chat-detail')?.querySelector('[data-field="chat-msg-count"]');
   if (cnt) {
     const meta = state.chats.find((c) => c.key === state.currentChatKey) || {};
-    const t = meta.total || total || 0;
+    const t = Number.isFinite(Number(meta.total)) ? Number(meta.total) : total;
     cnt.textContent = t
-      ? `共 ${t} 条 · 已显示 ${shownCount} 条 · 存储于 data/messages/`
+      ? `共 ${t} 条 · 已显示 ${shownCount} 条 · 存储于消息数据库`
       : '暂无消息';
   }
 }
@@ -1084,4 +1116,4 @@ function conversationModeForChat(chatKey, cfg = state.config) {
 }
 
 
-export { appendChatMessageRows, bindHumanizePreset, bindHumanizeRecommend, bindProactiveWindowEditor, loadChats, loadHumanizeState, renderChatSection, updateChatMessagesBody };
+export { appendChatMessageRows, bindHumanizePreset, bindHumanizeRecommend, bindProactiveWindowEditor, invalidateChatArchive, loadChats, loadHumanizeState, renderChatSection, updateChatMessagesBody };

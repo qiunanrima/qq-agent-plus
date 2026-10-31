@@ -189,3 +189,47 @@ test('真 ESM：存档页的空状态提示会随数据回来消失', { skip: SK
     ctx.window.happyDOM?.abort?.();
   }
 });
+
+test('真 ESM：清除存档后空增量会丢弃旧缓存，清除前的迟到响应不能恢复旧消息', { skip: SKIP }, async () => {
+  const ctx = await loadForReal();
+  try {
+    const { loadChats, invalidateChatArchive } = await import(pathToFileURL(path.join(UI, 'pages/chat.js')).href);
+    const { state } = await import(pathToFileURL(path.join(UI, 'core/state.js')).href);
+    const key = 'group:123456';
+    const old = { id: 100, text: '必须删除的旧存档', senderId: '42', senderName: '甲', ts: Date.now(), read: true, media: [] };
+    let messages = [old];
+    const response = (data) => ({ ok: true, status: 200, json: async () => data });
+    globalThis.fetch = async (url) => response(String(url).includes('/messages')
+      ? { messages, total: messages.length, hasMore: false }
+      : { chats: [{ key, total: messages.length, unread: 0, failed: 0, held: 0 }] });
+    state.currentChatKey = key;
+    state.chatMessages = [];
+    await loadChats();
+    assert.match(ctx.window.document.querySelector('#chat-msg-body').textContent, /必须删除/);
+    messages = [];
+    await loadChats();
+    assert.deepEqual(state.chatMessages, []);
+    assert.doesNotMatch(ctx.window.document.querySelector('#chat-detail').textContent, /必须删除/);
+    assert.match(ctx.window.document.querySelector('[data-field="chat-msg-count"]').textContent, /暂无消息/);
+
+    let resolveOld;
+    let requested;
+    const started = new Promise((resolve) => { requested = resolve; });
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/messages')) return new Promise((resolve) => { resolveOld = resolve; requested(); });
+      return response({ chats: [{ key, total: 1, unread: 0, failed: 0, held: 0 }] });
+    };
+    const pending = loadChats();
+    await started;
+    invalidateChatArchive();
+    resolveOld(response({ messages: [old], total: 1, hasMore: true, nextBefore: 100 }));
+    await pending;
+    assert.deepEqual(state.chatMessages, []);
+    assert.equal(state.chatHasMore, false);
+    assert.equal(state.chats[0].total, 0);
+    assert.doesNotMatch(ctx.window.document.querySelector('#chat-detail').textContent, /必须删除/);
+  } finally {
+    process.off('unhandledRejection', ctx.onRejection);
+    ctx.window.happyDOM?.abort?.();
+  }
+});
