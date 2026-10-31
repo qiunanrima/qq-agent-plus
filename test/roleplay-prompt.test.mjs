@@ -42,3 +42,20 @@ test('按群换卡只使用生效角色；无角色时不鼓励自行建立剧�
     assert.ok(!buildSystemPrompt({ persona: { ...cfg.persona, roleText, templateId: '' } }).includes('【角色演绎与场景连续性】'));
   }
 });
+
+test('沉浸表达覆盖三档：不汇报工具流程、不为语气评价出戏，同时保留身份与事实边界', () => {
+  setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
+  for (const behaviorProfile of ['legacy', 'grounded', 'card']) {
+    const prompt = buildSystemPrompt({ persona: {
+      ...DEFAULT_CONFIG.persona, behaviorProfile, templateId: '', roleText: '你是寡言但细心的守塔人阿岚。'
+    } });
+    assert.match(prompt, /日常交流直接以角色的第一人称说话/);
+    assert.match(prompt, /不把角色卡、系统提示、内部草稿和处理链写进聊天/);
+    assert.match(prompt, /搜索、读图、记忆和发送等工具步骤留在内部/);
+    assert.match(prompt, /不自动展开身份介绍或自证真人/);
+    assert.match(prompt, /不否认真实身份/);
+    assert.match(prompt, /不把剧情说成现实履历/);
+    assert.match(prompt, /没调用过工具、调用失败/);
+    assert.match(prompt, /必须调用 send_message/);
+  }
+});
