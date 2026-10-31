@@ -174,6 +174,7 @@ import { searchKnowledge } from '../knowledge/store.js';
 import { assertPublicUrlLiteral, validateImageUrl } from '../llm/safe-fetch.js';
 import { webSearch, webFetch } from '../llm/web-search.js';
 import { expandForwardNodes, extractMediaFromSegments } from '../onebot/onebot.js';
+import { readCachedImageLink } from '../onebot/image-links.js';
 import { readForwardMessages, readForwardNodesById } from '../onebot/forward-reader.js';
 import { convertGifToStillStrip, convertVideoToFrameStrip, convertStillImageToJpeg, fetchOversizedImageAsJpeg } from './image-downsample.js';
 import { transcribeMessageAudio } from './audio-transcribe.js';
@@ -206,8 +207,12 @@ export async function toVisionDataUrl(buffer, mime, signal) {
   return `data:${mime};base64,${buffer.toString('base64')}`;
 }
 
-export async function downloadImageAsDataUrl(url, signal) {
+export async function downloadImageAsDataUrl(url, signal, cacheKey = '') {
   signal?.throwIfAborted();
+  if (cacheKey) {
+    const cached = await readCachedImageLink(cacheKey);
+    if (cached) return toVisionDataUrl(cached.buffer, cached.mime, signal);
+  }
   if (String(url || '').startsWith('base64://')) {
     const buffer = Buffer.from(String(url).slice('base64://'.length), 'base64');
     if (!buffer.length || buffer.length > 12 * 1024 * 1024) {
@@ -531,7 +536,11 @@ async function currentMessageImageUrls(ctx, entry) {
       const fresh = extractMediaFromSegments(segments)
         .filter((item) => (item.kind === 'image' || item.kind === 'video') && (item.url || item.file));
       if (fresh.length) {
-        media = fresh;
+        const cachedLinks = media.filter((item) => item.cacheKey);
+        media = [
+          ...fresh.map((item) => ({ ...cachedLinks.find((cached) => cached.url === item.url), ...item })),
+          ...cachedLinks.filter((item) => !fresh.some((current) => current.url === item.url))
+        ];
         ctx.store?.updateByMid?.(ctx.chatKey, entry.mid, { appendMedia: fresh });
       }
     } catch {
@@ -540,7 +549,7 @@ async function currentMessageImageUrls(ctx, entry) {
   }
   return media
     .filter((item) => item.kind === 'image' || item.kind === 'video')
-    .map((item) => ({ kind: item.kind, url: String(item.url || item.file || '').trim() }))
+    .map((item) => ({ kind: item.kind, url: String(item.url || item.file || '').trim(), cacheKey: item.cacheKey || '' }))
     .filter((item) => item.url)
     .slice(0, 4);
 }
@@ -2799,7 +2808,7 @@ export function buildToolDefs() {
                 dataUrls.push(await downloadVideoAsFrameStrip(item.url, ctx.signal));
                 videoCount += 1;
               } else {
-                dataUrls.push(await downloadImageAsDataUrl(item.url, ctx.signal));
+                dataUrls.push(await downloadImageAsDataUrl(item.url, ctx.signal, item.cacheKey));
               }
             } catch (e) { failed.push(String(e?.message ?? e)); }
           }
@@ -3196,7 +3205,7 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         try {
-          const result = await webSearch(String(args.query ?? ''), { meme: args.meme === true });
+          const result = await webSearch(String(args.query ?? ''), { meme: args.meme === true, signal: ctx.signal });
           if (!result.results.length) {
             return ok({ query: result.query, results: [], note: '没有搜到结果，试试换关键词或更具体的说法。' });
           }

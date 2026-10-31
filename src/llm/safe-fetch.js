@@ -250,7 +250,7 @@ export function readBounded(res, maxBytes, asText) {
 }
 
 // 使用已校验的 IP 发起 HTTP/1.1 请求（保留 Host/SNI），从根上消除 DNS rebinding。
-function requestHttp1(url, ip, { asBinary = false, maxBytes = 50000, signal, headers, method = 'GET', body = null, wantSetCookies = false } = {}) {
+function requestHttp1(url, ip, { asBinary = false, maxBytes = 50000, signal, headers, method = 'GET', body = null, wantSetCookies = false, acceptContentType } = {}) {
   return new Promise((resolve, reject) => {
     const mod = url.protocol === 'https:' ? https : http;
     const port = url.port || (url.protocol === 'https:' ? 443 : 80);
@@ -295,6 +295,8 @@ function requestHttp1(url, ip, { asBinary = false, maxBytes = 50000, signal, hea
         resolve({ statusCode, redirect: String(res.headers.location || '') });
         return;
       }
+      const typeError = rejectedContentType(statusCode, String(res.headers['content-type'] || ''), acceptContentType);
+      if (typeError) { res.destroy(); reject(typeError); return; }
       readBounded(res, maxBytes, !asBinary)
 .then(({ body, truncated }) => resolve({
           statusCode, body, truncated,
@@ -367,7 +369,7 @@ function h2RequestHeaders(url, headers, payload, verb) {
   };
 }
 
-function requestHttp2(url, ip, { asBinary = false, maxBytes = 50000, signal, headers, method = 'GET', body = null, wantSetCookies = false } = {}) {
+function requestHttp2(url, ip, { asBinary = false, maxBytes = 50000, signal, headers, method = 'GET', body = null, wantSetCookies = false, acceptContentType } = {}) {
   return new Promise((resolve, reject) => {
     const port = url.port || 443;
     const verb = String(method || 'GET').toUpperCase();
@@ -449,6 +451,8 @@ function requestHttp2(url, ip, { asBinary = false, maxBytes = 50000, signal, hea
         settle({ statusCode, redirect: firstHeader(responseHeaders.location) });
         return;
       }
+      const typeError = rejectedContentType(statusCode, meta.contentType, acceptContentType);
+      if (typeError) { fail(typeError); return; }
       readBounded(stream, maxBytes, !asBinary)
         .then(({ body: responseBody, truncated }) => settle({
           statusCode,
@@ -613,8 +617,15 @@ export async function safeFetchRequest(urlString, {
   throw new Error('重定向次数过多，已停止');
 }
 
+function rejectedContentType(statusCode, contentType, acceptContentType) {
+  if (statusCode !== 200 || !acceptContentType || acceptContentType(contentType)) return null;
+  const error = new Error('响应内容类型不符合下载要求');
+  error.code = 'UNSUPPORTED_CONTENT_TYPE';
+  return error;
+}
+
 /** 下载二进制（图片，≤maxBytes 字节），返回 { buffer, contentType }。 */
-export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, signal, { allowPrivate = undefined, headers = null, allowedDomains = null } = {}) {
+export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, signal, { allowPrivate = undefined, headers = null, allowedDomains = null, acceptContentType } = {}) {
   // 插件媒体走这里时显式传 allowPrivate:false：图片那条隐私例外只属于管理员配的自建图床，
   // 不该被第三方插件继承（否则"允许内网图片"= 插件可以摸内网）。
   const allow = allowPrivate === undefined ? getConfig().security?.allowPrivateImageHosts === true : allowPrivate === true;
@@ -623,7 +634,7 @@ export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, si
   let currentHeaders = headers;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     signal?.throwIfAborted();
-    const result = await requestOnce(url, ip, { asBinary: true, maxBytes: maxBytes + 1, signal, headers: currentHeaders });
+    const result = await requestOnce(url, ip, { asBinary: true, maxBytes: maxBytes + 1, signal, headers: currentHeaders, acceptContentType });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();

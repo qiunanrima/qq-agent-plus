@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { extractMediaFromSegments } from './onebot.js';
+import { readCachedImageLink } from './image-links.js';
 import { DATA_DIR, getConfig } from '../core/config.js';
 import { IMAGE_EXTENSIONS, imageType } from '../core/image-type.js';
 import { resolveSelfName } from '../core/util.js';
@@ -386,7 +387,7 @@ export class StickerManager {
     let usedUrl = media.url;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       // 图片链接是一次性的：每次重新取一条新链接再下载，失败就再来一次
-      const url = await this.#refreshImageUrl(message, media.url);
+      const url = media.cacheKey ? media.url : await this.#refreshImageUrl(message, media.url);
       usedUrl = url;
       try {
         pick = await this.#judgeSticker({ ...media, url }, message);
@@ -501,7 +502,12 @@ export class StickerManager {
   }
 
   /** 把图片转成 data URL（视觉模型看的就是它）。 */
-  async #stickerDataUrl(url, signal) {
+  async #stickerDataUrl(url, signal, cacheKey = '') {
+    signal?.throwIfAborted();
+    if (cacheKey) {
+      const cached = await readCachedImageLink(cacheKey);
+      if (cached) return `data:${cached.mime};base64,${cached.buffer.toString('base64')}`;
+    }
     const safeUrl = await validateImageUrl(url);
     const { buffer, contentType } = await safeFetchBinary(safeUrl, 4 * 1024 * 1024, signal);
     if (!buffer?.length) throw new Error('图片内容为空');
@@ -540,7 +546,7 @@ export class StickerManager {
     const timeoutSignal = AbortSignal.timeout(90000);
     // 主运行被中止/超时后，这次视觉判断也该停（否则工具早返回了它还在跑）
     const signal = outerSignal ? AbortSignal.any([outerSignal, timeoutSignal]) : timeoutSignal;
-    const dataUrl = await this.#stickerDataUrl(media.url, signal);
+    const dataUrl = await this.#stickerDataUrl(media.url, signal, media.cacheKey);
     const botName = resolveSelfName(getConfig().persona || {}, this.onebot?.selfNickname || '');
     const sender = String(message?.senderName || '群友').trim().slice(0, 20) || '群友';
     const tool = {

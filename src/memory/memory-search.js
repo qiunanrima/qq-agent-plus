@@ -142,13 +142,24 @@ export class MemorySearchIndex {
     }
   }
 
-  #rows(queryTokens) {
+  #rows(queryTokens, { userId, chatKey, visibility }) {
     if (!queryTokens.length) return [];
     const ftsQuery = queryTokens.map((token) => `"${token.replace(/"/g, '""')}"`).join(' OR ');
+    // 在候选上限之前筛选，防止其它用户或不可见来源占满 240 条候选。
+    const clauses = ['memory_fts MATCH ?'];
+    const params = [ftsQuery];
+    if (userId) { clauses.push('user_id = ?'); params.push(userId); }
+    if (visibility?.mode === 'perChat') {
+      clauses.push('EXISTS (SELECT 1 FROM json_each(memory_fts.sources) WHERE CAST(value AS TEXT) = ?)');
+      params.push(String(chatKey || ''));
+    }
+    if (visibility?.hidePrivateInGroup && String(chatKey || '').startsWith('group:')) {
+      clauses.push("NOT EXISTS (SELECT 1 FROM json_each(memory_fts.sources) WHERE substr(CAST(value AS TEXT), 1, 8) = 'private:')");
+    }
     try {
       return this.db.prepare(`SELECT doc_id,user_id,name,content,kind,created_at,observed_at,origin,sources,tokens,
-        bm25(memory_fts) AS rank FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?`)
-        .all(ftsQuery, MAX_CANDIDATES);
+        bm25(memory_fts) AS rank FROM memory_fts WHERE ${clauses.join(' AND ')} ORDER BY rank LIMIT ?`)
+        .all(...params, MAX_CANDIDATES);
     } catch (error) {
       this.error = String(error?.message || error);
       return [];
@@ -167,7 +178,7 @@ export class MemorySearchIndex {
     if (!queryTokens.length) return [];
     if (!this.#ensureIndex(members)) return [];
     const wantedUser = String(userId || '').trim();
-    const rows = this.#rows(queryTokens);
+    const rows = this.#rows(queryTokens, { userId: wantedUser, chatKey, visibility });
     const qset = new Set(queryTokens);
     const now = Date.now();
     const scored = [];

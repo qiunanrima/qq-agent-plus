@@ -74,6 +74,23 @@ function closeServer(server) {
   server.closeAllConnections?.();
 }
 
+test('图片探测在 HTTP/1 和 HTTP/2 响应头处拒绝网页，不等待正文', async (t) => {
+  setRuntimeConfig({ ...structuredClone(DEFAULT_CONFIG), security: { allowPrivateImageHosts: true } });
+  for (const h2 of [false, true]) {
+    const handler = (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.flushHeaders();
+      // 故意不结束响应：必须在响应头处拒绝，不能等到总超时。
+    };
+    const server = h2 ? http2.createSecureServer({ key: TLS_KEY, cert: TLS_CERT }, handler) : http.createServer(handler);
+    const port = await listen(server);
+    t.after(() => closeServer(server));
+    await assert.rejects(safeFetchBinary(`${h2 ? 'https://pinned.test' : 'http://127.0.0.1'}:${port}/page`, 1024, AbortSignal.timeout(2000), {
+      acceptContentType: (type) => type.startsWith('image/')
+    }), (error) => error.code === 'UNSUPPORTED_CONTENT_TYPE');
+  }
+});
+
 test('safeFetchBinary rejects an oversized response instead of returning truncated bytes', async (t) => {
   setRuntimeConfig({
     ...structuredClone(DEFAULT_CONFIG),

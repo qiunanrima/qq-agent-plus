@@ -22,6 +22,7 @@ import { appendAudit, queryAudit } from '../core/audit-log.js';
 import { lastTraceId, createLogger } from '../core/logger.js';
 import { customSearch, webSearch } from '../llm/web-search.js';
 import { OneBotClient, segmentsToText, extractMediaFromSegments, expandForwardNodes } from '../onebot/onebot.js';
+import { cacheImageLinks } from '../onebot/image-links.js';
 import { faceNameOf } from '../onebot/face-catalog.js';
 import { readForwardMessages, readForwardNodesById, forwardResIdFromSegment } from '../onebot/forward-reader.js';
 import { ChatStore } from '../core/store.js';
@@ -1313,6 +1314,17 @@ export function createApp({
       return;
     }
     if (!text && !media.length) return;
+    if (!isSelf && cfgNow.messageTypes?.images !== false && !store.findByMid(chatKey, event.message_id)) {
+      // 只探测用户实际发出的文本，不探测由引用预览/卡片摘要拼出的链接。
+      const linkText = segments
+        ? segments.filter((segment) => segment?.type === 'text').map((segment) => String(segment.data?.text || '')).join('\n')
+        : String(event.raw_message ?? event.message ?? '');
+      const linkedImages = await cacheImageLinks(linkText, { media });
+      if (linkedImages.length) {
+        media.push(...linkedImages);
+        text += '\n[链接图片]';
+      }
+    }
     const message = {
       mid: event.message_id,
       ts: event.time ? Math.round(Number(event.time) * 1000) : Date.now(),

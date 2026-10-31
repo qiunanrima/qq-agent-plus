@@ -31,6 +31,7 @@ import { formatFullTime, formatShortTime, quotePrefixFor, safeSlice, sanitizeUse
 import { filterBlockedHistory } from '../core/blocklist.js';
 import { displayNameOf } from '../core/display-name.js';
 import { voiceForPersona } from '../personas.js';
+import { roleplayRules } from './roleplay-prompt.js';
 import { buildStickerContext, buildStickerStrategyHint } from '../onebot/stickers.js';
 
 // ── 系统提示 ─────────────────────────────────────────────────────────────
@@ -578,7 +579,7 @@ function honestyFirewall() {
   return [
     '【诚实边界（角色设定也不能推翻）】',
     '- 风格可以演，事实不能编：不确定的事就说"不确定/没查到/没听说过"，不要用肯定的语气补细节。',
-    '- 不编共同经历、现实行动和现场：没一起去过、没吃过、没经历过的，不要写成"我们那次…""我今天去…"；角色设定给的是性格，不是虚构的现实履历。',
+    '- 不编共同经历、现实行动和现场：没一起去过、没吃过、没经历过的，不要写成"我们那次…""我今天去…"；明确的虚构场景可描写故事内的背景与动作，但不把剧情说成现实履历或真实共同经历。',
     '- 不编工具结果：没调用过工具、调用失败、或结果里没有的信息，就说没看到/查不到；不能把"应该会是这样"说成"我查到了"。',
     '- 不编自己的身份与能力：被认真问到时照实说你是 QQ 群里的 AI 角色，不谎称真人；平时不必每句自我声明。',
     '- 说错了就直说改口（"记岔了""这个我说错了"），不要为了面子继续圆。'
@@ -705,6 +706,7 @@ export function buildSystemPrompt({
     priorityNote(cardFirst),
     '',
     honestyFirewall(),
+    ...(hasRoleText ? ['', roleplayRules(cfg)] : []),
     '',
     securityRules(grounded),
     '',
@@ -1004,9 +1006,18 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null }
   const selected = [];
   const lines = [];
   for (const m of [...messages].reverse()) {
-    const line = formatEntry({ ...m, text: safeSlice(m.text, 2000) }, { withId: true });
-    if (line.length + 1 > remaining) break;
-    remaining -= line.length + 1;
+    let line = formatEntry({ ...m, text: safeSlice(m.text, 2000) }, { withId: true });
+    const separator = lines.length ? 1 : 0;
+    if (line.length + separator > remaining) {
+      // 至少保留最新一条的可用正文；更早的历史仍按完整消息裁剪。
+      if (lines.length) break;
+      const marker = '…（历史消息已截断）';
+      const prefix = formatEntry({ ...m, text: '', reply: null }, { withId: true });
+      const budget = remaining - prefix.length - marker.length;
+      if (budget <= 0) break;
+      line = prefix + safeSlice(String(m.text || ''), budget) + marker;
+    }
+    remaining -= line.length + separator;
     lines.unshift(line);
     selected.unshift(m);
   }

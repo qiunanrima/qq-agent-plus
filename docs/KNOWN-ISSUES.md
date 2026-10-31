@@ -45,8 +45,6 @@ quiet 保存后误报未保存、保存双写/暂停半生效/并发保存旧快
 - 控制台备份/恢复若把备份口令放在 `QQ_AGENT_BACKUP_KEY`，会经 `systemd-run --setenv` 进入
   进程参数与 transient unit 环境（同机可见）；建议改为 0600 临时 key 文件 + `*_KEY_FILE`
   （`src/console/app.js:5939`）。
-- `web_search` 没有把本轮 AbortSignal 传进聚合搜索链，超时/暂停后底层 provider 请求仍会
-  跑 60–75s，批次重试时可能重复计费（`src/tools/tools-core.js:3126`）。
 - cron 提醒在 DST 切换日按传统 cron 语义处理：秋季回拨的重复小时会触发两次，春季跳过的
   挂钟时间当天不触发（daily/weekly 则顺延到跳变后）。这是有意保留的差异，因为 cron 本身
   允许一天多次触发，不能按"每个本地日期一次"去重（`src/core/reminders.js:198`）。

@@ -357,6 +357,7 @@ export class MemoryStore {
     }
     if (!picked.length) return '';
     const lines = ['【对群友的全局印象】'];
+    const perPerson = [];
     for (const m of picked.slice(0, 20)) {
       // 名字与正文都过一遍弱化：印象是持久化后每次运行都注入提示词的，正文里若带着
       // 【安全规则】这类段头（模型转述、工具结果带进来的），必须在这里再挡一次。
@@ -372,7 +373,8 @@ export class MemoryStore {
             : age < 30 * 86400000 ? '，有一阵没聊了' : '';
         who += `（关系：${relationshipLabel(m.relationship.interactions)}${recent}）`;
       }
-      const recent = [...m.impressions].sort((a, b) => (b.lastObservedAt || b.createdAt) - (a.lastObservedAt || a.createdAt)).slice(0, 3).reverse();
+      const recent = [...m.impressions].sort((a, b) => (b.lastObservedAt || b.createdAt) - (a.lastObservedAt || a.createdAt)).slice(0, 3);
+      const personLines = [];
       // 带上日期：模型才能判断"这是昨天还是两周前"，别把过期印象当现状用。
       // 今年的省掉年份（[09-20]），往年的必须带年份（[2025-12-20]）——
       // 只有 MM-DD 时跨年无法判断，甚至会被读成"还没到的那天"。
@@ -384,7 +386,14 @@ export class MemoryStore {
         const at = Number.isFinite(raw) && raw > 0 && raw <= 8.64e15 - ZONE_OFFSET_MS ? raw : 0;
         const key = at ? todayKey(at) : '';
         const stamp = !key ? '日期未知' : (key.startsWith(thisYear) ? key.slice(5) : key);
-        lines.push(`- ${who}：[${stamp}] ${sanitizeUserText(e.content)}`);
+        personLines.push(`- ${who}：[${stamp}] ${sanitizeUserText(e.content)}`);
+      }
+      perPerson.push(personLines);
+    }
+    // 先给每个人一条最新印象，再补第二/三条，避免前几个人占满预算。
+    for (let depth = 0; depth < 3; depth++) {
+      for (const personLines of perPerson) {
+        if (personLines[depth]) lines.push(personLines[depth]);
       }
     }
     // 按行截断：直接 slice 字符串会把某条印象切成半句，模型读到半句话更糟。
@@ -394,11 +403,11 @@ export class MemoryStore {
     let used = 0;
     for (const line of lines) {
       const cost = line.length + (out.length ? 1 : 0);
-      if (used + cost > blockCap) break;
+      if (used + cost > blockCap) continue;
       out.push(line);
       used += cost;
     }
-    return out.join('\n');
+    return out.length > 1 ? out.join('\n') : '';
   }
   consolidationState(chatKey) {
     const members = this.people.members(chatKey); const meta = readJson(metaFile(chatKey), {}) || {};

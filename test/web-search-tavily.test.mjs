@@ -88,7 +88,7 @@ test('tavilySearch：未配置 Key 明确报错；HTTP 错误带状态码与响�
   await assert.rejects(() => tavilySearch('q'), /HTTP 429/);
 });
 
-test('aggregateSearch：单源失败不影响整体；剥 query 去重保留优先级高的源；每源条数截断', async () => {
+test('aggregateSearch：单源失败不影响整体；去除追踪参数后去重；每源条数截断', async () => {
   setWebSearch({
     provider: 'aggregate',
     aggregate: { sources: ['tavily', 'doubao', 'bing'], count: 2 },
@@ -104,7 +104,7 @@ test('aggregateSearch：单源失败不影响整体；剥 query 去重保留优�
       { title: 'T第三条', url: 'https://x.example/9', content: 't9' }
     ] }) };
     return { ok: true, json: async () => ({ Result: { WebResults: [
-      { Title: '共同页', Url: 'https://x.example/1?ref=q', Summary: 'doubao版' },
+      { Title: '共同页', Url: 'https://x.example/1?utm_source=q', Summary: 'doubao版' },
       { Title: 'D独有', Url: 'https://x.example/3', Summary: 'd3' },
       { Title: 'D独有2', Url: 'https://x.example/4', Summary: 'd4' }
     ] } }) };
@@ -117,7 +117,7 @@ test('aggregateSearch：单源失败不影响整体；剥 query 去重保留优�
     'tavily:https://x.example/1',
     'tavily:https://x.example/2',
     'doubao:https://x.example/3'
-  ], 'count=2 每源截 2 条；剥 query 后同 URL 去重保留前面的源');
+  ], 'count=2 每源截 2 条；去追踪参数后同 URL 去重保留前面的源');
   assert.equal(r.results[0].snippet, 'tavily版', '重复 URL 保留优先级高的源的内容');
   assert.equal(r.results[0].source, 'tavily', '结果带 source 标注');
 });
