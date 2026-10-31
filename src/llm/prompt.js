@@ -326,7 +326,7 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '', cardFirst
     const triggers = [];
     if (canViewImages) {
       viewTools.push('get_message_images');
-      triggers.push(`消息里出现 [图片] / [表情包]${canSeeVideo ? ' / [视频]' : ''}`);
+      triggers.push(`消息里出现 [图片] / [链接图片] / [表情包]${canSeeVideo ? ' / [视频]' : ''}`);
     }
     if (stickerOn && canViewStickers) {
       viewTools.push('get_sticker_image');
@@ -336,6 +336,7 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '', cardFirst
       stickerBits.push(`- ${triggers.join('，或')}时，可以用 ${viewTools.join(' / ')} 看图（你能直接看懂图片内容），再自然回应；不要假装看不到图，也不要编造图片内容；工具获取失败就老实说看不到。`);
     }
     if (canViewImages) {
+      stickerBits.push('- 卡片不等于网页：卡片或文本包含图片直链（如 qqbot.ugcimg.cn 的无扩展名链接）时，用该条消息的 #id 调 get_message_images；它会识别并缓存链接图片。不要因为消息是卡片就断言不能看图，也不要用 web_fetch 把图片当网页正文读取。');
       stickerBits.push(cardFirst
         ? '- 【看图先读情绪，别描述画面】别人发图/表情包时，先判断它传达的态度（无语、嘲讽、卖萌、赞同、震惊、摆烂、委屈、敷衍等），再直接对那个态度说话；不要描述画面、也不要逐帧解释。拿不准就按角色设定回应，别硬编情绪。'
         : '- 【看图先读情绪，别描述画面】别人发图/表情包时，先定个性：它传达的是什么态度（无语/呆滞、嘲讽/阴阳、卖萌撒娇、赞同捧场、震惊、玩笑式威胁、摆烂、委屈、催人、敷衍…），然后直接对那个态度说话。禁止描述画面：像「你这猫怎么流口水了」「这图是啥意思」都算描述；对态度说话的例子：流口水的猫＝呆滞/看傻 → 「你这是什么呆滞表情」「看傻了？」；维尼拿棍＝玩笑式威胁 → 「拿棍子吓唬谁呢」。拿不准就轻描淡写回一句，别硬编情绪、也别逐帧解释。');

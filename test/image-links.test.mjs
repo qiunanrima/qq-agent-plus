@@ -11,8 +11,9 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-image-links-'));
 process.env.QQ_AGENT_DATA_DIR = dir;
 process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
 const { DEFAULT_CONFIG, setRuntimeConfig, updateConfig } = await import('../src/core/config.js');
-const { cacheImageLinks, imageLinkCandidates, readCachedImageLink } = await import('../src/onebot/image-links.js');
+const { cacheImageLinks, imageLinkCandidates, imageLinkTextFromSegments, readCachedImageLink } = await import('../src/onebot/image-links.js');
 const { buildToolDefs } = await import('../src/tools/tools-core.js');
+const { buildSystemPrompt } = await import('../src/llm/prompt.js');
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6aUAAAAASUVORK5CYII=', 'base64');
 const origin = 'http://203.0.113.90';
 
@@ -43,6 +44,52 @@ test('提取裸链接与 Markdown 链接，保留查询参数，去重并限制�
   assert.deepEqual(imageLinkCandidates(`${origin}/a?token=1&size=2。 ${origin}/image_(1)`), [`${origin}/a?token=1&size=2`, `${origin}/image_(1)`]);
   assert.equal(imageLinkCandidates(Array.from({ length: 8 }, (_, i) => `${origin}/${i}`).join(' ')).length, 4);
   assert.deepEqual(imageLinkCandidates('file:///a.png http://user:password@example.com/a.png'), []);
+});
+
+test('从 JSON 对象/字符串和 XML 卡片提取真实链接，不依赖展示摘要或图片扩展名', () => {
+  const url = 'https://qqbot.ugcimg.cn/102076836/2bbcb45c/opaque?token=1&size=2';
+  const card = { app: 'com.tencent.structmsg', meta: { news: { preview: `${origin}/cover.png`, title: '一张图', jumpUrl: url } } };
+  for (const data of [card, JSON.stringify(card)]) {
+    assert.deepEqual(imageLinkCandidates(imageLinkTextFromSegments([{ type: 'json', data: { data } }])), [url]);
+  }
+  const xml = `<msg url="${url.replace('&', '&amp;')}"><item><picture cover="${origin}/cover.png" /></item></msg>`;
+  assert.deepEqual(imageLinkCandidates(imageLinkTextFromSegments([{ type: 'xml', data: { data: xml } }])), [url]);
+  assert.deepEqual(imageLinkCandidates(imageLinkTextFromSegments([{ type: 'reply', data: { text: `${origin}/quoted` } }])), []);
+  assert.deepEqual(imageLinkCandidates(imageLinkTextFromSegments(null, `[卡片 ${url}]`)), [url]);
+});
+
+test('模型指引把链接图片与卡片直链交给现有识图工具', () => {
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.api.vision = true;
+  setRuntimeConfig(cfg);
+  assert.match(buildToolDefs().find((tool) => tool.name === 'get_message_images').description, /不要求原消息必须有 image 段/);
+  assert.match(buildSystemPrompt(), /卡片不等于网页/);
+});
+
+test('修复前的卡片存档可由取图工具补识别、缓存并返回视觉输入', async (t) => {
+  setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
+  const calls = stubImages(t, () => ({}));
+  for (const refreshed of [true, false]) {
+    const url = `${origin}/legacy-card-${refreshed}`;
+    let appended;
+    const result = await buildToolDefs().find((tool) => tool.name === 'get_message_images').execute({
+      chatKey: 'group:1',
+      store: {
+        findByMid: () => ({ mid: '77', text: `[卡片 ${url}]`, media: [] }),
+        updateByMid: (chatKey, mid, patch) => { appended = patch.appendMedia; }
+      },
+      onebot: { getMsg: async () => {
+        if (!refreshed) throw new Error('source expired');
+        return { message: [{ type: 'json', data: { data: JSON.stringify({ meta: { news: { url } } }) } }] };
+      } },
+      stickers: { find: async () => null }
+    }, { messageId: '77' });
+    assert.equal(result.isError, undefined);
+    assert.ok(result.content.some((part) => part.type === 'image_url'));
+    assert.equal(appended[0].url, url);
+    assert.ok(await readCachedImageLink(appended[0].cacheKey));
+  }
+  assert.equal(calls.length, 2);
 });
 
 test('无扩展名的真实图片缓存后进入普通识图工具，源失效也不重下载', async (t) => {
@@ -165,4 +212,19 @@ test('消息接入将文本图片链接入库并标注；图片关闭或黑名�
   await wait(504);
   assert.equal(app.store.findByMid('group:1', 503), null);
   assert.equal(calls.length, 1);
+  // 用户报告的形态：没有 text/image 段，只有卡片段中的无后缀图床链接。
+  for (const [mid, type] of [[505, 'json'], [506, 'xml']]) {
+    const url = `${origin}/opaque-card-${type}`;
+    const message = event(mid, '');
+    message.message = [{ type, data: { data: type === 'json'
+      ? JSON.stringify({ app: 'com.tencent.structmsg', meta: { news: { url } } })
+      : `<msg url="${url}" />` } }];
+    app.onebot.onEvent(message);
+    const card = await wait(mid);
+    assert.match(card.text, /卡片/);
+    assert.match(card.text, /链接图片/);
+    assert.equal(card.media[0].url, url);
+    assert.ok(await readCachedImageLink(card.media[0].cacheKey));
+  }
+  assert.equal(calls.length, 3);
 });

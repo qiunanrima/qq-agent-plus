@@ -174,7 +174,7 @@ import { searchKnowledge } from '../knowledge/store.js';
 import { assertPublicUrlLiteral, validateImageUrl } from '../llm/safe-fetch.js';
 import { webSearch, webFetch } from '../llm/web-search.js';
 import { expandForwardNodes, extractMediaFromSegments } from '../onebot/onebot.js';
-import { readCachedImageLink } from '../onebot/image-links.js';
+import { cacheImageLinks, imageLinkTextFromSegments, readCachedImageLink } from '../onebot/image-links.js';
 import { readForwardMessages, readForwardNodesById } from '../onebot/forward-reader.js';
 import { convertGifToStillStrip, convertVideoToFrameStrip, convertStillImageToJpeg, fetchOversizedImageAsJpeg } from './image-downsample.js';
 import { transcribeMessageAudio } from './audio-transcribe.js';
@@ -529,10 +529,11 @@ function resolveMessageTarget(ctx, { replyToMessageId, atUserId } = {}) {
  */
 async function currentMessageImageUrls(ctx, entry) {
   let media = entry.media || [];
+  let segments = null;
   if (entry.mid != null && typeof ctx.onebot?.getMsg === 'function') {
     try {
       const data = await ctx.onebot.getMsg(entry.mid);
-      const segments = Array.isArray(data?.message) ? data.message : [];
+      segments = Array.isArray(data?.message) && data.message.length ? data.message : null;
       const fresh = extractMediaFromSegments(segments)
         .filter((item) => (item.kind === 'image' || item.kind === 'video') && (item.url || item.file));
       if (fresh.length) {
@@ -545,6 +546,15 @@ async function currentMessageImageUrls(ctx, entry) {
       }
     } catch {
       // Stored URLs remain a best-effort fallback when the source message expired.
+    }
+  }
+  // 修复前已入库的卡片没有 image 媒体：取图时也补探测，不能只修未来的新消息。
+  if (getConfig().messageTypes?.images !== false) {
+    const linked = await cacheImageLinks(imageLinkTextFromSegments(segments, entry.text), { media, signal: ctx.signal });
+    ctx.signal?.throwIfAborted();
+    if (linked.length) {
+      media = [...media, ...linked];
+      ctx.store?.updateByMid?.(ctx.chatKey, entry.mid, { appendMedia: linked });
     }
   }
   return media
@@ -573,9 +583,10 @@ function imageParts(text, dataUrls) {
  *  只会白烧一轮（与 memoryQueryDescription 同一个口径：描述跟着配置走）。 */
 function getMessageImagesDescription() {
   const videoFrames = getConfig().messageTypes?.videoFrames !== false;
-  return videoFrames
+  const description = videoFrames
     ? '查看某条消息里的图片/表情/**视频画面**（视觉模型可以直接看懂）。消息文本出现 [图片] / [表情包] / [视频] 时可用；视频会抽 4 帧拼成 2×2 帧条，配 get_message_audio 听声音就能把视频"看+听"齐。id 用聊天记录里每条消息前的 #数字。'
     : '查看某条消息里的图片/表情（视觉模型可以直接看懂）。消息文本出现 [图片] / [表情包] 时可用。**这条消息里的视频画面看不到**（「消息类型」页关掉了视频画面），视频只有声音，用 get_message_audio 转写。id 用聊天记录里每条消息前的 #数字。';
+  return description + ' [链接图片] 同样用此工具查看；卡片或文本里的图片直链（包括 qqbot.ugcimg.cn 无扩展名链接）也支持补识别并缓存，不要求原消息必须有 image 段。';
 }
 
 function memoryQueryDescription() {

@@ -31,6 +31,46 @@ export function imageLinkCandidates(text) {
   return urls;
 }
 
+// 从原始段读取，不能只扫描 cardToText 的展示摘要：摘要会省略 .png 等图片链接。
+// 卡片的跳转链接优先，图标/封面不当成用户分享的正文图片。
+export function imageLinkTextFromSegments(segments, fallbackText = '') {
+  if (!Array.isArray(segments)) return String(fallbackText || '');
+  const chunks = [];
+  const targets = [];
+  let visited = 0;
+  const walk = (value, depth = 0, key = '') => {
+    if (++visited > 512 || depth > 8) return;
+    if (/^(?:icon|preview|cover|thumb(?:nail)?|avatar|image|pic)(?:url)?$/i.test(key)) return;
+    if (typeof value === 'string') {
+      if (value.length > 65536) return;
+      if (/^(?:url|jump_?url|qqdocurl|href|target_?url|content_?jump_?url)$/i.test(key)) targets.push(value);
+      else chunks.push(value);
+    } else if (value && typeof value === 'object') {
+      for (const [name, child] of Object.entries(value)) {
+        walk(child, depth + 1, name);
+        if (visited > 512) break;
+      }
+    }
+  };
+  for (const segment of segments) {
+    if (segment?.type === 'text') chunks.push(String(segment.data?.text || ''));
+    if (!['json', 'xml'].includes(segment?.type)) continue;
+    const raw = segment.data?.data;
+    if (raw && typeof raw === 'object') walk(raw);
+    else if (typeof raw === 'string' && raw.length <= 262144) {
+      try { walk(JSON.parse(raw)); }
+      catch {
+        // XML 卡片：只读取跳转属性和文字，不把封面图片/图标属性混进来。
+        const source = raw.replace(/&amp;/gi, '&').replace(/\\\//g, '/');
+        for (const match of source.matchAll(/\b(?:url|jump_?url|href|qqdocurl)\s*=\s*["']([^"']+)["']/gi)) targets.push(match[1]);
+        chunks.push(source.replace(/<[^>]*>/g, ' '));
+      }
+    }
+    if (visited > 512) break;
+  }
+  return [...targets, ...chunks].join('\n');
+}
+
 export async function readCachedImageLink(key) {
   const file = filename(key);
   if (!file) return null;
