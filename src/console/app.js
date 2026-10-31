@@ -27,6 +27,7 @@ import { faceNameOf } from '../onebot/face-catalog.js';
 import { readForwardMessages, readForwardNodesById, forwardResIdFromSegment } from '../onebot/forward-reader.js';
 import { ChatStore } from '../core/store.js';
 import { MemoryStore } from '../memory/memory.js';
+import { resetAllMemory } from '../memory/reset.js';
 import { LivingMemoryRuntime } from '../living-memory/runtime.js';
 import { StickerManager } from '../onebot/sticker-manager.js';
 import { SendQueue } from '../onebot/sender.js';
@@ -3976,6 +3977,22 @@ export function createApp({
     }
   });
 
+  router.add('POST', '/api/memory/reset-all', async (req, res) => {
+    const body = await readBody(req).catch(() => ({}));
+    if (body.confirm !== true || body.scope !== 'all') return json(res, 409, { error: '清除所有记忆需要显式确认：confirm=true、scope=all' });
+    try {
+      const result = resetAllMemory({
+        dataDir: DATA_DIR, memory, livingMemory, store, assets: assetObserver, orchestrator,
+        identityBusy: Boolean(identityPilot?.friendReviewTasks?.size)
+      });
+      auditWrite('memory.reset-all', 'memory:all', { req, backupId: result.backupId, cleared: result.cleared });
+      emit('memory-update', { chatKey: '', phase: 'reset-all' });
+      emit('living-memory-update', { phase: 'reset-all' });
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, error.statusCode || 500, { error: String(error.message || error) });
+    }
+  });
   router.add('GET', '/api/memory-files', async (req, res) => {
     const files = memory.listChats().map((chatKey) => {
       const members = memory.members(chatKey);

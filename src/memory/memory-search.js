@@ -234,4 +234,13 @@ export class MemorySearchIndex {
     this.db = null;
     this.opened = true;
   }
+  clearAll() {
+    if (this.db) this.db.exec('DELETE FROM memory_fts; DELETE FROM meta;');
+    this.lastSignature = '';
+    // 没打开过的索引也必须失效，防止旧派生正文继续留在磁盘。
+    if (!this.db && fs.existsSync(this.file)) {
+      const db = openDatabase(this.file);
+      try { db.exec('DELETE FROM memory_fts; DELETE FROM meta;'); } finally { db.close(); }
+    }
+  }
 }

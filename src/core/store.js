@@ -977,6 +977,20 @@ export class ChatStore {
       return changed;
     });
   }
+  contextResetSnapshot() {
+    return {
+      threads: this.db.prepare('SELECT * FROM conversation_threads').all(),
+      turns: this.db.prepare('SELECT * FROM thread_turns').all(),
+      checkpoints: this.db.prepare('SELECT * FROM thread_checkpoints').all()
+    };
+  }
+  clearAllContext() {
+    return this.#transaction(() => {
+      const threads = Number(this.db.prepare('SELECT COUNT(*) AS n FROM conversation_threads').get().n);
+      this.db.exec('DELETE FROM thread_turns; DELETE FROM thread_checkpoints; DELETE FROM conversation_threads;');
+      return { threads };
+    });
+  }
 
   appendThreadTurns(chatKey, threadId, runId, messages = []) {
     if (!Array.isArray(messages) || !messages.length) return { added: 0, chars: 0 };

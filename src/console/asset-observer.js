@@ -738,4 +738,18 @@ export class AssetObserver {
   identitySnapshot({ limit = 500, query = '' } = {}) {
     return readIdentityAssets(this.dataDir, limit, query);
   }
+  memoryResetSnapshot() {
+    const active = this.getIdentityPilot?.()?.identityStore;
+    if (active) return active.memoryResetSnapshot();
+    if (!fs.existsSync(identityDatabasePath(this.dataDir))) return null;
+    const store = new IdentityStore({ dataDir: this.dataDir, recoverRuntimeState: false });
+    try { return store.memoryResetSnapshot(); } finally { store.close(); }
+  }
+  clearMemoryProfiles() {
+    const active = this.getIdentityPilot?.()?.identityStore;
+    if (active) return active.clearMemoryProfiles();
+    if (!fs.existsSync(identityDatabasePath(this.dataDir))) return { profiles: 0 };
+    const store = new IdentityStore({ dataDir: this.dataDir, recoverRuntimeState: false });
+    try { return store.clearMemoryProfiles(); } finally { store.close(); }
+  }
 }

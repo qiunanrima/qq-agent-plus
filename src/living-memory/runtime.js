@@ -119,6 +119,7 @@ export class LivingMemoryRuntime {
     this.lastRecall = new Map();
     this.pruneTimer = null;
     this.stopped = false;
+    this.activeFlushes = 0;
   }
 
   config() { return normalizeLivingMemoryConfig(this.getConfig()?.livingMemory); }
@@ -222,6 +223,12 @@ export class LivingMemoryRuntime {
   }
 
   async flush(chatKey) {
+    this.activeFlushes++;
+    try { return await this.flushBatch(chatKey); }
+    finally { this.activeFlushes--; }
+  }
+
+  async flushBatch(chatKey) {
     clearTimeout(this.timers.get(chatKey));
     this.timers.delete(chatKey);
     const batch = this.pending.get(chatKey) || [];
@@ -284,6 +291,25 @@ export class LivingMemoryRuntime {
       embedding: { configured: embedding.enabled, model: embedding.model, dimensions: embedding.dimensions },
       stats: emptyStats()
     };
+  }
+  createResetBackup(file) {
+    return this.withResetStore((store) => { store.createResetBackup(file); return true; }) || false;
+  }
+  withResetStore(action) {
+    if (this.service) return action(this.service.store);
+    if (!fs.existsSync(this.databaseFile)) return null;
+    // 清理停用模块时只开一个维护连接，不启动运行时或定时器。
+    const service = new LivingMemoryService({ file: this.databaseFile, embeddingConfig: readLivingMemoryEmbeddingConfig() });
+    try { return action(service.store); } finally { service.close(); }
+  }
+  clearAll() {
+    if (this.activeFlushes) throw new Error('长期记忆正在提炼，请等待完成后再清除');
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
+    this.pending.clear();
+    this.retries.clear();
+    this.lastRecall.clear();
+    return this.withResetStore((store) => store.clearAll()) || { memories: 0, turns: 0 };
   }
 
   list(options) {

@@ -139,6 +139,24 @@ export class MemoryStore {
   close() {
     this.searchIndex.close();
   }
+  resetSnapshot() {
+    return {
+      people: this.people.resetSnapshot(),
+      chats: this.listChats().map((chatKey) => ({ chatKey, handoff: this.getHandoff(chatKey), meta: readJson(metaFile(chatKey), {}) }))
+    };
+  }
+  clearAll() {
+    const chats = this.listChats();
+    const result = this.people.clearAll();
+    let handoffs = 0;
+    for (const chatKey of chats) {
+      if (fs.existsSync(handoffFile(chatKey))) handoffs++;
+      fs.rmSync(handoffFile(chatKey), { force: true });
+      writeJson(metaFile(chatKey), { lastConsolidatedAt: Date.now() });
+    }
+    this.searchIndex.clearAll();
+    return { ...result, handoffs };
+  }
   listChats() {
     const out = new Set(this.people.listSourceChats());
     try {

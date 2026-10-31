@@ -10,6 +10,7 @@ import { saveMemberNote } from './pages/memory.js';
   let people = [];
   let selectedKey = '';
   let loadSeq = 0;
+  let searchSeq = 0;
 
 
   const fmtTime = (ts) => {
@@ -389,6 +390,7 @@ import { saveMemberNote } from './pages/memory.js';
   }
 
   async function searchMemory() {
+    const seq = ++searchSeq;
     const input = document.getElementById('gm-search-query');
     const box = document.getElementById('gm-search-results');
     const button = document.getElementById('gm-search-btn');
@@ -406,6 +408,7 @@ import { saveMemberNote } from './pages/memory.js';
       const params = new URLSearchParams({ query, limit: '8' });
       if (chatKey) params.set('chatKey', chatKey);
       const result = await api(`/api/memory/search?${params}`);
+      if (seq !== searchSeq) return;
       const rows = Array.isArray(result?.results) ? result.results : [];
       box.innerHTML = rows.length ? rows.map((entry) => `
         <div class="gm-search-result">
@@ -414,6 +417,7 @@ import { saveMemberNote } from './pages/memory.js';
           <small>${esc(fmtTime(entry.lastObservedAt || entry.createdAt))} · 相关度 ${Number(entry.score || 0).toFixed(2)}${entry.origin === 'manual' ? ' · 手写' : ''}</small>
         </div>`).join('') : '<div class="gm-empty">没有找到相关记忆；换一个更具体的关键词/人名再试。</div>';
     } catch (error) {
+      if (seq !== searchSeq) return;
       box.innerHTML = `<div class="gm-empty">检索失败：${esc(error?.message || error)}</div>`;
     } finally {
       button.disabled = false;
@@ -425,6 +429,7 @@ import { saveMemberNote } from './pages/memory.js';
     if (event.key === 'Enter') { event.preventDefault(); void searchMemory(); }
   });
   document.getElementById('gm-search-clear')?.addEventListener('click', () => {
+    searchSeq++;
     const input = document.getElementById('gm-search-query');
     const box = document.getElementById('gm-search-results');
     if (input) input.value = '';
@@ -496,6 +501,30 @@ import { saveMemberNote } from './pages/memory.js';
   }
 
   const newImpressionDetails = document.getElementById('gm-newimp');
+  document.getElementById('gm-reset-all')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    const status = document.getElementById('gm-reset-status');
+    try {
+      const confirmed = await askForConfirmation('清除所有群聊和私聊的记忆与群友印象？\n\n将清除：全部人物印象与熟悉度、人物档案中的印象、会话交接、线程上下文与检查点、长期语义记忆及其向量和来源回合。\n\n操作会暂停机器人并先备份；有在途任务时本次不会删除，请等任务结束后重试。\n\n保留：聊天原始存档、备注、白名单、角色卡、模型配置及已有备份。恢复回复后，旧聊天存档仍可能被读取或重新提炼为记忆。\n\n清除后保持暂停，由你检查结果并手动恢复回复。');
+      if (!confirmed) return;
+      searchSeq++; // 清空前发出的检索响应不能把旧印象重新显示到页面。
+      if (status) status.textContent = '正在暂停、备份并清除，请勿重复操作…';
+      const result = await api('/api/memory/reset-all', {
+        method: 'POST', body: JSON.stringify({ confirm: true, scope: 'all' })
+      });
+      state.paused = true;
+      selectedKey = '';
+      noteDraft = { key: '', value: '' };
+      const search = document.getElementById('gm-search-results');
+      if (search) search.innerHTML = '';
+      await loadGlobalMemory(true);
+      if (status) status.textContent = `已清除，机器人保持暂停。备份编号：${result.backupId}。检查后可在顶部恢复回复。`;
+    } catch (error) {
+      if (status) status.textContent = `未确认全部清除成功：${error?.message || error}。请检查状态，不要重复点击。`;
+    } finally { button.disabled = false; }
+  });
   newImpressionDetails?.addEventListener('toggle', (event) => {
     if (event.target?.open) fillNewImpressionChats();
   });

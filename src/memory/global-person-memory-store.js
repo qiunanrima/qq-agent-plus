@@ -484,6 +484,21 @@ export class GlobalPersonMemoryStore {
     map.delete(uid); try { fs.rmSync(globalMemberFile(member.userId, member.name), { force: true }); } catch { /* 有意忽略：删残留文件失败仅造成文件残留，数据已先留快照可回滚 */ }
     return true;
   }
+  resetSnapshot() {
+    return structuredClone([...this.#ensure().values()]);
+  }
+  clearAll() {
+    const map = this.#ensure();
+    let impressions = 0;
+    const people = map.size;
+    for (const [key, member] of [...map]) {
+      // 删除失败必须报错，不能只清内存、重启后又出现。
+      fs.rmSync(globalMemberFile(member.userId, member.name), { force: true });
+      impressions += member.impressions.length;
+      map.delete(key);
+    }
+    return { people, impressions };
+  }
   remove({ userId = '', target = '', content = '', sourceChatKey = '' } = {}) {
     const map = this.#ensure();
     const uid = String(userId || '').trim();

@@ -258,7 +258,22 @@ export function readLegacyIdentityMemories(
 }
 
 export class IdentityStore {
-  constructor({ dataDir = DATA_DIR, filename = identityDatabasePath(dataDir) } = {}) {
+  memoryResetSnapshot() {
+    return {
+      people: this.db.prepare('SELECT uin,profile_json,profile_updated_at,legacy_memory_count FROM people').all(),
+      overrides: this.db.prepare('SELECT uin,profile_json FROM identity_asset_overrides').all(),
+      legacy: this.db.prepare('SELECT * FROM legacy_memory_refs').all()
+    };
+  }
+  clearMemoryProfiles() {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const profiles = Number(this.db.prepare("SELECT COUNT(*) AS n FROM people WHERE profile_json != '{}'").get().n);
+      this.db.exec("UPDATE people SET profile_json='{}',profile_updated_at=0,legacy_memory_count=0; UPDATE identity_asset_overrides SET profile_json='{}'; DELETE FROM legacy_memory_refs; COMMIT;");
+      return { profiles };
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  constructor({ dataDir = DATA_DIR, filename = identityDatabasePath(dataDir), recoverRuntimeState = true } = {}) {
     this.filename = filename;
     fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
     this.db = openDatabase(filename);
@@ -428,6 +443,7 @@ export class IdentityStore {
       'opportunity_id',
       "TEXT NOT NULL DEFAULT ''"
     );
+    if (!recoverRuntimeState) return; // 维护连接只处理显式操作，不能把在途好友动作误判为进程重启。
     const now = Date.now();
     this.db.prepare(`
       UPDATE friend_proposals

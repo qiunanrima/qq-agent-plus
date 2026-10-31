@@ -153,6 +153,22 @@ export class LivingMemoryStore {
   close() {
     this.db.close();
   }
+  createResetBackup(file) {
+    this.db.prepare('VACUUM INTO ?').run(file);
+    fs.chmodSync(file, 0o600);
+  }
+  clearAll() {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const memories = Number(this.db.prepare('SELECT COUNT(*) AS n FROM memories').get().n);
+      const turns = Number(this.db.prepare('SELECT COUNT(*) AS n FROM turns').get().n);
+      this.db.exec('DELETE FROM memories; DELETE FROM turns; DELETE FROM operations; COMMIT;');
+      return { memories, turns };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
 
   upsertMemory(raw, { id = '' } = {}) {
     const time = now();
