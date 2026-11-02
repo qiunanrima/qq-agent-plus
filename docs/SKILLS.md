@@ -59,8 +59,8 @@ skills/<id>/
 | id | 名称 | 允许工具 | 用途 |
 | --- | --- | --- | --- |
 | `chat-summary` | 群聊总结 | `get_recent_messages`、`send_message` | 结论 / 分歧 / 待办 |
-| `video-digest` | 视频读懂 | `bilibili__search`、`bilibili__video`、`bilibili__read`、`web_fetch`、`send_message` | 优先用 B 站插件读元数据/字幕/评论；非 B 站链接退回 `web_fetch` |
-| `comment-analysis` | 评论分析 | 同上 | 用 B 站插件拿评论样本，非 B 站页面才 `web_fetch` |
+| `video-digest` | 视频读懂 | `bilibili__search`、`bilibili__video`、`bilibili__read`、`fetch_url`、`send_message` | 优先用 B 站插件读元数据/字幕/评论；非 B 站链接退回 `fetch_url` |
+| `comment-analysis` | 评论分析 | 同上 | 用 B 站插件拿评论样本，非 B 站页面才 `fetch_url` |
 
 ## 技能市场
 

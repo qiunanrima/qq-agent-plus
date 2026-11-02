@@ -621,7 +621,7 @@ function renderSearchSection(c) {
   return `
     <h3 id="settings-search">搜索服务</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-websearch" ${c.webSearch?.enabled !== false ? 'checked' : ''} />
-      <label for="cfg-websearch">联网搜索：启用 web_search / web_fetch 工具</label></div>
+      <label for="cfg-websearch">联网搜索：启用 search_web / fetch_url 工具</label></div>
     <div class="field"><label>搜索提供方</label>
       <select id="cfg-searchprovider">
         <option value="bing" ${prov === 'bing' ? 'selected' : ''}>Bing 网页解析</option>

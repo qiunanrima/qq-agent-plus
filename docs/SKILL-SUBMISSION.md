@@ -22,7 +22,7 @@ my-skill/
   "name": "出行规划",
   "version": "1.0.0",
   "description": "一句话说明这个技能解决什么问题",
-  "allowedTools": ["web_search", "web_fetch", "send_message"],
+  "allowedTools": ["search_web", "fetch_url", "send_message"],
   "triggers": ["帮我规划行程"]
 }
 ```

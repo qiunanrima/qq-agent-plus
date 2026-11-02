@@ -54,7 +54,7 @@ test('current base tool inventory has an explicit scheduler classification', () 
   assert.equal(classes.get('read_forward'), 'ordered-read');
   assert.equal(classes.get('list_stickers'), 'ordered-read');
 
-  assert.equal(classes.get('web_search'), 'parallel-read');
+  assert.equal(classes.get('search_web'), 'parallel-read');
   assert.equal(classes.get('get_message_detail'), 'parallel-read');
   assert.equal(classes.get('finish'), 'terminal');
 
@@ -65,7 +65,7 @@ test('current base tool inventory has an explicit scheduler classification', () 
 
 test('enabled experiment strongly guides same-round finish without mutating base schemas', () => {
   const tools = [
-    { type: 'function', function: { name: 'web_search', description: 'read', parameters: {} } },
+    { type: 'function', function: { name: 'search_web', description: 'read', parameters: {} } },
     { type: 'function', function: { name: 'send_message', description: 'send', parameters: {} } },
     { type: 'function', function: { name: 'send_sticker', description: 'sticker', parameters: {} } },
     { type: 'function', function: { name: 'get_message_images', description: 'image', parameters: {} } },
@@ -87,7 +87,7 @@ test('enabled experiment strongly guides same-round finish without mutating base
 
 test('consecutive read tools execute concurrently but are returned in host order', async () => {
   const calls = [
-    call('a', 'web_search', { query: 'a' }),
+    call('a', 'search_web', { query: 'a' }),
     call('b', 'get_message_detail', { messageId: 1 }),
     call('c', 'send_message', { messages: 'done' }),
     call('d', 'finish', { summary: 'done' })
@@ -111,10 +111,10 @@ test('consecutive read tools execute concurrently but are returned in host order
     }
   });
 
-  const first = await batch.next('web_search', calls[0].function.arguments);
-  assert.equal(first.result.content, 'web_search');
-  assert.deepEqual(starts.slice(0, 2).sort(), ['get_message_detail', 'web_search']);
-  assert.deepEqual(finishes.slice(0, 2), ['get_message_detail', 'web_search']);
+  const first = await batch.next('search_web', calls[0].function.arguments);
+  assert.equal(first.result.content, 'search_web');
+  assert.deepEqual(starts.slice(0, 2).sort(), ['get_message_detail', 'search_web']);
+  assert.deepEqual(finishes.slice(0, 2), ['get_message_detail', 'search_web']);
   assert.equal(peak, 2);
   assert.equal(starts.includes('send_message'), false);
 
@@ -157,8 +157,8 @@ test('ordered image reads stay serial and are never prestarted as a read wave', 
 
 test('parallel read concurrency respects configured limit', async () => {
   const calls = [
-    call('a', 'web_search'),
-    call('b', 'web_fetch'),
+    call('a', 'search_web'),
+    call('b', 'fetch_url'),
     call('c', 'memory_query')
   ];
   let active = 0;
@@ -225,10 +225,10 @@ test('finish is a hard barrier and tools after it never execute', async () => {
 });
 
 test('batch mismatch fails closed to caller fallback instead of guessing call identity', async () => {
-  const calls = [call('a', 'web_search', { query: 'a' })];
+  const calls = [call('a', 'search_web', { query: 'a' })];
   const batch = new ExperimentalToolBatch(calls, {
     execute: async () => ({ content: 'unexpected' })
   });
-  const result = await batch.next('web_search', JSON.stringify({ query: 'different' }));
+  const result = await batch.next('search_web', JSON.stringify({ query: 'different' }));
   assert.equal(result.handled, false);
 });

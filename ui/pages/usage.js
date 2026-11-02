@@ -789,8 +789,8 @@ function updateUsagePage(stats, st, prices) {
   // 所以副标题给的是拆分。原来两个分支写成同一句字面量（死逻辑，2026-10-01 审查）：
   // 真正要区分的是"搜了没抓" / "抓了没搜" / "两者都有"——抓页要下正文、更占上下文。
   const searches = Number(stats?.searchCount) || 0;
-  const searched = Number(stats?.toolCounts?.web_search) || 0;
-  const fetched = Number(stats?.toolCounts?.web_fetch) || 0;
+  const searched = (Number(stats?.toolCounts?.search_web) || 0) + (Number(stats?.toolCounts?.web_search) || 0);
+  const fetched = (Number(stats?.toolCounts?.fetch_url) || 0) + (Number(stats?.toolCounts?.web_fetch) || 0);
   set('search', fmtTok(searches));
   set('search-sub', !searches
     ? '本区间没有联网'
@@ -1379,7 +1379,7 @@ function openToolBreakdown() {
   const say = counts.send_message ? `发了 ${counts.send_message} 条消息` : '一条都没发';
   const poke = counts.send_poke ? `、戳了 ${counts.send_poke} 次` : '';
   const sticker = counts.send_sticker ? `、贴了 ${counts.send_sticker} 张表情` : '';
-  const search = (Number(counts.web_search) || 0) + (Number(counts.web_fetch) || 0);
+  const search = (Number(counts.search_web) || 0) + (Number(counts.fetch_url) || 0) + (Number(counts.web_search) || 0) + (Number(counts.web_fetch) || 0);
   const searchTxt = search ? `、联网查了 ${search} 次` : '';
 
   modelModalShell({

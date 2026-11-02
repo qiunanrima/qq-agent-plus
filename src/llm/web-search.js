@@ -1,7 +1,8 @@
 // 联网搜索（移植自原版 bingSearch）：Bing 中文搜索，无需 API key。
 // 搜索请求本身用普通 fetch（搜索 URL 是管理端配置的可信地址，只需清洗查询词）；
-// 对外抓取网页正文一律走 safe-fetch（web_fetch 工具）。
+// 对外抓取网页正文一律走 safe-fetch（fetch_url 工具）。
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { getConfig } from '../core/config.js';
 import { safeFetch } from './safe-fetch.js';
 import { withTimeWindow } from '../core/time-gate.js';
@@ -11,6 +12,19 @@ import { readJsonBounded, readTextBounded } from '../core/http-body.js';
 // 搜索 API 返回的是结构化短文本，2 MiB 已远超正常结果；Bing 抓的是 HTML 结果页，1 MiB 足够。
 const SEARCH_JSON_MAX_BYTES = 2 * 1024 * 1024;
 const BING_HTML_MAX_BYTES = 1024 * 1024;
+
+// 数量是单次请求的上下文，不能临时改全局配置：不同聊天会并发搜索。
+const searchRequest = new AsyncLocalStorage();
+export function searchCount(value = 5) {
+  if (!Number.isInteger(value) || value < 1 || value > 20) throw new Error('count 必须是 1–20 的整数，默认 5');
+  return value;
+}
+function resultLimit() {
+  return searchRequest.getStore()?.count ?? Math.max(1, Math.min(20, Number(getConfig().webSearch?.maxResults) || 5));
+}
+function providerCount(configured, fallback, maximum) {
+  return Math.min(maximum, Math.max(1, searchRequest.getStore()?.count ?? (Number(configured) || fallback)));
+}
 
 function searchSignal(signal, timeoutMs) {
   signal?.throwIfAborted();
@@ -111,7 +125,7 @@ export async function aggregateSearch(query, { signal } = {}) {
   const configuredSources = (Array.isArray(cfg.sources) && cfg.sources.length ? cfg.sources : ['doubao', 'bing'])
     .map(String);
   const sources = [...new Set(configuredSources)].slice(0, 4);
-  const perSource = Math.max(2, Math.min(6, Number(cfg.count) || 4));
+  const perSource = searchRequest.getStore()?.count ?? Math.max(2, Math.min(6, Number(cfg.count) || 4));
   const settled = await Promise.allSettled(sources.map(async (name) => {
     const fn = { doubao: doubaoSearch, bing: bingSearch, baidu: baiduSearch, zhipu: zhipuSearch, bocha: bochaSearch, metaso: metasoSearch, tavily: tavilySearch, so360: so360Search, sogou: sogouSearch, bilibili: bilibiliSearch }[name];
     if (!fn) throw new Error(`未知搜索源: ${name}`);
@@ -142,7 +156,7 @@ export async function aggregateSearch(query, { signal } = {}) {
 export async function bingSearch(query, { signal } = {}) {
   const cfg = getConfig().webSearch ?? {};
   const searchUrl = String(cfg.searchUrl || 'https://cn.bing.com/search');
-  const maxResults = Math.max(1, Math.min(10, Number(cfg.maxResults) || 6));
+  const maxResults = resultLimit();
   const url = new URL(searchUrl);
   url.searchParams.set('q', query);
   const res = await fetch(url, {
@@ -352,7 +366,7 @@ async function bingSearchWithSupplement(query, { forceSupplement = false, signal
   // 只是“短中文词”触发的兜底（如“段头测试”）没有补充结果时，保留 Bing 原结果，避免误伤普通搜索。
   if (!extra) return (memeQuery || douyinOnly || forceSupplement) ? primaryFiltered : primary;
 
-  const maxResults = Math.max(6, Math.min(10, Number(getConfig().webSearch?.maxResults) || 6));
+  const maxResults = resultLimit();
   const sources = [...(extra.names || [])];
   if (primaryFiltered.results.length) sources.push('bing');
   return {
@@ -365,7 +379,7 @@ async function bingSearchWithSupplement(query, { forceSupplement = false, signal
 /** 搜狗网页解析：无 Key，中文/抖音梗命中率比 Bing 好；优先取结果块里的 data-url 真实外链。 */
 export async function sogouSearch(query, { signal } = {}) {
   const cfg = getConfig().webSearch ?? {};
-  const maxResults = Math.max(1, Math.min(10, Number(cfg.maxResults) || 6));
+  const maxResults = resultLimit();
   const url = new URL(String(cfg.sogou?.searchUrl || 'https://www.sogou.com/web'));
   url.searchParams.set('query', query);
   const res = await fetch(url, {
@@ -403,7 +417,7 @@ export async function sogouSearch(query, { signal } = {}) {
 /** B 站视频搜索（无 Key）：梗知识和梗百科类视频的标题/简介通常比网页搜索更直接。 */
 export async function bilibiliSearch(query, { signal } = {}) {
   const cfg = getConfig().webSearch ?? {};
-  const maxResults = Math.max(1, Math.min(10, Number(cfg.maxResults) || 6));
+  const maxResults = resultLimit();
   const endpoint = new URL(String(cfg.bilibili?.searchUrl || 'https://api.bilibili.com/x/web-interface/wbi/search/type'));
   endpoint.search = '';
   // nav 取不到签名 key 时不阻塞：退回无签名请求，拿不到 result 会按空结果报错并走下一源。
@@ -441,7 +455,7 @@ export async function bilibiliSearch(query, { signal } = {}) {
 /** 360 网页解析：无 Key，中文/抖音梗命中率比 Bing 好。只取 data-mdurl 给出的真实外链。 */
 export async function so360Search(query, { signal } = {}) {
   const cfg = getConfig().webSearch ?? {};
-  const maxResults = Math.max(1, Math.min(10, Number(cfg.maxResults) || 6));
+  const maxResults = resultLimit();
   const url = new URL(String(cfg.so360?.searchUrl || 'https://www.so.com/s'));
   url.searchParams.set('q', query);
   const res = await fetch(url, {
@@ -475,12 +489,13 @@ export async function so360Search(query, { signal } = {}) {
 }
 
 /** 给工具用的统一入口：搜索 + 紧凑序列化。 */
-export function webSearch(query, { meme = false, signal } = {}) {
-  return withTimeWindow(async (activeSignal) => {
+export function webSearch(query, { meme = false, count = 5, signal } = {}) {
+  const requestedCount = searchCount(count);
+  return searchRequest.run({ count: requestedCount }, () => withTimeWindow(async (activeSignal) => {
     const result = await dispatchSearch(query, { meme, signal: activeSignal });
     activeSignal.throwIfAborted();
-    return result;
-  }, signal);
+    return { ...result, requestedCount, results: (result.results || []).slice(0, requestedCount) };
+  }, signal));
 }
 
 async function dispatchSearch(query, { meme, signal }) {
@@ -538,8 +553,8 @@ async function deepSeekSearchRequest(query, signal) {
 async function deepSeekToolsSearch({ query, cfg, apiKey, signal }) {
   const base = String(cfg.baseUrl || 'https://api.deepseek.com').trim().replace(/\/+$/, '').replace(/\/responses$/i, '');
   const endpoint = /\/v1$/i.test(base) ? `${base}/tools/search` : `${base}/v1/tools/search`;
-  const maxResults = Math.min(10, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
-  const count = Math.min(50, Math.max(1, Number(cfg.count) || maxResults));
+  const maxResults = resultLimit();
+  const count = providerCount(cfg.count, maxResults, 50);
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -622,7 +637,7 @@ export async function zhipuSearch(query, { signal } = {}) {
   if (!apiKey) throw new Error('智谱搜索需要 API Key（设置里填，或环境变量 ZHIPU_API_KEY）');
   const endpoint = String(cfg.baseUrl || 'https://open.bigmodel.cn/api/paas/v4/web_search').replace(/\/+$/, '');
   const engine = String(cfg.engine || 'search_std');
-  const count = Math.min(50, Math.max(1, Number(cfg.count) || 10));
+  const count = providerCount(cfg.count, 10, 50);
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -646,7 +661,7 @@ export async function zhipuSearch(query, { signal } = {}) {
       url: String(r.link ?? r.url ?? ''),
       snippet: String(r.content ?? r.summary ?? '').trim()
     }))
-    .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
+    .slice(0, resultLimit());
   if (!results.length) throw new Error('智谱搜索没有返回有效结果（检查 API Key 或搜索引擎编码）');
   return { query, results };
 }
@@ -657,7 +672,7 @@ export async function bochaSearch(query, { signal } = {}) {
   const apiKey = String(cfg.apiKey || process.env.BOCHA_API_KEY || '').trim();
   if (!apiKey) throw new Error('博查搜索需要 API Key（设置里填，或环境变量 BOCHA_API_KEY）');
   const endpoint = String(cfg.baseUrl || 'https://api.bochaai.com/v1/web-search').replace(/\/+$/, '');
-  const count = Math.min(50, Math.max(1, Number(cfg.count) || 10));
+  const count = providerCount(cfg.count, 10, 50);
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -684,7 +699,7 @@ export async function bochaSearch(query, { signal } = {}) {
       url: String(r.url ?? ''),
       snippet: String(r.snippet ?? r.summary ?? r.content ?? '').trim()
     }))
-    .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
+    .slice(0, resultLimit());
   if (!results.length) throw new Error('博查搜索没有返回网页结果');
   return { query, results };
 }
@@ -695,7 +710,7 @@ export async function baiduSearch(query, { signal } = {}) {
   const apiKey = String(cfg.apiKey || process.env.BAIDU_SEARCH_API_KEY || '').trim();
   if (!apiKey) throw new Error('百度搜索需要 API Key（设置里填，或环境变量 BAIDU_SEARCH_API_KEY）');
   const endpoint = String(cfg.baseUrl || 'https://qianfan.baidubce.com/v2/ai_search/web_search').replace(/\/+$/, '');
-  const topK = Math.min(10, Math.max(1, Number(cfg.count) || 6));
+  const topK = providerCount(cfg.count, 6, 10);
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -731,7 +746,7 @@ export async function baiduSearch(query, { signal } = {}) {
       url: String(r.url ?? r.link ?? ''),
       snippet: String(r.content ?? r.snippet ?? r.summary ?? '').trim()
     }))
-    .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
+    .slice(0, resultLimit());
   if (!results.length) throw new Error('百度搜索没有返回有效结果');
   return { query, results };
 }
@@ -751,7 +766,7 @@ export async function metasoSearch(query, { signal } = {}) {
   const apiKey = String(cfg.apiKey || process.env.METASO_API_KEY || '').trim();
   const endpoint = String(cfg.baseUrl || 'https://metaso.cn/api/v1/search').replace(/\/+$/, '');
   // size 是**数字**，官方上限 50（写字符串会被拒）
-  const size = Math.min(50, Math.max(1, Number(cfg.count) || 6));
+  const size = providerCount(cfg.count, 6, 50);
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -792,7 +807,7 @@ export async function metasoSearch(query, { signal } = {}) {
       url: String(r.link ?? r.url ?? ''),
       snippet: String(r.snippet ?? r.summary ?? '').trim()
     }))
-    .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
+    .slice(0, resultLimit());
   if (!results.length) throw new Error('秘塔搜索没有返回有效结果（可能已用完免费额度，或 Key 没有搜索权限）');
   return { query, results };
 }
@@ -818,7 +833,7 @@ export async function doubaoSearch(query, { signal } = {}) {
     body: JSON.stringify({
       Query: query,
       SearchType: 'web',
-      Count: Math.min(10, Math.max(1, Number(cfg.count) || 6)),
+      Count: providerCount(cfg.count, 6, 10),
       NeedContent: true
     }),
     signal: searchSignal(signal, Math.max(10000, Number(cfg.timeoutMs) || 20000))
@@ -845,7 +860,7 @@ export async function doubaoSearch(query, { signal } = {}) {
       url: String(r.Url ?? r.url ?? ''),
       snippet: String(r.Summary ?? r.summary ?? r.Content ?? r.content ?? '').trim()
     }))
-    .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
+    .slice(0, resultLimit());
   if (!results.length) throw new Error('豆包搜索没有返回有效结果（可能搜索额度已用完或 Key 无搜索权限）');
   return { query, results };
 }
@@ -891,7 +906,7 @@ async function customSearchRequest(query, providerId, signal) {
   if (!endpoint) throw new Error('自定义搜索未配置接口地址（设置 → 模型 API → 搜索提供方 → 自定义）');
   const apiKey = String(cfg.apiKey || '').trim();
   const model = String(cfg.model || '').trim();
-  const topK = Math.min(10, Math.max(1, Number(cfg.count) || 6));
+  const topK = providerCount(cfg.count, 6, 10);
 
   // 兼容多种请求体：优先 query / q，带 model 时额外附上 messages（Responses API 风格）
   const body = { query, q: query, top_k: topK, count: topK };
@@ -931,7 +946,7 @@ async function customSearchRequest(query, providerId, signal) {
       url: String(r.url ?? r.link ?? ''),
       snippet: String(r.content ?? r.snippet ?? r.summary ?? r.body ?? '').trim()
     }))
-    .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
+    .slice(0, resultLimit());
   if (!results.length) {
     throw new Error('自定义搜索没有返回可识别的结果（请检查接口返回是否包含 results/data/sources 等数组，或改用 bing 类型抓页面）');
   }
@@ -942,7 +957,7 @@ async function customSearchRequest(query, providerId, signal) {
 async function bingSearchWithUrl(query, searchUrl, { signal } = {}) {
   const cfg = getConfig().webSearch ?? {};
   const url = String(searchUrl || cfg.searchUrl || 'https://cn.bing.com/search');
-  const maxResults = Math.max(1, Math.min(10, Number(cfg.maxResults) || 6));
+  const maxResults = resultLimit();
   const target = new URL(url);
   target.searchParams.set('q', query);
   const res = await fetch(target, {
@@ -987,7 +1002,7 @@ export async function tavilySearch(query, { signal } = {}) {
     },
     body: JSON.stringify({
       query,
-      max_results: Math.min(10, Math.max(1, Number(cfg.count) || 5)),
+      max_results: providerCount(cfg.count, 5, 10),
       search_depth: String(cfg.searchDepth || 'basic')
     }),
     signal: searchSignal(signal, Math.max(10000, Number(cfg.timeoutMs) || 20000))

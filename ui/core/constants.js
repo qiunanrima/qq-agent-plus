@@ -41,6 +41,8 @@ const TOOL_META = {
   friend_request_propose: { name: '提议加好友', cat: '记忆', icon: '＋' },
   memory_remove:     { name: '删记忆',     cat: '记忆',   icon: '🧹' },
   // 联网
+  search_web:        { name: '联网搜索',   cat: '联网',   icon: '🌐' },
+  fetch_url:         { name: '抓网页',     cat: '联网',   icon: '🔗' },
   web_search:        { name: '联网搜索',   cat: '联网',   icon: '🌐' },
   web_fetch:         { name: '抓网页',     cat: '联网',   icon: '🔗' },
   // 其他

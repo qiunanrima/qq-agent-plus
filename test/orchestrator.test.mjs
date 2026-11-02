@@ -160,6 +160,38 @@ describe('Orchestrator', () => {
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
 
+  it('真实聊天使用search_web数量参数并统计联网，关闭搜索后新旧工具均不可用', async (t) => {
+    const { runner, cfg, append, sessions } = fixture(t);
+    cfg.webSearch = { ...cfg.webSearch, enabled: true, provider: 'deepseek',
+      deepseek: { ...cfg.webSearch.deepseek, baseUrl: 'https://search.invalid', apiKey: 'mock-key' } };
+    let rounds = 0;
+    let backendCount = 0;
+    let body;
+    globalThis.fetch = async (url, options) => {
+      if (String(url).startsWith('https://search.invalid')) {
+        backendCount++;
+        assert.equal(JSON.parse(options.body).count, 7);
+        return Response.json({ results: [{ title: '来源', url: 'https://example.com/source', summary: '摘要' }] });
+      }
+      body = JSON.parse(options.body);
+      const name = rounds++ === 0 ? 'search_web' : 'finish';
+      const args = name === 'search_web' ? { query: '技术资料', count: 7 } : { summary: '已读取搜索摘要' };
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: `tool-${rounds}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1);
+    await runner.wake('group:1');
+    const session = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(backendCount, 1);
+    assert.ok(body.tools.some((t) => t.function.name === 'search_web'));
+    assert.ok(body.tools.some((t) => t.function.name === 'fetch_url'));
+    assert.equal(session.webSearchCount, 1);
+    cfg.webSearch.enabled = false;
+    append(2);
+    await runner.wake('group:1');
+    assert.ok(!body.tools.some((t) => ['search_web', 'fetch_url', 'web_search', 'web_fetch'].includes(t.function.name)));
+    assert.equal(backendCount, 1);
+  });
+
   it('海马在真实回合跨会话注入，finish写摘要；禁用后撤回工具且故障不阻断消息', async (t) => {
     const { runner, cfg, memory, append, store } = fixture(t);
     const role = resolvePersona(cfg, 'group:1');

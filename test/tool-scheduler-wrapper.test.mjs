@@ -60,7 +60,7 @@ test('wrapper is a semantic pass-through when experiment is disabled', async () 
 test('wrapper prestarts only contiguous read calls and keeps ordered tools lazy', async () => {
   setRuntimeConfig(cfg(true, 4));
   const calls = [
-    call('a', 'web_search', { q: 1 }),
+    call('a', 'search_web', { q: 1 }),
     call('b', 'get_message_detail', { id: 2 }),
     call('c', 'send_message', { text: 'x' }),
     call('d', 'finish', { summary: 'done' })
@@ -70,8 +70,8 @@ test('wrapper prestarts only contiguous read calls and keeps ordered tools lazy'
   let activeReads = 0;
   let peakReads = 0;
   const defs = [
-    fakeDef('web_search', async () => {
-      starts.push('web_search');
+    fakeDef('search_web', async () => {
+      starts.push('search_web');
       activeReads += 1;
       peakReads = Math.max(peakReads, activeReads);
       await delay(30);
@@ -97,7 +97,7 @@ test('wrapper prestarts only contiguous read calls and keeps ordered tools lazy'
   ];
   const ctx = { session };
 
-  await wrappedExecuteTool(defs, ctx, 'web_search', calls[0].function.arguments);
+  await wrappedExecuteTool(defs, ctx, 'search_web', calls[0].function.arguments);
   assert.equal(peakReads, 2);
   assert.equal(starts.includes('send_message'), false);
   await wrappedExecuteTool(defs, ctx, 'get_message_detail', calls[1].function.arguments);

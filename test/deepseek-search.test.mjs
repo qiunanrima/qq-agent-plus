@@ -45,7 +45,7 @@ test('DeepSeek Search API：走 /v1/tools/search，返回结构化 title/url/sum
     });
   };
 
-  const out = await webSearch('测试查询');
+  const out = await webSearch('测试查询', { count: 3 });
   assert.match(calls[0].url, /^https:\/\/api\.deepseek\.com\/v1\/tools\/search$/);
   assert.equal(calls[0].headers.authorization, 'Bearer sk-deepseek');
   assert.equal(calls[0].body.query, '测试查询');

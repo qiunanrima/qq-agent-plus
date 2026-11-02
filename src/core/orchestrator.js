@@ -2186,7 +2186,7 @@ export class Orchestrator {
       // 模型往返（send_voice 的描述还极具诱导性）。与上面几项同一口径（2026-10-03 全量审查）。
       if (!ttsConfigured(cfg) && d.name === 'send_voice') return false;
       if (cfg.reminders?.enabled === false && d.name === 'remind') return false;
-      if (!searchEnabled && (d.name === 'web_search' || d.name === 'web_fetch')) return false;
+      if (!searchEnabled && (d.name === 'search_web' || d.name === 'fetch_url')) return false;
       if (!selfWakeEnabled && d.name === 'schedule_wake') return false;
       if (!lifeFeedUsable
         && (d.name === 'life_feed_next' || d.name === 'life_feed_feedback' || d.name === 'share_bilibili')) return false;
@@ -2718,7 +2718,7 @@ export class Orchestrator {
         if (!canRun(chatKey)) throw new Error('Run cancelled');
         const name = call?.function?.name ?? '';
         const argsRaw = call?.function?.arguments ?? '{}';
-        if (name === 'web_search' || name === 'web_fetch') webSearchCount += 1;
+        if (['search_web', 'fetch_url', 'web_search', 'web_fetch'].includes(name)) webSearchCount += 1;
         session.webSearchCount = webSearchCount;
         markActivity(`正在调用 ${name}…`);
         // 技能白名单只收窄本轮工具；finish/skill_list/skill_use 在 skill_use 时已加入集合。

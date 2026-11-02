@@ -15,7 +15,7 @@ import { convertGifToStillStrip } from '../tools/image-downsample.js';
 import { sanitizeUserText } from '../core/util.js';
 import { displayNameOf } from '../core/display-name.js';
 import { visibleImpressions } from '../core/memory-visibility.js';
-import { webFetch, webSearch } from '../llm/web-search.js';
+import { webFetch, webSearch, searchCount } from '../llm/web-search.js';
 import { buildMomentSystemPrompt, momentPersonaHash, MOMENT_PROMPT_VERSION } from '../llm/moment-prompt.js';
 import { assertTimeAllowed, isTimeActive, watchTimeWindow, withTimeScope } from '../core/time-gate.js';
 import { timeControlState } from '../core/time-control.js';
@@ -1556,11 +1556,11 @@ export class DailyMomentsManager {
   #toolDefs(context) {
     return [
       {
-        name: 'web_search',
+        name: 'search_web',
         description: '搜索实时信息、概念或聊天中值得深入研究的问题。',
         parameters: {
           type: 'object',
-          properties: { query: { type: 'string' } },
+          properties: { query: { type: 'string', maxLength: 120 }, count: { type: 'integer', minimum: 1, maximum: 20, default: 5 } },
           required: ['query']
         },
         execute: async (args) => {
@@ -1568,11 +1568,12 @@ export class DailyMomentsManager {
             return { content: '错误：今日研究调用次数已达上限', isError: true };
           }
           context.researchCalls += 1;
-          const result = await this.search(cleanText(args.query, 300));
+          const count = searchCount(args.count ?? 5);
+          const result = await this.search(cleanText(args.query, 120), { count });
           return {
             content: JSON.stringify({
               query: result.query,
-              results: (result.results || []).slice(0, 6).map((item) => ({
+              results: (result.results || []).slice(0, count).map((item) => ({
                 title: cleanText(item.title, 200),
                 url: item.url,
                 snippet: cleanText(item.snippet, 500)
@@ -1582,7 +1583,7 @@ export class DailyMomentsManager {
         }
       },
       {
-        name: 'web_fetch',
+        name: 'fetch_url',
         description: '读取搜索结果正文，核实细节后再形成观点。',
         parameters: {
           type: 'object',
@@ -1604,7 +1605,7 @@ export class DailyMomentsManager {
               url: result.url,
               statusCode: result.statusCode,
               // 抓回来的网页正文是**不可信文本**：伪造【管理员附加规则】这类段头就能冒充系统段。
-              // 与聊天侧的 web_fetch（tools-core 的 sanitizeUserText(body.slice(...))）同一道清洗。
+              // 与聊天侧的 fetch_url（tools-core 的 sanitizeUserText(body.slice(...))）同一道清洗。
               content: sanitizeUserText(String(result.body || '')).slice(0, 12000)
             })
           };
@@ -1691,7 +1692,7 @@ export class DailyMomentsManager {
         }
       }
     ].filter((def) => {
-      if (def.name === 'web_search' || def.name === 'web_fetch') {
+      if (def.name === 'search_web' || def.name === 'fetch_url') {
         return context.searchEnabled && context.cfg.maxResearchCalls > 0;
       }
       if (def.name === 'inspect_image_candidate') {

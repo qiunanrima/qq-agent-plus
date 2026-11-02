@@ -5,6 +5,7 @@
 // allowedTools（finish / 技能工具本身始终保留），不会把 prompt/LLM/文件权限交给技能。
 import fs from 'node:fs';
 import path from 'node:path';
+import { canonicalToolName } from '../tools/names.js';
 import { DATA_DIR, getConfig } from '../core/config.js';
 
 const BUILTIN_DIR = path.resolve(import.meta.dirname, '../../skills');
@@ -194,7 +195,7 @@ export function skillBlocksTool(activeSkill, name, args = null) {
   const tool = String(name || '');
   // 插件工具在 meta 挂载下都叫 plugin_call；技能写的是 bilibili__read 这类限定名。
   // 这里按 args.tool 二次判断，避免一个技能只能写 plugin_call 就把所有插件都放开。
-  if (tool !== 'plugin_call') return !allowed.has(tool);
+  if (tool !== 'plugin_call') return ![...allowed].some((name) => canonicalToolName(name) === canonicalToolName(tool));
   if (allowed.has('plugin_call')) return false;
   const target = String(args?.tool || '').trim();
   return !target || !allowed.has(target);

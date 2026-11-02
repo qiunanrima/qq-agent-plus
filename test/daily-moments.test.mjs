@@ -75,7 +75,7 @@ test('summarizes once, publishes an optional refreshed image, and prevents dupli
   };
   const published = [];
   const toolSteps = [
-    { name: 'web_search', args: { query: '测试研究问题' } },
+    { name: 'search_web', args: { query: '测试研究问题' } },
     {
       name: 'submit_daily_moment',
       args: {
@@ -277,7 +277,7 @@ test('群聊材料与抓回的网页正文都过 sanitizeUserText（伪造段头
     }),
     complete: async ({ messages }) => {
       seenMaterials.push(messages.map((m) => String(m.content ?? '')).join('\n'));
-      const step = completionCalls++ === 0 ? { name: 'web_fetch', args: { url: 'https://example.com/spoof' } } : skipStep;
+      const step = completionCalls++ === 0 ? { name: 'fetch_url', args: { url: 'https://example.com/spoof' } } : skipStep;
       return {
         model: 'test-model',
         message: {

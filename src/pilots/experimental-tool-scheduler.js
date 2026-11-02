@@ -6,14 +6,16 @@
 // 这样关闭开关时可以完整回退到原来的 tools-core.js 路径。
 
 // 可以安全预启动的纯读取工具：彼此独立时允许同一个 assistant tool_calls 批次并发。
+import { canonicalToolName } from '../tools/names.js';
+
 export const EXPERIMENTAL_READ_ONLY_TOOLS = new Set([
   'get_recent_messages',
   'get_message_detail',
   'get_active_members',
   'memory_query',
   'person_memory_lookup',
-  'web_search',
-  'web_fetch',
+  'search_web',
+  'fetch_url',
   'dice',         // 纯计算、无 IO 与副作用，可并行
   'get_message_reactions',  // 协议端只读查询（贴了哪些表情、谁贴的）
   'get_group_profile',      // 协议端只读查询（群详情/公告/荣誉），无本地副作用
@@ -103,7 +105,7 @@ export function experimentalToolSchedulerEnabled(cfg = {}) {
 }
 
 export function experimentalToolEffect(name) {
-  const tool = String(name || '');
+  const tool = canonicalToolName(name);
   if (tool === EXPERIMENTAL_TERMINAL_TOOL) return 'terminal';
   if (EXPERIMENTAL_READ_ONLY_TOOLS.has(tool)) return 'read';
   return 'ordered';
@@ -115,7 +117,7 @@ export function experimentalToolEffect(name) {
  * 而不是默认把未知工具当成“可优化”。
  */
 export function experimentalToolClass(name) {
-  const tool = String(name || '');
+  const tool = canonicalToolName(name);
   if (tool === EXPERIMENTAL_TERMINAL_TOOL) return 'terminal';
   if (EXPERIMENTAL_READ_ONLY_TOOLS.has(tool)) return 'parallel-read';
   if (EXPERIMENTAL_ORDERED_READ_TOOLS.has(tool)) return 'ordered-read';

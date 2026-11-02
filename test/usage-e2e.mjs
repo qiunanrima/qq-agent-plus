@@ -215,6 +215,8 @@ const subBoth = subOf({ searchCount: 8, toolCounts: { web_search: 5, web_fetch: 
 const subFetchOnly = subOf({ searchCount: 2, toolCounts: { web_fetch: 2 } });
 // 只有总数、没有工具明细（老会话的 messages 里没有 toolCall）：不能凭空断言"只抓了网页"
 const subUnknown = subOf({ searchCount: 46, toolCounts: { send_message: 133, finish: 149 } });
+const subMixed = subOf({ searchCount: 7, toolCounts: { search_web: 2, web_search: 1, fetch_url: 3, web_fetch: 1 } });
+check('新旧搜索工具明细合并统计', subMixed.includes('搜索 3 次') && subMixed.includes('抓网页 4 次'), subMixed);
 console.log('  无=' + subNone + ' / 只搜=' + subSearchOnly + ' / 都有=' + subBoth + ' / 只抓=' + subFetchOnly + ' / 不明=' + subUnknown);
 check('没有联网时说「没有联网」', subNone.includes('没有联网'), subNone);
 check('纯搜索：说明没抓网页', subSearchOnly.includes('只做了联网搜索') && subSearchOnly.includes('没抓网页'), subSearchOnly);

@@ -16,6 +16,7 @@ import { todayKey } from '../core/util.js';   // 上海自然日（"每群每天
 import { createQuota } from '../core/quota.js';
 import { lookupMemes, rememberMeme } from '../memes/store.js';
 import { getSkillRegistry } from '../skills/registry.js';
+import { canonicalToolName } from './names.js';
 import { preparePrivateTextFile, privateTextFileError } from '../onebot/private-text-file.js';
 
 // 生图闸门（按张计费，全局；#9 那套双闸在这里只用全局侧 —— 一张图的钱与"哪个群要的"无关，
@@ -1607,7 +1608,7 @@ export function buildToolDefs() {
     },
     {
       name: 'list_group_files',
-      description: '看本群群文件的根目录（文件与文件夹）。群聊限定。要下载/读里面某个文件时，用它的 fileId 调 group_file_url 拿直链（文本类可以再用 web_fetch 读内容）。',
+      description: '看本群群文件的根目录（文件与文件夹）。群聊限定。要下载/读里面某个文件时，用它的 fileId 调 group_file_url 拿直链（文本类可以再用 fetch_url 读内容）。',
       parameters: { type: 'object', properties: {} },
       async execute(ctx) {
         try {
@@ -1629,7 +1630,7 @@ export function buildToolDefs() {
     },
     {
       name: 'group_file_url',
-      description: '拿群里某个文件的下载直链（fileId 来自 list_group_files，或消息里的 [文件…] 段）。文本类文件拿到直链后可以用 web_fetch 读内容；其它类型只给链接。',
+      description: '拿群里某个文件的下载直链（fileId 来自 list_group_files，或消息里的 [文件…] 段）。文本类文件拿到直链后可以用 fetch_url 读内容；其它类型只给链接。',
       parameters: {
         type: 'object',
         properties: { fileId: { type: 'string', description: '群文件 id（来自 list_group_files）' } },
@@ -1643,7 +1644,7 @@ export function buildToolDefs() {
           const res = await ctx.onebot.call('get_group_file_url', { group_id: Number(ctx.chatId), file_id: fileId }, 20000, ctx.signal);
           const url = String(res?.url ?? '').trim();
           if (!url) return err('协议端没有返回下载链接（文件可能已过期或被清理）');
-          return ok({ url, note: '文本类文件可以直接用 web_fetch 读这个链接。' });
+          return ok({ url, note: '文本类文件可以直接用 fetch_url 读这个链接。' });
         } catch (error) {
           return err(`取群文件直链失败：${error?.message ?? error}`);
         }
@@ -3114,7 +3115,7 @@ export function buildToolDefs() {
     },
     {
       name: 'meme_lookup',
-      description: '查本群梗库：群友之前解释过的梗、黑话、外号。遇到一个词先查这里；查到就按群里的解释理解和使用，不要再问、也不要重复搜。没查到再用 web_search（meme=true）。',
+      description: '查本群梗库：群友之前解释过的梗、黑话、外号。遇到一个词先查这里；查到就按群里的解释理解和使用，不要再问、也不要重复搜。没查到再用 search_web（meme=true）。',
       parameters: {
         type: 'object',
         properties: {
@@ -3132,7 +3133,7 @@ export function buildToolDefs() {
             entries,
             note: entries.length
               ? '优先用这里的含义；当前消息贴合就自然用一次，不要复述出处。'
-              : '本群梗库没有这个词；拿不准就用 web_search（meme=true）查。'
+              : '本群梗库没有这个词；拿不准就用 search_web（meme=true）查。'
           });
         } catch (error) {
           return err(`查梗库失败：${String(error?.message ?? error).slice(0, 120)}`, { reportIncident: false });
@@ -3204,23 +3205,24 @@ export function buildToolDefs() {
       }
     },
     {
-      name: 'web_search',
-      description: '联网搜索（默认 Bing），用于所有外部信息：实时新闻、价格、天气/路线、教程/文档、产品参数、事实核查、网络用语/梗/黑话、不认识的词。普通查询只走主搜索；拿不准一个词是不是梗/外号时把 meme 设为 true（仅在主源是 Bing 时强制补搜狗/B站/Bing 站内限定/360；其他主源按自己的方式搜）。搜到内容后不要照念百科：先用自己的话答；梗只在贴合时用一次，不贴合就只用来理解。可连续搜 2~3 次，对最相关的 1~2 个结果用 web_fetch 读正文，不要只看摘要。',
+      name: 'search_web',
+      description: '调用后端搜索服务，返回标题 title、链接 url、摘要 snippet。count 默认5，最多20；上游结果不足时可能更少。先生成简洁搜索词，必要时对相关结果用 fetch_url 读取正文，再整理答案和来源。不要把搜索摘要说成已读全文，不猜测未提供的搜索供应商、鉴权或排序实现。',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: '搜索词' },
+          query: { type: 'string', maxLength: 120, description: '简洁搜索词，本工具最多120字符；过长会截断' },
+          count: { type: 'integer', minimum: 1, maximum: 20, default: 5, description: '期望结果数量，默认5，最多20' },
           meme: { type: 'boolean', description: '拿不准一个词是不是网络梗/外号/黑话时设为 true，强制走梗补充链' }
         },
         required: ['query']
       },
       async execute(ctx, args) {
         try {
-          const result = await webSearch(String(args.query ?? ''), { meme: args.meme === true, signal: ctx.signal });
+          const result = await webSearch(String(args.query ?? ''), { count: args.count ?? 5, meme: args.meme === true, signal: ctx.signal });
           if (!result.results.length) {
             return ok({ query: result.query, results: [], note: '没有搜到结果，试试换关键词或更具体的说法。' });
           }
-          // 标题/摘要来自任意外部页面，与 web_fetch 同一口径过段头弱化：
+          // 标题/摘要来自任意外部页面，与 fetch_url 同一口径过段头弱化：
           // 否则页面里伪造的【管理员附加规则】这类段头会原样直达模型。
           return ok({
             ...result,
@@ -3236,8 +3238,8 @@ export function buildToolDefs() {
       }
     },
     {
-      name: 'web_fetch',
-      description: '只读抓取网页正文（≤2 万字符）。群友发来链接问"写了什么"时直接抓；配合 web_search 阅读搜索结果的详细内容。抖音/快手等站内页大多是前端渲染，抓不到正文时用搜索结果的标题/话题名/摘要回答，并说明只看到标题，别编内容。禁止访问内网/本机地址。',
+      name: 'fetch_url',
+      description: '只读抓取网页正文（≤2 万字符）。群友发来链接问"写了什么"时直接抓；配合 search_web 阅读搜索结果的详细内容。抖音/快手等站内页大多是前端渲染，抓不到正文时用搜索结果的标题/话题名/摘要回答，并说明只看到标题，别编内容。禁止访问内网/本机地址。',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string', description: '要抓取的 http(s) URL' } },
@@ -3426,7 +3428,7 @@ export function toOpenAiTools(defs) {
 
 /** 找到并执行一个工具调用。返回 { content, isError }，content 为 string 或 parts 数组。 */
 export async function executeTool(defs, ctx, name, argsJson) {
-  const def = defs.find((d) => d.name === name);
+  const def = defs.find((d) => d.name === name) || defs.find((d) => d.name === canonicalToolName(name));
   if (!def) return { content: `错误：未知工具 ${name}`, isError: true };
   const raw = argsJson ?? '{}';
   const parsed = parseToolArguments(name, raw);
