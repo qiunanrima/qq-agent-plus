@@ -2518,6 +2518,10 @@ export class Orchestrator {
       store: this.store,
       memory: this.memory,
       identityPilot,
+      reviewPersonalityMemory: async (messages, { signal: reviewSignal } = {}) => {
+        const response = await this.#memoryChat(messages, { signal: reviewSignal || signal, timeoutMs: 30000 });
+        return extractJsonObject(String(response?.message?.content ?? ''));
+      },
       stickers: this.stickers,
       sender: this.sender,
       session,

@@ -69,11 +69,11 @@ async function loadPersonalityMemoryPage() {
     state.personalityMemory.data = data;
     const cfg = data.config || {};
     const entries = data.entries || [];
-    const scopes = [...new Set(entries.map((row) => row.scope_key))];
+    const scopes = [...new Set(entries.flatMap((row) => row.sourceChatKeys || [row.scope_key]))];
     const selected = state.personalityMemory.scope;
-    const visible = entries.filter((row) => !selected || row.scope_key === selected);
+    const visible = entries.filter((row) => !selected || (row.sourceChatKeys || [row.scope_key]).includes(selected));
     box.innerHTML = `<div class="panel"><h2>人格成长记忆</h2>
-      <p>核心性格来自角色卡；这里积累角色自己的偏好、共同经历与关系变化。不同角色卡和会话分别保存，私聊经历不带进群里。修改角色正文后会使用独立的成长记忆，旧数据仍可管理。</p>
+      <p>核心性格来自角色卡；这里统一管理角色自己的偏好、共同经历与关系变化。采集由记忆总结模型核验证据，同义内容跨会话合并；召回遵守记忆可见性设置。旧记录待核验，管理员可确认。修改角色正文会切换成长记忆，旧数据保留。</p>
       <p>新偏好和关系先作为「初步倾向」，跨日互动重复支持后才稳定；冲突内容保留为候选，不自动覆盖稳定记忆。管理员可以修正或确认。记录并不证明现实中见面或到场。</p>
       <div class="settings-actions">
         <label class="checkbox-row"><input type="checkbox" id="pm-enabled" ${cfg.enabled ? 'checked' : ''}>启用人格记忆</label>
@@ -87,8 +87,8 @@ async function loadPersonalityMemoryPage() {
       <label>来源会话 <select id="pm-scope"><option value="">全部会话</option>${scopes.map((scope) => `<option value="${esc(scope)}" ${scope === selected ? 'selected' : ''}>${esc(scope)}</option>`).join('')}</select></label>
       <div id="pm-entries">${visible.length ? visible.map((row) => `<article class="panel" data-pm-entry="${esc(row.id)}">
         <strong>${esc(labels[row.kind] || row.kind)} · ${row.status === 'active' ? '已稳定 / 已确认' : '初步倾向'}</strong>
-        <p>${esc(row.persona_name)} · ${esc(row.persona_key)} · ${esc(row.scope_key)}${row.target_user_id ? ` · 对象 ${esc(row.target_user_id)}` : ''}</p>
-        <p>${esc(row.topic)} · ${row.supportDays.length} 个证据日期</p>
+        <p>${esc(row.persona_name)} · ${esc(row.persona_key)} · ${esc((row.sourceChatKeys || [row.scope_key]).join('、'))}${row.target_user_id ? ` · 对象 ${esc(row.target_user_id)}` : ''}</p>
+        <p>${esc(row.topic)} · ${row.supportDays.length} 个证据日期 · ${row.verified ? '已核验 / 管理员确认' : '旧记录待核验，不作为稳定人格'}</p>
         <textarea data-pm-content rows="3" maxlength="300" style="width:100%;box-sizing:border-box" aria-label="人格记忆内容">${esc(row.content)}</textarea>
         <details><summary>查看原始互动依据</summary>${row.evidence.map((item) => `<p>#${esc(item.id)} ${item.self ? '机器人' : esc(item.senderId)}：${esc(item.quote)}</p>`).join('')}</details>
         <div class="settings-actions"><button type="button" class="btn btn-small" data-pm-save>保存修正</button><button type="button" class="btn btn-small" data-pm-confirm>确认为稳定记忆</button><button type="button" class="btn btn-small btn-danger" data-pm-delete>删除</button></div>

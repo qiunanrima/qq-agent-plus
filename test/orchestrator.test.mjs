@@ -279,7 +279,11 @@ describe('Orchestrator', () => {
     let body;
     let calls = 0;
     globalThis.fetch = async (_url, options) => {
-      body = JSON.parse(options.body);
+      const request = JSON.parse(options.body);
+      if (request.messages[0].content.includes('你是人格成长证据核验器')) {
+        return Response.json({ choices: [{ message: { content: '{"supported":true,"topic":"饮品","matchId":"","conflictIds":[]}' } }], usage: { total_tokens: 10 } });
+      }
+      body = request;
       calls++;
       const tools = calls === 1 ? [{ id: 'capture', type: 'function', function: { name: 'remember_personality', arguments: JSON.stringify({
         kind: 'preference', topic: '饮品', content: '我更喜欢绿茶', evidence: [{ messageId: source.id, quote: '我更喜欢绿茶' }]

@@ -5607,6 +5607,7 @@ export function createApp({
       throw error;
     }
     auditWrite('config.update', 'config', { req, before: auditBefore, after: next, changed: changedTopKeys(auditBefore, next) });
+    personalityMemory.syncConfig();
     store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
     store.setSynchronous(next.store?.sqliteSynchronous);
     sessions.setPersistIntervalMs(next.store?.sessionPersistMs);
@@ -5743,6 +5744,7 @@ export function createApp({
       store.listChats().map((chatKey) => [chatKey, conversationConfigForChat(chatKey).mode])
     );
     const next = reloadConfig();
+    personalityMemory.syncConfig();
     const warnings = [];
     const warn = (label, error) => {
       const text = `${label}：${String(error?.message ?? error)}`;
@@ -6828,6 +6830,7 @@ export function createApp({
     await incidentPilot?.stop();
     incidentPilot = null;
     livingMemory.stop();
+    personalityMemory.cancelPending();
     onebot.close();
     await orchestrator.abortAll();
     await Promise.allSettled([...ingress.values()]);

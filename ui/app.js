@@ -46,6 +46,7 @@ import {
 import { loadMemoryView, renderMemoryList } from './pages/memory.js';
 import { loadLivingMemoryPage } from './pages/living-memory.js';
 import { loadPersonalityMemoryPage } from './pages/personality-memory.js';
+import { loadHippocampusPage } from './pages/hippocampus.js';
 import { loadPluginsPage } from './pages/plugins.js';
 import { refreshPendingBadge } from './pages/plugin-pending.js';
 import { loadSkillsPage } from './pages/skills.js';
@@ -291,6 +292,7 @@ function switchTab(name) {
   if (name === 'sessions') loadSessions();
   if (name === 'chats') loadChats();
   if (name === 'memory') loadMemoryView();
+  if (name === 'hippocampus') loadHippocampusPage();
   if (name === 'living-memory') loadLivingMemoryPage({ force: true });
   if (name === 'personality-memory') loadPersonalityMemoryPage();
   if (name === 'identity') loadIdentityFeaturePage();

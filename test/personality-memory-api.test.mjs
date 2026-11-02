@@ -41,7 +41,8 @@ test('鉴权、确认、停用管理和全量清除包含人格成长备份', as
   assert.equal(fs.existsSync(app.personalityMemory.file), false);
   updateConfig({ personalityMemory: { enabled: true } });
   const row = app.store.appendSelf('group:1', { text: '我更喜欢绿茶', ts: Date.now() });
-  const captured = app.personalityMemory.capture({ chatKey: 'group:1', persona: resolvePersona(getConfig(), 'group:1'), store: app.store,
+  const captured = await app.personalityMemory.capture({ chatKey: 'group:1', persona: resolvePersona(getConfig(), 'group:1'), store: app.store,
+    review: async () => ({ supported: true, topic: '饮品', matchId: '', conflictIds: [] }),
     args: { kind: 'preference', topic: '饮品', content: '更喜欢绿茶', evidence: [{ messageId: row.id, quote: '我更喜欢绿茶' }] } });
   updateConfig({ personalityMemory: { enabled: false } });
   const endpoint = `/api/personality-memory/entries/${captured.id}`;

@@ -182,3 +182,22 @@ test('消化等待时暂停/停用阻止提交；空有效结果也必须成功�
   assert.equal(f.memory.episodes()[0].digested, 1);
   assert.equal(f.memory.cards({ persona, chatKey: 'group:1' }).length, 0);
 });
+
+test('海马拒绝旁路生成人格卡，旧人格卡仅后台可见，不向模型召回', async (t) => {
+  const f = fixture(t);
+  f.cfg.personalityMemory = { enabled: false };
+  f.capture('机器人随口说喜欢甜食');
+  f.setTime('2026-11-02T03:01:00');
+  await assert.rejects(f.memory.maintain({ complete: async (messages) => {
+    assert.doesNotMatch(messages[0].content, /person\|personality\|skill/);
+    return { cards: [{ episodeIds: [JSON.parse(messages[1].content).episodes[0].id],
+      kind: 'personality', subject: 'self', title: '偏好', content: '未经核验的旧人格' }] };
+  } }), /人格成长必须经过独立核验/);
+  assert.equal(f.memory.episodes()[0].digested, 0);
+  const role = f.memory.episodes()[0].persona;
+  f.memory.withDb(true, (db) => db.prepare('INSERT INTO cards VALUES (?,?,?,?,?,?,?,?)')
+    .run('legacy-personality', role, 'personality', 'self', '旧人格', '未经核验的旧人格', '["group:1"]', Date.now()));
+  assert.equal(f.memory.status().cards.length, 1);
+  assert.equal(f.memory.cards({ persona, chatKey: 'group:1' }).length, 0);
+  assert.doesNotMatch(f.memory.prompt({ persona, chatKey: 'group:1' }), /旧人格/);
+});
