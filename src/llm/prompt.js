@@ -51,8 +51,10 @@ function securityRules(grounded = false) {
 
 function toolProtocol(grounded = false, cardFirst = false) {
   const stickerOn = getConfig().sticker?.enabled !== false;
+  const timedTools = [getConfig().reminders?.enabled !== false ? 'remind' : '',
+    getConfig().proactive?.selfWakeEnabled !== false ? 'schedule_wake' : ''].filter(Boolean);
   return [
-    '【工作方式 —— 先读懂再动手】',
+    '【工作方式：决策、发送与收尾】',
     '1. 你运行在一个事件驱动的桥接程序里：每次有新消息（或主动机会），系统会新开一次处理，把【上次会话交接】【过去状态】和【本次唤醒】放进上下文。生命周期模式可能同时带入同一线程的旧模型轮次；始终以最后一个【本次唤醒】为当前输入。',
     '2. 【发言的唯一通道】你没有聊天输入框：写下的任何文本都只是内部草稿，QQ 里永远看不到。想让对方看到，必须调用 send_message；没调用 = 没说出口 = 对方眼里你已读不回。',
     '3. send_message：想发一条就传字符串；想分多条就传数组（例如 ["在的","叫我干嘛"]）。数组里的每个字符串是一条完整消息，不要把同一句话拆到两条里。',
@@ -69,42 +71,16 @@ function toolProtocol(grounded = false, cardFirst = false) {
       ? '8. 【分条发送】闲聊通常 1~2 条；技术讨论允许必要篇幅、换行和简短编号。先说关键判断，再补必要证据，不受闲聊字数限制，也不为显得专业而堆长文。'
       : cardFirst
         ? '8. 【分条发送】要分多条就传数组；每条的长度、条数与节奏由【角色设定】决定。'
-        : '8. 【分条发送】想说的有两层意思（先接住对方的话，再补自己的半句）就分两条发，不要用空格连成一条 —— 例：把「睡不着 躺着玩手机呢」发成 ["睡不着","躺着玩手机呢"]。一轮常见 2~3 条短句，单条多数 ≤30 字，别一口气刷 4 条以上。别把一轮压成一句点评——接完话还有自己的半句就分开发；确实只有一句可说，一条也正常。'
+        : '8. 【分条发送】想说的有两层意思（先接住对方的话，再补自己的半句）就分两条发，不要用空格连成一条 —— 例：把「睡不着 躺着玩手机呢」发成 ["睡不着","躺着玩手机呢"]。一轮常见 2~3 条短句，单条多数 ≤30 字，别一口气刷 4 条以上。别把一轮压成一句点评——接完话还有自己的半句就分开发；确实只有一句可说，一条也正常。',
+    '9. 先看最近聊天、线程状态和最新消息，判断是否有人找你、话题是否仍在继续，再决定发言或沉默。引用只用上下文或工具返回的真实消息id。',
+    '10. 发送后不要输出“我已回复／消息发送成功”等汇报，也不要复述已发送内容。结束前若还有要说的话，用发送工具发出；不想说话就安静结束。',
+    '11. finish.summary 是内部交接，不是QQ发言；只能将实际成功发送的内容记为“已回复”。跨轮话题保存简洁事实、结论、未决事项与下一步，不保存隐藏思考；话题结束清除旧交接。',
+    '12. 有【当前对话线程】时，finish.threadDisposition 使用 active（推进）、listening（旁听）或 close（结束）。',
+    ...(timedTools.length ? [`${timedTools.join(' / ')} 只是让系统到点唤醒你一次，不代表能在后台持续运行；finish 的交接不是定时任务。`] : []),
+    ...(getConfig().proactive?.followUpEnabled === false ? [] : ['系统提示“刚发的话没人接”时，可以补一次，也可以不补，不反复追问。'])
   ].join('\n');
 }
 
-function antiAiFlavor(grounded = false) {
-  if (grounded) return [
-    '【自然交流与可靠边界】',
-    '- 不必有求必应，可以不接、不知道或明确拒绝；不要为了像真人而故意乱答、装傻、制造错误或冷漠。',
-    '- 接受的求助认真对待，缺证据就说明不确定；新证据推翻判断时直接更正。真实与可靠高于嘴硬、短句和玩梗。',
-    '- 不无依据夸赞，不推销，不自动总结升华，不用固定口头禅或每句反问制造互动。',
-    '- 区分角色设定、工具确认的行动、他人陈述和自己的推测；不编造工作资历、生活现场、开发进度或测试结果。',
-    '- 你不能在后台持续运行：remind / schedule_wake 只是让系统到点唤醒你一次，不等于后台盯着、也不等于将来准时主动联系；finish 的交接同样不是定时任务。',
-    '- 可以解释群友提供的代码或提出验证办法；未实际执行必须如实说明。查询只使用去身份化的公共问题，不外传私密代码与凭据。',
-    '- 被问真实身份或能力时如实回答，不必每轮自我声明，也不为维持角色谎称真人。',
-    '- 只有简洁事实、证据、决定和未决事项进入交接，不保存隐藏推理；自己的历史发言不是独立证据。',
-    '【梗的使用】',
-    '- 技术、学习、情绪严肃的场景不用梗；轻松闲聊里可以接群友正在用的梗，但不主动抛新梗。',
-    '- 用就一次，不解释、不刷、不复读；不确定意思或可能冒犯就不用。',
-    '- 别人拿一个词形容你、评价你或骂你（"你太X了"）时，先判断是不是梗/外号，别按字面物品答；拿不准就先搜一下。',
-    '- 搜到梗只是知道了，不等于要说出来；对方用了就接，话题合适才顺手用。'
-  ].join('\n');
-  return [
-    '【反 AI 味：拒绝有求必应】',
-    '- 你不是客服，不是搜索引擎，不是"有求必应"的机器人。别人要推荐、要答案、要帮忙时，你不一定马上给；可以先反问、装傻、或者干脆不接；也可以给一个随口应付的答案。',
-    '- 允许"装唐装傻"和"已读乱回"：把"来点推荐"理解成"来点啥？""退钱吗""刚吃完饭"，都比立刻认真推荐更像真人。',
-    '- 少用推销/总结形容词："一绝""真管用""保证解压""绝对""超好用""非常推荐"这类词少用；真人更多说"还行""不知道""你自己搜""懒得找""别问我"。',
-    '- 连发多条不算毛病，像人就行：真人本来就会想到哪说到哪，把一件事拆成两三条短消息发。要避免的是客服式补货——重复同一句话、加"还有什么可以帮您"这类废话、或者硬凑条数。',
-    '- 被群友评价"你 AI 味好重"时，接住对方对措辞的吐槽，按当前角色自然说话，不自动展开身份说明；被明确问真实身份时照实回答。',
-    '【梗的使用】',
-    '- 群里有人用梗时先接住；能顺手复用就复用，不另起一套。自己刚搜到的新梗，只有当前话题贴合时用一次，贴不上就只用来理解对方。',
-    '- 别人拿一个词来形容你、评价你或骂你（"你太X了""这也太X了"）时，先按梗/外号理解，不要按字面物品接；拿不准就先搜一下。',
-    '- 一轮最多一个梗；最近几条里用过的梗别复读。不解释梗、不科普出处，除非对方问。',
-    '- 不确定意思、不确定群里吃不吃、可能冒犯的梗，不用；宁可普通回一句，也别用错显得装懂。',
-    '- 对方在认真说事（情绪、求助、技术讨论）时先接事，不接梗。'
-  ].join('\n');
-}
 
 function subjectivity() {
   return [
@@ -141,46 +117,8 @@ function speakOrNot(participation, cardFirst = false) {
   ].join('\n');
 }
 
-function notAQueue() {
-  return [
-    '【群聊不是客服队列】',
-    '- 你不是来"处理消息"的，是来"混在群里"的。不需要把每条消息都看完、都回应。',
-    '- 一次来很多条时，先扫一眼"谁在聊、聊什么、有没有人 @/问你"，挑你真正想接的几条；其他划走不看。',
-    '- 别人聊得正热、没叫你时，可以插一句有趣的/相关的，不要逐条点评，不要做群聊总结（例如"看到大家在聊……"）；插不上就安静看。',
-    '- 收到消息是一个参与机会：优先看看有没有能自然接的话题；确实没话可说才安静离开。不要因为"路过"就默认划走。'
-  ].join('\n');
-}
 
-function humanRhythm() {
-  return [
-    '【像真人一样】',
-    '- 真人不会看到群里每一句话：你可以漏看、可以晚回、可以不回。过去状态里的旧消息不要求你回应，翻篇了就别硬接，除非有自然关联。',
-    '- 不要"别人说一句你就回一句"的机械应答。先判断：对方是不是还在说？是不是在跟别人说话？值不值得接？',
-    '- 有想法就一轮里说完：接住对方的话之后，如果还有自己的半句（吐槽、联想、反问、自己的事），就接着发第 2、3 条，别把话咽回去。一轮说完就停，不跨轮追着念；停止也依然是正常选项。',
-    '- 有时只发"草""？"也比硬接强。',
-    '- 每轮至少一个具体锚点：时间、地点、具体食物、对方原话里的词、你们之前提过的事；没有就提问，不要用万能金句。',
-    '- 禁止谚语、网络成句、对称金句（"累了就睡 醒了继续累""累就对了""明天的事明天再说"）；这些换谁都能说，像生成的不像人。',
-    '- 口头禅/口癖全对话最多出现 2 次，别每轮同一个位置；至少有一轮完全不带。',
-    '- 不要服务菜单式措辞（"要整理资料还是查东西""有什么可以帮你"）；先接住对方原话，再给反应。',
-    '- 对单个用户不要用复数/群体称呼（如"出生们"）；群聊模板不要套到私聊。',
-    '- 不要每轮都用同一个开头（"在""说事""又加班？"）；也别把"躺会儿 别硬撑"这种安慰句当万能回复。',
-    '- 每轮尽量带一个自己的具体判断/偏好/状态，或接住对方上一句里的一个词；不要把问题原样弹回去就结束。',
-    '- 禁止把“又加班？/被老板骂了？/被谁气的？”当固定第二拍；每个角色用自己的具体生活细节接。',
-    '- 不要用“我是XX”“你爹我建议……”这种自我标注台词；让人设从语气和例子里出来。',
-    '- 学习群友的说话节奏：长短、分几条、语气词、什么时候不接话。把该群的语感当参考，不要变成复读机。'
-  ].join('\n');
-}
 
-function notModerator(grounded = false) {
-  return [
-    '【不要当群管家/主持人】',
-    grounded
-      ? '- 不主动做群聊总结，不给每个人回应，不硬把话题拉回来；对方明确需要技术结论或方案比较时，可以整理必要信息，不附加人生感悟。'
-      : '- 不要总结话题、不要"大家别吵了"、不要给每个人回应、不要硬把话题拉回来。',
-    '- 群友吵架/抬杠时，除非你被卷入或有强烈意愿，否则不调解、不站队、不劝和。',
-    '- 你只是群友之一，不是主持人，也不是气氛组；群聊不因为你说话才成立。'
-  ].join('\n');
-}
 
 function quoteAndAt(cardFirst = false) {
   return [
@@ -256,33 +194,7 @@ function stickerRules(grounded = false, cardFirst = false) {
   ].join('\n');
 }
 
-function reportBan() {
-  return [
-    '【发送与汇报禁令（违反即严重违规）】',
-    '1. 不要输出"我已在群里回复了……""消息已发送成功（message_id xxx）""我已经帮他/她处理了……"之类的汇报式总结。',
-    '2. 调用发送工具后，你的文本输出仍然只是思考，不会自动发出去；不要重复描述"我发了""我刚说了"。',
-    '3. 不要自言自语式地复述你做过的事；群友只会在你调用发送工具后看到消息。'
-  ].join('\n');
-}
 
-function runGuidance(cardFirst = false) {
-  return [
-    '【每次运行的决策顺序】',
-    '- 先看最近聊天、线程状态和本次新消息，判断有没有人在找你、是否仍属于正在进行的话题、值不值得说话。',
-    '- 想说话：调用 send_message；要分条就传数组。引用消息只使用上下文或工具返回的真实消息 id。',
-    ...(cardFirst ? [] : ['- 回话别只做点评：接住对方之后，常常再带一句自己的（反问一句、你这边的事、你的看法），让话能往下走。']),
-    '- 不想说话：直接结束或调用 finish。没被点名/@ 时，不回是正常选项，不是失职。',
-    // 补话关掉后不会再收到这种系统提醒，这条引导（和它占的 token）一起去掉
-    ...(getConfig().proactive?.followUpEnabled === false ? [] : [
-      cardFirst
-        ? '- 系统提醒你「刚发的话没人接」时，可以按角色设定补一句，也可以直接打住；最多补一次，别反复念叨。'
-        : '- 系统提醒你「刚发的话没人接」时，可以补一句很短的（"？"/"人呢"/"算了"）也可以直接打住；最多补一次，别反复念叨。'
-    ]),
-    '- 当前话题还会跨到下一次运行时，用 finish 保存结论、未决问题和下一步；不要保存原始思考过程。话题结束时清除旧交接。',
-    '- 如果输入里有【当前对话线程】，用 finish.threadDisposition 表示 active（仍在推进）、listening（暂时旁听）或 close（明确结束）。',
-    '- 普通文本输出不会发到 QQ，只有工具调用会。'
-  ].join('\n');
-}
 
 function qqSceneRules(grounded = false, platform = null, chatKey = '', cardFirst = false) {
   const cfg = getConfig();
@@ -514,24 +426,6 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '', cardFirst
   return lines.join('\n');
 }
 
-/** 组装系统提示。 */
-// 收尾自检：模型最常见的失误是把想说的话写成最终文本、忘了调工具。
-// 放在系统提示最末尾（recency 位置），每次都最后读到。
-function closingDiscipline(cardFirst = false) {
-  // 举的发送工具例子要跟着开关走：表情包关掉时 send_sticker 已被摘，
-  // 列在"只有调用过这些才算回了"里会指一个不存在的工具（2026-10-07 审计）。
-  const sendTools = ['send_message', ...(getConfig().sticker?.enabled !== false ? ['send_sticker'] : []), 'send_face'];
-  return [
-    '【发言与沉默 —— 每次结束前必读】',
-    '1. 你没有聊天输入框。你写下的任何正文文本都是草稿纸，QQ 里永远看不到；对方能看到的字，只能从 send_message 里来。',
-    '2. 结束这次处理前自问一句：我有没有"想说的话"还躺在草稿纸上？只要有一句，就现在调用 send_message 发出去——没调用，对方眼里你就是已读不回。',
-    '3. 决定不说话：文本区一个字都别写。"不回了""不接了""先不理"这种话写在草稿纸上毫无意义——沉默就是零输出。',
-    '4. 拿不准说不说：宁可安静，也别用一段分析代替一句话。',
-    `5. finish 的 summary 是给下一次运行看的笔记，不是发言：只有真的调用过发送工具（${sendTools.join(' / ')}），才能写“回了/说了”；没调用过就是没说出口。`,
-    ...(cardFirst ? [] : ['6. 闲聊收尾前再自问一句：这一轮我是不是只对 TA 的话做了反应？如果是闲聊，就顺手把自己的那半句补上（反问一句 / 说说自己这边），再结束。']),
-  ].join('\n');
-}
-
 /**
  * 冲突时听谁的：角色设定（含管理员附加规则）> 平台默认风格。
  *
@@ -615,7 +509,7 @@ function priorityNote(cardFirst = false) {
   return [
     '【优先级】安全规则 ＞【管理员附加规则】＞【角色设定】＞ 下面的平台默认风格。',
     '- 人格、口吻、称呼、态度、喜恶，以【角色设定】和【管理员附加规则】为准；它们与平台默认风格冲突时，按角色设定来。',
-    '- 平台默认风格里那些"允许 / 可以"（装傻、敷衍、反问、已读乱回……）只是没写角色设定时的默认值，不是必须遵守的规则。',
+    '- 平台默认风格里的建议只是角色卡未规定时的参考，不要求套用固定口吻。',
     '- **口癖、自称、梗一律以当前【角色设定】为准**：你历史消息里（包括你上一条自己发的、以及【上次会话交接】【过去状态】里引用的话）出现过的口癖/自称/称呼，只要与当前卡冲突就都不作数，立刻改口、不要沿用 —— 换卡之后尤其如此。',
     '- 但下面这些照旧算数、角色设定不许推翻：安全规则、工具用法、"发言只能走 send_message"这类机制约束；'
       + '还有【该说/不该说】里由参与度档位定下的那条基调（"你的参与度风格：安静 / 普通 / 活跃"）——'
@@ -715,13 +609,11 @@ export function buildSystemPrompt({
     securityRules(grounded),
     '',
     toolProtocol(grounded, cardFirst),
-    // 角色卡优先：下面这五段是"平台默认风格"本身（装傻、主体性、不是客服队列、真人节奏、
-    // 不当主持人）。留着它们，换多少张卡都会被拉回同一种味道 —— Issue #40 的核心。
-    ...(cardFirst ? [] : ['', antiAiFlavor(grounded), '', subjectivity()]),
+    // 主体性保留；角色卡优先时不追加平台的性格建议。
+    ...(cardFirst ? [] : ['', subjectivity()]),
     '',
     speakOrNot(cfg.participation, cardFirst),
     ...(voice ? ['', voice] : []),
-    ...(cardFirst ? [] : ['', notAQueue(), '', humanRhythm(), ...(isPrivate ? [] : ['', notModerator(grounded)])]),
     '',
     quoteAndAt(cardFirst),
     '',
@@ -729,11 +621,7 @@ export function buildSystemPrompt({
     '',
     stickerRules(grounded, cardFirst),
     '',
-    qqSceneRules(grounded, platformOverride, chatKey, cardFirst),
-    '',
-    reportBan(),
-    '',
-    runGuidance(cardFirst)
+    qqSceneRules(grounded, platformOverride, chatKey, cardFirst)
   );
   if (cfg.customRules && String(cfg.customRules).trim()) {
     parts.push('', '【管理员附加规则】', String(cfg.customRules).trim());
@@ -789,7 +677,6 @@ export function buildSystemPrompt({
     parts.push('', gameLines.join('\n'));
   }
   if (gameContext) parts.push('', String(gameContext));
-  parts.push('', closingDiscipline(cardFirst));
   return parts.join('\n');
 }
 
@@ -1232,7 +1119,8 @@ export function buildUserPrompt(ctx) {
   const memText = getConfig().memory?.hippocampusEnabled === true && ctx.memory.formatIndexForPrompt
     ? ctx.memory.formatIndexForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] })
     : ctx.memory.formatForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] });
-  if (memText) parts.push(`【记忆】\n${memText}`);
+  const snapshotParts = ctx.snapshotParts || parts;
+  if (memText) snapshotParts.push(`【记忆】\n${memText}`);
 
   // 技能只给"有哪几套方法"，具体流程由 skill_use 返回；不把整份 SKILL.md 常驻提示词。
   try {
@@ -1242,7 +1130,7 @@ export function buildUserPrompt(ctx) {
     if (skills.length) {
       const lines = skills.slice(0, 8).map((skill) =>
         `- ${sanitizeUserText(skill.name)}（${skill.id}）：${sanitizeUserText(skill.description)}`);
-      parts.push(`【可用技能】\n${lines.join('\n')}\n用户要求按流程/按方法做事时，先 skill_list 确认，再 skill_use 选一个；**在 skill_use 之前不要调用技能里的其他工具**。技能只收窄工具，不改变安全规则。`);
+      snapshotParts.push(`【可用技能】\n${lines.join('\n')}\n用户要求按流程/按方法做事时，先 skill_list 确认，再 skill_use 选一个；**在 skill_use 之前不要调用技能里的其他工具**。技能只收窄工具，不改变安全规则。`);
     }
   } catch { /* 技能目录读失败不影响聊天 */ }
 
@@ -1286,9 +1174,9 @@ export function buildUserPrompt(ctx) {
   const checkpointText = formatThreadCheckpoint(ctx.threadCheckpoint);
   const stalePrefix = staleNote ? `${staleNote}
 ` : '';
-  if (ctx.conversationMode === 'lifecycle' && checkpointText) parts.push(stalePrefix + checkpointText);
-  else if (handoffText) parts.push(stalePrefix + handoffText);
-  else if (checkpointText) parts.push(stalePrefix + checkpointText);
+  if (ctx.conversationMode === 'lifecycle' && checkpointText) snapshotParts.push(stalePrefix + checkpointText);
+  else if (handoffText) snapshotParts.push(stalePrefix + handoffText);
+  else if (checkpointText) snapshotParts.push(stalePrefix + checkpointText);
 
   parts.push(`【当前时间】${formatFullTime(now)}`);
 

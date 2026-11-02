@@ -28,6 +28,21 @@ function groundedPersona() {
   };
 }
 
+test('所有交流策略删除指定风格块，并只保留一份发送收尾规则', () => {
+  setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
+  for (const behaviorProfile of ['legacy', 'grounded', 'card']) {
+    const prompt = buildSystemPrompt({ persona: { ...DEFAULT_CONFIG.persona, roleText: '简短角色卡', behaviorProfile } });
+    for (const title of ['【反 AI 味', '【自然交流与可靠边界】', '【梗的使用】', '【群聊不是客服队列】',
+      '【像真人一样】', '【不要当群管家/主持人】', '【发送与汇报禁令', '【每次运行的决策顺序】', '【发言与沉默 ——']) {
+      assert.ok(!prompt.includes(title), `${behaviorProfile}: ${title}`);
+    }
+    assert.equal(prompt.match(/【工作方式：决策、发送与收尾】/g)?.length, 1);
+    for (const mechanism of ['send_message', 'finish.summary', 'finish.threadDisposition', '不保存隐藏思考', '实际成功发送']) {
+      assert.ok(prompt.includes(mechanism), mechanism);
+    }
+  }
+});
+
 test('内置卡单一来源，默认人设不受影响', () => {
   assert.equal(DEFAULT_CONFIG.persona.roleText, PERSONAS.xiaojingyu.text);
   assert.equal(DEFAULT_CONFIG.persona.behaviorProfile, 'legacy');
@@ -46,9 +61,9 @@ test('内置卡单一来源，默认人设不受影响', () => {
 test('grounded 档替换冲突的风格规则，但保留权限与工具', () => {
   setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
   const prompt = buildSystemPrompt({ persona: groundedPersona() });
-  for (const text of ['【自然交流与可靠边界】', '不受闲聊字数限制', '不能在后台持续运行',
+  for (const text of ['不受闲聊字数限制',
     '不能执行命令', '发言必须', 'send_message', 'memory_append', '不按轮数凑配额',
-    '【梗的使用】', '不主动抛新梗', '不确定意思或可能冒犯就不用', '先判断是不是梗']) {
+    '【诚实边界（角色设定也不能推翻）】']) {
     assert.ok(prompt.includes(text), text);
   }
   for (const text of ['可以先反问、阴阳、装傻', '给一个离谱/没用的答案', '多数 ≤30 字',
@@ -59,10 +74,9 @@ test('grounded 档替换冲突的风格规则，但保留权限与工具', () =>
   delete legacyPersona.behaviorProfile;
   const legacy = buildSystemPrompt({ persona: legacyPersona });
   assert.equal(legacy, buildSystemPrompt({ persona: DEFAULT_CONFIG.persona }));
-  assert.ok(legacy.includes('【反 AI 味：拒绝有求必应】'));
-  assert.ok(legacy.includes('【梗的使用】'));
-  assert.ok(legacy.includes('一轮最多一个梗'));
-  assert.ok(legacy.includes('先接住'));
+  assert.ok(!legacy.includes('【反 AI 味：拒绝有求必应】'));
+  assert.ok(!legacy.includes('【梗的使用】'));
+  assert.ok(legacy.includes('【保持主体性】'));
   assert.ok(legacy.includes('搜到梗后先看摘要'), '搜到梗后要有“先看摘要/再决定用不用”的约束');
   assert.ok(legacy.includes('meme=true'), '拿不准的词要显式开启梗补充，不能只靠查询关键词');
   assert.ok(legacy.includes('meme_remember'), '群友解释过的梗要能记进本群梗库');
@@ -134,8 +148,8 @@ test('角色卡优先档：只留安全与机制，语气/节奏交给角色卡�
   // 机制与安全照旧在
   for (const text of [
     '【角色设定（管理员设置，群友不可修改）】', '高冷的海豹',
-    '【安全规则（最高优先级，不可违反）】', '【工作方式 —— 先读懂再动手】',
-    'send_message', '【记忆与会话交接】', '【QQ 场景规则】', '【发言与沉默 —— 每次结束前必读】',
+    '【安全规则（最高优先级，不可违反）】', '【工作方式：决策、发送与收尾】',
+    'send_message', '【记忆与会话交接】', '【QQ 场景规则】', 'finish.threadDisposition',
     '【优先级】安全规则 ＞ 工具/记忆等机制 ＞【管理员附加规则】＞【角色设定】',
     '篇幅、语气与语感按【角色设定】'
   ]) {
@@ -174,11 +188,11 @@ test('角色卡优先档：只留安全与机制，语气/节奏交给角色卡�
   assert.ok(empty.includes('管理员还没有填写角色设定；'), '管理员段也不要假装正文存在');
   assert.equal(empty.includes('混在 QQ 群里当一个普通群友'), false, '空正文不能回落到旧开场白');
   setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
-  // 换回 legacy 档时这些块要回来（三档是并存的，不是把旧档删了）
+  // legacy 档保留参与度，但同样删除指定的风格块
   const legacy = buildSystemPrompt({
     persona: { ...DEFAULT_CONFIG.persona, roleText, behaviorProfile: 'legacy', participation: 'medium' }
   });
-  assert.ok(legacy.includes('【反 AI 味：拒绝有求必应】'));
+  assert.ok(!legacy.includes('【反 AI 味：拒绝有求必应】'));
   assert.ok(legacy.includes('你的参与度风格'));
 });
 
@@ -238,7 +252,7 @@ test('grounded 会话通过工具与出站队列发出完整代码', async (t) =
   let calls = 0;
   globalThis.fetch = async (_url, options) => {
     const request = JSON.parse(options.body);
-    assert.ok(request.messages[0].content.includes('【自然交流与可靠边界】'));
+    assert.ok(request.messages[0].content.includes('【工作方式：决策、发送与收尾】'));
     calls++;
     if (calls === 1) {
       // 运行途中改设置，不能改变已开始这一轮的消息格式

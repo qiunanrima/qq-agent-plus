@@ -1531,7 +1531,7 @@ describe('Orchestrator', () => {
     assert.equal(latest.contextReason, '续接：引用机器人');
   });
 
-  it('supports per-group lifecycle mode and reuses the append-only DeepSeek transcript', async (t) => {
+  it('supports per-group lifecycle mode and reuses dialogue without old memory snapshots', async (t) => {
     const { cfg, runner, store, sessions, append } = fixture(t);
     cfg.conversation.mode = 'legacy';
     cfg.conversation.unifiedMode = false;
@@ -1588,11 +1588,11 @@ describe('Orchestrator', () => {
 
     assert.equal(requests.length, 3, '生命周期内任意参与者消息都应进入模型');
     assert.ok(requests[2].messages.length > 2, '第二次运行应携带持久化 transcript');
-    assert.deepEqual(
-      requests[2].messages.slice(0, requests[1].messages.length),
-      requests[1].messages,
-      '生命周期下一次请求应完整复用上一请求前缀'
-    );
+    assert.deepEqual(requests[2].messages[0], requests[1].messages[0], '系统前缀保持稳定');
+    assert.deepEqual(requests[2].messages.slice(2, requests[1].messages.length),
+      requests[1].messages.slice(2), '旧助手与工具结果保持原样');
+    assert.match(requests[2].messages[1].content, /开始生命周期/, '历史用户消息仍在');
+    assert.doesNotMatch(requests[2].messages[1].content, /在场人物的长期印象索引/);
     const priorReasoning = requests[2].messages.find(
       (message) => message.reasoning_content === '先回应并保持当前生命周期'
     );
@@ -1625,6 +1625,42 @@ describe('Orchestrator', () => {
       requests[2].messages,
       'Session 应保存当前轮发送给模型的完整 messages'
     );
+  });
+
+  it('生命周期连续三次只带最新记忆快照，历史发言和工具结果不丢', async (t) => {
+    const { cfg, runner, store, memory, append, sessions } = fixture(t);
+    cfg.conversation.mode = 'lifecycle';
+    cfg.humanize.enabled = false;
+    let version = 1;
+    memory.formatIndexForPrompt = () => `【在场人物的长期印象索引】印象快照版本${version}`;
+    memory.hippocampus = { prompt: () => `【海马：今日与昨日的共同经历】海马快照版本${version}`,
+      toolDefs: () => [], capture: () => {} };
+    const requests = [];
+    globalThis.fetch = async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: `finish-${version}`, type: 'function', function: {
+        name: 'finish', arguments: JSON.stringify({ summary: `轮次${version}`, threadDisposition: 'active' })
+      } }] } }], usage: { total_tokens: 10 } });
+    };
+    for (version = 1; version <= 3; version++) {
+      append(version, `真实聊天第${version}条`);
+      await runner.wake('group:1');
+      const request = requests.at(-1);
+      const users = request.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+      assert.equal(users.match(/【海马：今日与昨日的共同经历】/g)?.length, 1);
+      assert.equal(users.match(/【在场人物的长期印象索引】/g)?.length, 1);
+      assert.match(users, new RegExp(`海马快照版本${version}`));
+      for (let previous = 1; previous < version; previous++) {
+        assert.ok(!users.includes(`海马快照版本${previous}`));
+        assert.match(users, new RegExp(`真实聊天第${previous}条`));
+      }
+      const thread = store.getConversationThread('group:1');
+      const turns = store.getThreadTurns(thread.threadId);
+      assert.ok(turns.some((m) => m.role === 'tool'), '保留真实工具结果');
+      assert.doesNotMatch(JSON.stringify(turns), /海马快照版本|印象快照版本/);
+      const session = sessions.get(sessions.listSummaries(1)[0].id);
+      assert.match(session.userPrompt, new RegExp(`海马快照版本${version}`), '审计显示实际注入快照');
+    }
   });
 
   it('rolls a lifecycle generation before the next request when actual input reaches 32K', async (t) => {

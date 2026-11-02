@@ -42,10 +42,19 @@ Lifecycle mode stores an append-only provider transcript in SQLite. Each new
 model request uses:
 
 ```text
-stable system prompt + prior provider transcript + current message batch
+stable system prompt + prior dialogue/tool transcript + latest context snapshot + current message batch
 ```
 
-This preserves an exact prefix for DeepSeek context caching. Provider
+Only real conversation input, assistant calls and tool results are appended to
+the transcript. Memory snapshots (hippocampus, impressions, personality and skill
+indexes, state and handoff/checkpoints) are supplied with the current user message
+and omitted from the persisted turn. Each new wake therefore sees one current
+snapshot rather than accumulating stale versions. Within a wake, the snapshot
+remains available for every tool round. Queried tool results are retained.
+
+The stable system prompt and dialogue remain reusable; removing snapshots means
+cross-wake requests no longer promise the exact full previous-request prefix for
+DeepSeek caching. Provider
 `reasoning_content` is retained only inside the active lifecycle so tool calls
 can continue correctly. Raw lifecycle transcript is deleted when the lifecycle
 closes or rolls over; the structured checkpoint remains.

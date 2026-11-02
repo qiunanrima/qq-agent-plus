@@ -2350,8 +2350,10 @@ export class Orchestrator {
       : null;
     const lifecycleContinuation = priorProviderMessages.length > 0;
 
-    // 首轮带完整上下文；生命周期后续轮只附加增量，旧消息保持字节级稳定以命中 DeepSeek 前缀缓存。
+    // 事实对话保留；记忆/交接快照只供本轮读取，不写入生命周期 transcript。
+    const snapshotParts = humanLines ? [humanLines] : [];
     const userPrompt = buildUserPrompt({
+      snapshotParts,
       chatKey, kind, chatId, chatName,
       triggerEntries,
       store: this.store,
@@ -2386,8 +2388,9 @@ export class Orchestrator {
     });
 
     session.systemPrompt = systemPrompt;
-    session.userPrompt = userPrompt;
-    session.promptChars = systemPrompt.length + userPrompt.length
+    const contextSnapshot = snapshotParts.join('\n\n');
+    session.userPrompt = (contextSnapshot ? `${contextSnapshot}\n\n` : '') + userPrompt;
+    session.promptChars = systemPrompt.length + session.userPrompt.length
       + JSON.stringify(priorProviderMessages).length;
     session.model = cfg.api.model;
     session.conversationMode = conversationCfg.mode;
@@ -2460,7 +2463,7 @@ export class Orchestrator {
       : '';
     const currentUserMessage = {
       role: 'user',
-      content: (humanLines ? `${humanLines}\n\n` : '') + (proactive && !manual
+      content: (contextSnapshot ? `${contextSnapshot}\n\n` : '') + (proactive && !manual
         ? `${userPrompt}\n\n【本次唤醒】${wakeLead}${wakeTail}`
         : (paced
           ? `${userPrompt}\n\n【本次唤醒】${pacedLead}`
@@ -2484,7 +2487,7 @@ export class Orchestrator {
     };
 
     session.promptLayout = lifecycleContinuation
-      ? 'deepseek-lifecycle-append-v1'
+      ? 'lifecycle-latest-snapshot-v2'
       : 'stable-prefix-v2';
     session.promptPrefixHash = promptPrefixHash;
 
@@ -2838,8 +2841,12 @@ export class Orchestrator {
     const providerTranscriptDelta = conversationCfg.mode === 'lifecycle'
       ? structuredClone(messages.slice(transcriptStart))
       : [];
+    // 只剥掉我们在本轮准确添加的前缀，不能按标题匹配聊天正文或工具结果。
+    if (contextSnapshot && providerTranscriptDelta[0]?.role === 'user') {
+      providerTranscriptDelta[0].content = providerTranscriptDelta[0].content.slice(contextSnapshot.length + 2);
+    }
     // 普通 assistant 文本不会发到 QQ，它只是本次运行的内部输出。下一生命周期轮次
-    // 不应把它伪装成机器人曾经说过的话；移除后仍能完整命中上一请求的输入边界。
+    // 不应把它伪装成机器人曾经说过的话；发送工具记录仍保留。
     const tail = providerTranscriptDelta.at(-1);
     const terminalReasoning = tail?.role === 'assistant' && !tail.tool_calls?.length
       ? tail.reasoning_content
