@@ -112,6 +112,7 @@ import { memeDensityPrompt } from '../llm/humanize.js';
 import { memesForPrompt } from '../memes/store.js';
 import { visibleImpressions, memoryVisibilityOf } from './memory-visibility.js';
 import { knowledgeEnabled } from '../knowledge/store.js';
+import { PersonaBackground } from '../persona-background/index.js';
 import { buildReminderNote, reminderNoteCost } from './reminders.js';
 import { ZONE_OFFSET_MS, minuteOfDayInZone, randInt, createEventBus, todayKey, sanitizeUserText } from './util.js';
 import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts } from './proactive-state.js';
@@ -2229,6 +2230,12 @@ export class Orchestrator {
     const pluginToolDefs = this.getPlugins?.()?.toolDefsFor?.() ?? [];
     const mcpToolDefs = this.getMcp?.()?.toolDefsFor?.() ?? [];
     const builtinToolDefs = toolDefs;   // 前缀哈希用它（见下），插件/MCP 工具只按名字参与
+    const personaBackground = new PersonaBackground({ dataDir: DATA_DIR });
+    let backgroundPrompt = '';
+    try {
+      backgroundPrompt = personaBackground.prompt(persona);
+      toolDefs.push(...personaBackground.toolDefs(persona));
+    } catch (error) { log.warn('[persona-background] 读取角色背景失败：', error.message); }
     toolDefs.push(...(this.personalityMemory?.toolDefs({ chatKey, persona }) || []));
     toolDefs.push(...(this.memory.hippocampus?.toolDefs({ chatKey, persona }) || []));
     if (cfg.memory?.hippocampusEnabled === true && cfg.livingMemory?.enabled === true) {
@@ -2290,7 +2297,7 @@ export class Orchestrator {
       memeDensityPrompt(cfg),
       memesForPrompt(chatKey, triggerText, { level: cfg?.humanize?.memeUse?.level })
     ].filter(Boolean).join('\n\n');
-    const systemPrompt = baseSystemPrompt;
+    const systemPrompt = [baseSystemPrompt, backgroundPrompt].filter(Boolean).join('\n\n');
     const promptPrefixHash = crypto.createHash('sha256')
       .update(String(cfg.api.provider || ''))
       .update('\0')

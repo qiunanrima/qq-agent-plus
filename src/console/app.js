@@ -62,6 +62,8 @@ import { initChannelPrices, refreshChannelFeed, removeChannelFeed, channelPriceS
 import { currentProviders, setProviderKey, testAllProviders, testOneProvider, testModelChat, probeThinking, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from '../core/providers.js';
 import { personaStateSnapshot } from '../core/persona-state.js';
 import { resolvePersona } from '../personas.js';
+import { PersonaBackground } from '../persona-background/index.js';
+import { registerPersonaBackgroundRoutes } from '../persona-background/routes.js';
 import { scanModelsVision, visionResults } from '../llm/vision-scan.js';
 import { builtinVisionResults } from '../llm/model-vision-docs.js';
 import { createEventBus, todayKey, shanghaiDayStart, isSelfSender, safeSlice, sanitizeUserText, textWithQuote } from '../core/util.js';
@@ -3162,6 +3164,7 @@ export function createApp({
     return json(res, status, { ok: false, code: error?.code || '', error: safe });
   };
 
+  registerPersonaBackgroundRoutes({ router, background: new PersonaBackground({ dataDir: DATA_DIR }), getConfig, readBody, json });
   router.add('GET', '/api/knowledge', async (_req, res) =>
     json(res, 200, {
       ok: true,

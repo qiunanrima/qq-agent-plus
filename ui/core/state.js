@@ -9,6 +9,7 @@ import { $, $$ } from './dom.js';
 import { lifecycleRemainingText } from './lifecycle-labels.js';
 import { renderMemoryList } from '../pages/memory.js';
 const state = {
+  personaBackgroundDrafts: {},
   tab: 'overview',   // 首屏落地页：与 index.html 里标了 active 的 tab 保持一致（2026-10-08 总览页）
   integrationStatus: null,
   autoUpdateStatus: null,

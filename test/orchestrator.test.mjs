@@ -29,6 +29,7 @@ const { PersonalityMemory } = await import('../src/personality-memory/index.js')
 const { Hippocampus } = await import('../src/memory/hippocampus.js');
 const { resolvePersona } = await import('../src/personas.js');
 const { todayKey } = await import('../src/core/util.js');
+const { PersonaBackground } = await import('../src/persona-background/index.js');
 const { currentTraceId, lastTraceId } = await import('../src/core/logger.js');
 
 /**
@@ -159,6 +160,31 @@ describe('Orchestrator', () => {
     });
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
+
+  it('角色背景仅注入索引，真实回合可主动读取正文，换卡后不串资料', async (t) => {
+    const { runner, cfg, append } = fixture(t);
+    const background = new PersonaBackground({ dataDir: root });
+    const role = resolvePersona(cfg, 'group:1');
+    const saved = background.save(role, { ...background.read(role), content: '# 旧日朋友\n只有读取后才能知道的秘密旧事。' });
+    t.after(() => background.save(role, { ...background.read(role), confirm: true }, true));
+    let body, round = 0;
+    globalThis.fetch = async (_url, options) => {
+      body = JSON.parse(options.body);
+      const name = round++ === 0 ? 'persona_background_lookup' : 'finish';
+      const args = name === 'finish' ? { summary: '查过背景' } : { sectionId: saved.sections[0].id };
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: `bg-${round}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1, '说说你旧日的朋友？');
+    await runner.wake('group:1');
+    assert.match(body.messages.find((m) => m.role === 'system').content, /旧日朋友/);
+    assert.doesNotMatch(body.messages.find((m) => m.role === 'system').content, /只有读取后才能知道/);
+    assert.ok(body.messages.some((m) => m.role === 'tool' && String(m.content).includes('秘密旧事')));
+    cfg.persona = { ...role, templateId: 'different-background-role' };
+    append(2);
+    await runner.wake('group:1');
+    assert.ok(!body.tools.some((tool) => tool.function.name === 'persona_background_lookup'));
+    assert.doesNotMatch(body.messages.find((m) => m.role === 'system').content, /当前扮演角色的背景资料索引/);
+  });
 
   it('真实聊天使用search_web数量参数并统计联网，关闭搜索后新旧工具均不可用', async (t) => {
     const { runner, cfg, append, sessions } = fixture(t);

@@ -12,6 +12,7 @@ import {
 import { $, esc } from '../core/dom.js';
 import { perChatOptions } from './persona-per-chat.js';
 import { personaDescCache, state } from '../core/state.js';
+import { renderPersonaBackground } from './persona-background.js';
 function findPersonaTemplateId(roleText, behaviorProfile = 'legacy', customRules = '') {
   const entries = Object.entries(state.personaTemplates || {});
   const exacts = entries.filter(([, p]) =>
@@ -521,6 +522,7 @@ function renderPersonaSection(c) {
       </div>
       <textarea id="cfg-customrules" class="persona-role-text" style="min-height:100px" placeholder="例如：别装傻、别反问，不接话就安静；称呼固定用「老板」；被怼只淡淡带过">${esc(c.persona.customRules || '')}</textarea>
       <div class="hint">优先级：安全规则始终最高。其余按「交流策略」：原版群友 / 自然可靠下是 这里 &gt; 角色设定 &gt; 平台默认风格；角色卡优先下是 工具/记忆等机制 &gt; 这里 &gt; 角色设定（没有平台默认风格）。角色的口吻/称呼/脾气写在「角色设定」里就行。上面几个例子点一下就加进去，可以再改。</div></div>
+    ${renderPersonaBackground(c)}
     ${renderPersonaPerChat(c)}
     <div class="hint">改完记得点页面最下面那条<strong>「保存设置」</strong>（一直悬在底部）——它保存的就是这一页的人设。</div>`;
 }

@@ -299,7 +299,8 @@ function bindDirtyTracking() {
   const box = $('#settings-form');
   if (!box || box.dataset.dirtyBound === '1') return;
   box.dataset.dirtyBound = '1';
-  const mark = () => {
+  const mark = (event) => {
+    if (event.target.closest('[data-independent-save]')) return;
     state.settingsDirty = true;
     const note = $('#cfg-dirty-note');
     if (note) note.textContent = '有未保存改动';
