@@ -9,6 +9,7 @@
 // 同一会话（群/私聊）同时最多一个运行；运行期间新消息只写 JSON（未读），不叠加触发。
 // 不同会话之间并行，受 maxConcurrentRuns 全局限流。
 import crypto from 'node:crypto';
+import { RestrictedSubagents } from '../subagents/index.js';
 import path from 'node:path';
 import {
   DATA_DIR,
@@ -525,6 +526,7 @@ export class Orchestrator {
     this.memory = memory;
     this.livingMemory = livingMemory;
     this.personalityMemory = personalityMemory;
+    this.subagents = new RestrictedSubagents({ getConfig });
     this.stickers = stickers;
     this.sender = sender;
     this.sessions = sessions;
@@ -2270,6 +2272,13 @@ export class Orchestrator {
           return { content: found?.text || '没有找到可用的旧语义记忆' };
         } });
     }
+    const researchTools = toolDefs.slice();
+    toolDefs.push(...this.subagents.toolDefs({
+      getTools: (ctx) => researchTools.filter((d) => !skillGateMessage(ctx.activeSkill, ctx.pendingSkillUse, d.name)
+        && (getConfig().webSearch?.enabled !== false || !['search_web', 'fetch_url'].includes(d.name))),
+      allowed: () => canRun(chatKey) && !this.paused && !this.aborted,
+      complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true })
+    }));
     if (pluginToolDefs.length) toolDefs.push(...pluginToolDefs);
     if (mcpToolDefs.length) toolDefs.push(...mcpToolDefs);
     const openAiTools = toOpenAiTools(toolDefs);
@@ -2754,7 +2763,7 @@ export class Orchestrator {
         const name = call?.function?.name ?? '';
         const argsRaw = call?.function?.arguments ?? '{}';
         if (['search_web', 'fetch_url', 'web_search', 'web_fetch'].includes(name)) webSearchCount += 1;
-        session.webSearchCount = webSearchCount;
+        session.webSearchCount = webSearchCount + (session.subagentWebSearchCount || 0);
         markActivity(`正在调用 ${name}…`);
         // 技能白名单只收窄本轮工具；finish/skill_list/skill_use 在 skill_use 时已加入集合。
         // send_message 永远放行：模型可能只是想“看看有哪些技能，然后正常回一句”；
@@ -3879,14 +3888,15 @@ export class Orchestrator {
    * useChatModel=true 时跟随聊天模型（cfg.api.*）；
    * false 时使用 cfg.memory.provider/model 指向的目录模型（端点/密钥取自 providers）。
    */
-  async #memoryChat(messages, { signal = null, timeoutMs = null, session = null } = {}) {
+  async #memoryChat(messages, { signal = null, timeoutMs = null, session = null, tools = null,
+    forceChatModel = false, tokenLimit = Infinity } = {}) {
     const cfg = getConfig();
     const mem = cfg.memory || {};
     let maxTokens = null, reservation = 0;
     if (session) {
-      const promptTokens = estimateNextPromptTokens({ messages }).estimatedPromptTokens;
-      const remaining = effectiveRunLimits(cfg).maxRunTokens - runTokenUsage(session)
-        - (session.auxiliaryReservedTokens || 0) - promptTokens - 2048;
+      const promptTokens = estimateNextPromptTokens({ messages, tools }).estimatedPromptTokens;
+      const remaining = Math.min(tokenLimit - promptTokens, effectiveRunLimits(cfg).maxRunTokens - runTokenUsage(session)
+        - (session.auxiliaryReservedTokens || 0) - promptTokens - 2048);
       if (remaining < 256) throw new Error('本轮 Token 预算不足，跳过记忆辅助模型调用');
       maxTokens = Math.min(2048, Math.floor(remaining));
       reservation = promptTokens + maxTokens;
@@ -3895,7 +3905,7 @@ export class Orchestrator {
     try {
       if (timeoutMs) signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
       let overrides;
-      if (mem.useChatModel === false) {
+      if (!forceChatModel && mem.useChatModel === false) {
         const p = currentProviders().find((x) => x.id === mem.provider);
         if (!p?.baseURL || !p?.apiKey || !mem.model) {
           throw new Error('记忆整理专用模型未配置：请在设置 → 记忆里选择提供商与模型');
@@ -3903,7 +3913,7 @@ export class Orchestrator {
         overrides = { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: timeoutMs || 180000 };
       }
       // 记忆整理 = 判断/总结类任务（与聊天、写作可各自设思考档位）。
-      const response = await chatCompletion({ messages, signal, maxTokens, temperature: 0.2, purpose: 'judge', overrides });
+      const response = await chatCompletion({ messages, tools, signal, maxTokens, temperature: 0.2, purpose: 'judge', overrides });
       this.#recordExternalUsage(response, overrides?.model);
       if (session) this.#recordAuxiliaryUsage(session, response);
       return response;
@@ -3954,6 +3964,7 @@ export class Orchestrator {
 
   async abortAll() {
     this.aborted = true;
+    this.subagents.cancelAll();
     clearInterval(this.retryTimer);
     for (const controller of this.controllers.values()) controller.abort(new Error('Run cancelled'));
     for (const timer of this.wakeTimers.values()) clearTimeout(timer);

@@ -283,6 +283,98 @@ describe('Orchestrator', () => {
     assert.equal(backendCount, 1);
   });
 
+  it('受限子代理真实检索后交回主模型，独立上下文、聊天模型、日志、联网次数与共享预算生效', async (t) => {
+    const { runner, cfg, append, sessions } = fixture(t);
+    cfg.subagent = { enabled: true, graduated: false };
+    cfg.memory = { ...cfg.memory, useChatModel: false, provider: 'unused', model: 'not-for-research' };
+    cfg.webSearch = { ...cfg.webSearch, enabled: true, provider: 'deepseek',
+      deepseek: { ...cfg.webSearch.deepseek, baseUrl: 'https://search.invalid', apiKey: 'mock-key' } };
+    const logs = [];
+    runner.subagents.log = { info: (line) => logs.push(line) };
+    const before = sessions.todayUsage(todayKey()).totalTokens;
+    let mainCalls = 0, childCalls = 0, searches = 0;
+    globalThis.fetch = async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(url).startsWith('https://search.invalid')) {
+        searches++;
+        return Response.json({ results: [{ title: '资料标题', url: 'https://example.com/source', summary: '摘要依据' }] });
+      }
+      assert.equal(body.model, 'mock');
+      let tool_calls, content;
+      if (body.messages[0].content.startsWith('你是受限资料检索子代理')) {
+        childCalls++;
+        assert.doesNotMatch(JSON.stringify(body.messages), /这是主聊天历史/);
+        assert.ok(body.tools.every((tool) => !['send_message', 'delegate_research', 'remember_personality', 'skill_use'].includes(tool.function.name)));
+        assert.ok(body.max_tokens <= 2048);
+        if (childCalls === 1) tool_calls = [{ id: 'search', type: 'function', function: { name: 'search_web', arguments: '{"query":"测试资料"}' } }];
+        else {
+          assert.match(body.messages.at(-1).content, /摘要依据/);
+          content = '资料标题给出了摘要依据，来源 https://example.com/source';
+        }
+      } else {
+        mainCalls++;
+        const name = mainCalls === 1 ? 'delegate_research' : 'finish';
+        if (mainCalls === 2) assert.match(body.messages.find((m) => m.name === 'delegate_research').content, /摘要依据/);
+        tool_calls = [{ id: `main-${mainCalls}`, type: 'function', function: { name,
+          arguments: JSON.stringify(name === 'finish' ? { summary: '资料已查到' } : { task: '查询测试资料', context: '必要的任务上下文' }) } }];
+      }
+      return Response.json({ choices: [{ message: { content, tool_calls } }], usage: { total_tokens: 10 } });
+    };
+    append(1, '这是主聊天历史，请查资料');
+    await runner.wake('group:1');
+    const session = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(mainCalls, 2); assert.equal(childCalls, 2); assert.equal(searches, 1);
+    assert.equal(session.webSearchCount, 1);
+    assert.equal(session.auxiliaryUsage.totalTokens, 20);
+    assert.equal(runTokenUsage(session), 40);
+    assert.equal(sessions.todayUsage(todayKey()).totalTokens - before, 40);
+    assert.equal(session.subagentRuns[0].status, 'completed');
+    assert.match(logs.join('\n'), /called .*session=/);
+    assert.match(logs.join('\n'), /tool .*name=search_web/);
+    assert.match(logs.at(-1), /status=completed/);
+    cfg.subagent.enabled = false;
+    globalThis.fetch = async (_url, options) => {
+      assert.ok(!JSON.parse(options.body).tools.some((tool) => tool.function.name === 'delegate_research'));
+      return Response.json({ choices: [{ message: { content: '结束' } }], usage: { total_tokens: 10 } });
+    };
+    append(2); await runner.wake('group:1');
+    assert.equal(logs.length, 4);
+  });
+
+  it('子代理沿用人格查询的会话可见性，无法以索引读取私聊证据', async (t) => {
+    const { runner, cfg, append, store } = fixture(t);
+    cfg.subagent = { enabled: true }; cfg.personalityMemory = { enabled: true, allowPrivate: true };
+    runner.personalityMemory = new PersonalityMemory({ dataDir: fs.mkdtempSync(path.join(root, 'subagent-private-')), getConfig: () => cfg });
+    const quote = '仅私聊可见的隐藏偏好';
+    const source = store.appendSelf('private:42', { text: quote, ts: Date.now() });
+    const saved = await runner.personalityMemory.capture({ chatKey: 'private:42', persona: resolvePersona(cfg, 'group:1'), store,
+      args: { kind: 'preference', topic: '隐私', content: quote, evidence: [{ messageId: source.id, quote }] },
+      review: async () => ({ supported: true, topic: '隐私', matchId: '', conflictIds: [] }) });
+    cfg.memory.visibility = { mode: 'perChat' };
+    let main = 0, child = 0;
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.doesNotMatch(JSON.stringify(body.messages), new RegExp(quote));
+      if (body.messages[0].content.startsWith('你是受限资料检索子代理')) {
+        child++;
+        if (child === 2) {
+          assert.match(body.messages.at(-1).content, /不可见/);
+          return Response.json({ choices: [{ message: { content: '没有可见资料' } }], usage: { total_tokens: 10 } });
+        }
+        return Response.json({ choices: [{ message: { tool_calls: [{ id: 'lookup', type: 'function', function: {
+          name: 'personality_lookup', arguments: JSON.stringify({ id: saved.id })
+        } }] } }], usage: { total_tokens: 10 } });
+      }
+      main++;
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: `main-${main}`, type: 'function', function: {
+        name: main === 1 ? 'delegate_research' : 'finish', arguments: JSON.stringify(main === 1
+          ? { task: '查此索引', context: saved.id } : { summary: '没有资料' })
+      } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1); await runner.wake('group:1');
+    assert.equal(child, 2);
+  });
+
   it('海马在真实回合跨会话注入，finish写摘要；禁用后撤回工具且故障不阻断消息', async (t) => {
     const { runner, cfg, memory, append, store } = fixture(t);
     const role = resolvePersona(cfg, 'group:1');
