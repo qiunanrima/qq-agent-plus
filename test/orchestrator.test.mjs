@@ -161,26 +161,47 @@ describe('Orchestrator', () => {
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
 
-  it('角色背景仅注入索引，真实回合可主动读取正文，换卡后不串资料', async (t) => {
+  it('角色核心常驻，记忆总结模型提词并注入背景，仍可主动查全文，换卡不串资料', async (t) => {
     const { runner, cfg, append } = fixture(t);
     const background = new PersonaBackground({ dataDir: root });
     const role = resolvePersona(cfg, 'group:1');
-    const saved = background.save(role, { ...background.read(role), content: '# 旧日朋友\n只有读取后才能知道的秘密旧事。' });
+    const saved = background.save(role, { ...background.read(role), content: '# 核心设定\n我是庭院主人。\n# 旧日朋友\n只有读取后才能知道的秘密旧事。' });
     t.after(() => background.save(role, { ...background.read(role), confirm: true }, true));
-    let body, round = 0;
+    let body, round = 0, scans = 0, expectedMemoryModel = 'mock';
     globalThis.fetch = async (_url, options) => {
       body = JSON.parse(options.body);
+      if (body.messages[0].content.includes('你是角色背景检索的话题提取器')) {
+        scans++;
+        assert.equal(body.model, expectedMemoryModel);
+        if (expectedMemoryModel !== 'mock') {
+          assert.match(String(_url), /^https:\/\/memory-model.invalid\//);
+          assert.equal(new Headers(options.headers).get('authorization'), 'Bearer test-memory-key');
+        }
+        assert.equal(body.tools, undefined);
+        return Response.json({ choices: [{ message: { content: '{"topics":["旧日朋友"]}' } }], usage: { total_tokens: 10 } });
+      }
       const name = round++ === 0 ? 'persona_background_lookup' : 'finish';
-      const args = name === 'finish' ? { summary: '查过背景' } : { sectionId: saved.sections[0].id };
+      const args = name === 'finish' ? { summary: '查过背景' } : { sectionId: saved.sections[1].id };
       return Response.json({ choices: [{ message: { tool_calls: [{ id: `bg-${round}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }], usage: { total_tokens: 10 } });
     };
     append(1, '说说你旧日的朋友？');
     await runner.wake('group:1');
+    assert.equal(scans, 1);
+    assert.match(body.messages.find((m) => m.role === 'system').content, /我是庭院主人/);
     assert.match(body.messages.find((m) => m.role === 'system').content, /旧日朋友/);
     assert.doesNotMatch(body.messages.find((m) => m.role === 'system').content, /只有读取后才能知道/);
+    assert.ok(body.messages.some((m) => m.role === 'user' && m.content.includes('只有读取后才能知道')));
     assert.ok(body.messages.some((m) => m.role === 'tool' && String(m.content).includes('秘密旧事')));
+    cfg.memory = { ...cfg.memory, useChatModel: false, provider: 'memory-test', model: 'topic-scanner' };
+    cfg.providers = [{ id: 'memory-test', baseURL: 'https://memory-model.invalid', apiKey: 'test-memory-key' }];
+    expectedMemoryModel = 'topic-scanner';
+    append(2, '再说说那位旧友');
+    await runner.wake('group:1');
+    assert.equal(scans, 2, '独立记忆模型负责第二轮话题扫描');
+    assert.equal(body.model, 'mock', '正常回复仍使用聊天模型');
+    assert.ok(body.messages.some((m) => m.role === 'user' && m.content.includes('秘密旧事')));
     cfg.persona = { ...role, templateId: 'different-background-role' };
-    append(2);
+    append(3);
     await runner.wake('group:1');
     assert.ok(!body.tools.some((tool) => tool.function.name === 'persona_background_lookup'));
     assert.doesNotMatch(body.messages.find((m) => m.role === 'system').content, /当前扮演角色的背景资料索引/);

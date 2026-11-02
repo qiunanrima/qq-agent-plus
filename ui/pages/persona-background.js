@@ -8,7 +8,7 @@ function renderPersonaBackground(c) {
   const keys = Object.keys(c.personaPerChat || {});
   return `<section id="persona-background" class="panel" data-independent-save>
     <h3>角色背景知识 · Markdown</h3>
-    <p class="hint">填写 AI 正在扮演角色的身世、往事、人物关系与世界观。只注入章节索引，相关话题由模型主动查阅正文。与聊天记忆分开，清除记忆不会删除此文档。</p>
+    <p class="hint">填写 AI 正在扮演角色的身世、往事、人物关系与世界观。核心设定常驻；记忆总结模型提取话题词，自动补入相关章节，细节仍可主动查询。与聊天记忆分开，清除记忆不会删除此文档。</p>
     <div class="field"><label for="background-role">背景所属角色（以已保存的人设为准）</label>
       <select id="background-role"><option value="">全局角色</option>${keys.map((key) => `<option value="${esc(key)}">会话 ${esc(key)}</option>`).join('')}</select></div>
     <p class="hint" id="background-status" role="status">正在加载…</p>
@@ -20,7 +20,7 @@ function renderPersonaBackground(c) {
       <button class="btn" id="background-save" type="button" disabled>单独保存背景</button>
       <button class="btn" id="background-reload" type="button">重新加载</button>
       <button class="btn" id="background-clear" type="button" disabled>清除该角色背景</button>
-    </div><p class="hint">最多512 KiB。相同角色跨会话共用；更换角色卡会切换对应文档。覆盖与清除前自动备份旧文档。自定义卡修改正文后视为新角色，请先保存人设再导入背景。</p>
+    </div><p class="hint">最多512 KiB。建议用「核心设定」标题写身份概览，其余章节可加 &lt;!-- keywords: 妖梦, 庭师 --&gt; 指定触发词；未标核心时默认首段常驻。相同角色跨会话共用；更换角色卡会切换对应文档。覆盖与清除前自动备份旧文档。自定义卡修改正文后视为新角色，请先保存人设再导入背景。</p>
     <details><summary>模型可见的章节索引</summary><pre id="background-index" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
   </section>`;
 }

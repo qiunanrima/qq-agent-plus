@@ -2232,10 +2232,25 @@ export class Orchestrator {
     const builtinToolDefs = toolDefs;   // 前缀哈希用它（见下），插件/MCP 工具只按名字参与
     const personaBackground = new PersonaBackground({ dataDir: DATA_DIR });
     let backgroundPrompt = '';
+    let backgroundRecall = '';
     try {
       backgroundPrompt = personaBackground.prompt(persona);
       toolDefs.push(...personaBackground.toolDefs(persona));
+      if (backgroundPrompt) {
+        const recent = this.store.recent(chatKey, { limit: 8, scope: 'chat' })
+          .filter((m) => m.eventKind !== 'game-secret');
+        const triggered = new Set((triggerEntries || []).map((m) => m.id));
+        const scanText = [...recent.filter((m) => !triggered.has(m.id)), ...(triggerEntries || [])]
+          .filter((m) => m.eventKind !== 'game-secret')
+          .slice(-8).map((m) => String(m.text || '').slice(0, 1500)).join('\n');
+        backgroundRecall = await personaBackground.recall(persona, { text: scanText, signal,
+          complete: async (messages) => {
+            const response = await this.#memoryChat(messages, { signal, timeoutMs: 8000 });
+            return extractJsonObject(String(response?.message?.content ?? ''));
+          }, onError: (error) => log.warn('[persona-background] 话题提取失败，使用关键词匹配：', error.message) });
+      }
     } catch (error) { log.warn('[persona-background] 读取角色背景失败：', error.message); }
+    signal?.throwIfAborted();
     toolDefs.push(...(this.personalityMemory?.toolDefs({ chatKey, persona }) || []));
     toolDefs.push(...(this.memory.hippocampus?.toolDefs({ chatKey, persona }) || []));
     if (cfg.memory?.hippocampusEnabled === true && cfg.livingMemory?.enabled === true) {
@@ -2294,6 +2309,7 @@ export class Orchestrator {
       livingRecall.text,
       personalityRecall,
       hippocampusRecall,
+      backgroundRecall,
       memeDensityPrompt(cfg),
       memesForPrompt(chatKey, triggerText, { level: cfg?.humanize?.memeUse?.level })
     ].filter(Boolean).join('\n\n');
@@ -3854,12 +3870,13 @@ export class Orchestrator {
    * useChatModel=true 时跟随聊天模型（cfg.api.*）；
    * false 时使用 cfg.memory.provider/model 指向的目录模型（端点/密钥取自 providers）。
    */
-  async #memoryChat(messages) {
+  async #memoryChat(messages, { signal = null, timeoutMs = null } = {}) {
     const cfg = getConfig();
     const mem = cfg.memory || {};
+    if (timeoutMs) signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
     if (mem.useChatModel !== false) {
       // 记忆整理 = 判断/总结类任务（与聊天、写作可各自设思考档位）。
-      const response = await chatCompletion({ messages, temperature: 0.2, purpose: 'judge' });
+      const response = await chatCompletion({ messages, signal, temperature: 0.2, purpose: 'judge' });
       this.#recordExternalUsage(response);
       return response;
     }
@@ -3870,9 +3887,10 @@ export class Orchestrator {
     }
     const response = await chatCompletion({
       messages,
+      signal,
       temperature: 0.2,
       purpose: 'judge',
-      overrides: { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: 180000 }
+      overrides: { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: timeoutMs || 180000 }
     });
     this.#recordExternalUsage(response, mem.model);
     return response;

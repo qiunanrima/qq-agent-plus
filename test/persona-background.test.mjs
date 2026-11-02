@@ -34,12 +34,13 @@ test('Markdown按层级分段，代码块假标题不拆，长段与无标题文
   assert.equal(backgroundSections('无标题的中文设定')[0].content, '无标题的中文设定');
 });
 
-test('仅注入索引，工具中文检索/按id取正文/分页，编辑后立即读新版本', async (t) => {
+test('首段默认常驻，其他段仅索引，工具中文检索/按id取正文/分页', async (t) => {
   const { store, save } = fixture(t);
   const doc = save('# 地点\n白玉楼位于冥界，这是正文隐藏标识。\n# 关系\n妖梦负责庭院。');
   const prompt = store.prompt(persona);
   assert.match(prompt, /主动用 persona_background_lookup/);
-  assert.doesNotMatch(prompt, /正文隐藏标识|妖梦负责庭院/);
+  assert.match(prompt, /正文隐藏标识/);
+  assert.doesNotMatch(prompt, /妖梦负责庭院/);
   const tool = store.toolDefs(persona)[0];
   const lookup = async (args) => JSON.parse((await tool.execute({}, args)).content);
   assert.match((await lookup({ query: '冥界' })).entries[0].content, /正文隐藏标识/);
@@ -50,6 +51,48 @@ test('仅注入索引，工具中文检索/按id取正文/分页，编辑后立�
   assert.equal((await lookup({ sectionId: doc.sections[1].id })).entries.length, 0);
   const aborted = new AbortController(); aborted.abort();
   assert.equal((await tool.execute({ signal: aborted.signal }, {})).isError, true);
+});
+
+test('显式核心常驻，记忆模型提取话题后直接注入正文，失败回退关键词', async (t) => {
+  const { store, save } = fixture(t);
+  save('# 往事\n未提及的遥远故事。\n# 核心设定\n我是白玉楼的主人。\n# 庭师\n<!-- keywords: 妖梦, 半灵 -->\n魂魄妖梦照料庭院。\n# 地点\n冥界有白玉楼。');
+  const system = store.prompt(persona);
+  assert.match(system, /我是白玉楼的主人/);
+  assert.doesNotMatch(system, /未提及的遥远故事|魂魄妖梦照料庭院/);
+  let calls = 0;
+  const recalled = await store.recall(persona, { text: '那个照顾院子的姑娘是谁？', complete: async (messages) => {
+    calls++;
+    const input = JSON.parse(messages[1].content);
+    assert.match(input.chat, /院子/);
+    assert.match(input.catalog, /庭师/);
+    return { topics: ['妖梦'] };
+  } });
+  assert.equal(calls, 1);
+  assert.match(recalled, /魂魄妖梦照料庭院/);
+  assert.doesNotMatch(recalled, /我是白玉楼的主人|未提及的遥远故事|keywords/);
+  let failure;
+  assert.match(await store.recall(persona, { text: '说说半灵', complete: async () => { throw new Error('离线'); },
+    onError: (e) => { failure = e; } }), /魂魄妖梦/);
+  assert.equal(failure.message, '离线');
+  assert.equal(await store.recall(persona, { text: '吃饭了吗', complete: async () => ({ topics: [] }) }), '');
+  assert.equal(await store.recall(persona, { text: '吃饭了吗', complete: async () => ({ topics: [null, {}, 'a'] }) }), '');
+  const controller = new AbortController();
+  await assert.rejects(store.recall(persona, { text: '妖梦', signal: controller.signal, complete: async () => {
+    controller.abort(new Error('cancel')); throw controller.signal.reason;
+  } }), /cancel/);
+});
+
+test('常驻和自动正文有独立预算，不越角色，无内容不调用总结模型', async (t) => {
+  const { store, save } = fixture(t);
+  save('# 核心设定\n' + '核心。'.repeat(3000) + '\n# 白玉楼\n' + '庭院。'.repeat(3000));
+  const prompt = store.prompt(persona);
+  assert.ok(prompt.length < 8500);
+  const text = await store.recall(persona, { text: '白玉楼', complete: async () => ({ topics: ['白玉楼'] }) });
+  assert.ok(text.length < 3900);
+  assert.match(text, /节选/);
+  assert.equal(await store.recall({ ...persona, templateId: 'other' }, { text: '白玉楼', complete: () => {
+    assert.fail('空背景不应调用模型');
+  } }), '');
 });
 
 test('限制大小与分段数；并发修订冲突不覆盖，清除显式确认且自动备份', (t) => {
