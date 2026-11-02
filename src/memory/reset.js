@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemory, store, assets, orchestrator, identityBusy = false }) {
   orchestrator.setPaused(true, 'memory-reset');
   if (orchestrator.runningChats.size || orchestrator.consolidating.size
-    || livingMemory.activeFlushes || identityBusy) {
+    || livingMemory.activeFlushes || memory.hippocampus?.active || identityBusy) {
     const error = new Error('机器人已暂停；仍有聊天、记忆整理或人物评估任务进行中。等待任务结束后再点清除，本次尚未删除记忆。');
     error.statusCode = 409;
     throw error;
@@ -19,10 +19,11 @@ export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemor
   write('person-memory.json', memory.resetSnapshot());
   write('context.json', store.contextResetSnapshot());
   store.createResetBackup(path.join(directory, 'messages.sqlite'));
+  memory.hippocampus?.createResetBackup(path.join(directory, 'hippocampus.sqlite'));
   write('identity-profiles.json', assets.memoryResetSnapshot());
   livingMemory.createResetBackup(path.join(directory, 'living-memory.sqlite'));
   personalityMemory?.createResetBackup(path.join(directory, 'personality-memory.sqlite'));
-  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'identity-profiles', 'living-memory', 'personality-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
+  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'hippocampus', 'identity-profiles', 'living-memory', 'personality-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
   write('manifest.json', manifest);
   let stage = 'personality-memory';
   const cleared = {};

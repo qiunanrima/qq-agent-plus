@@ -3981,6 +3981,11 @@ export function createApp({
     }
   });
 
+  router.add('GET', '/api/memory/hippocampus', async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    const offset = Math.max(0, Math.floor(Number(url.searchParams.get('offset')) || 0));
+    return json(res, 200, memory.hippocampus.status({ offset }));
+  });
   router.add('POST', '/api/memory/reset-all', async (req, res) => {
     const body = await readBody(req).catch(() => ({}));
     if (body.confirm !== true || body.scope !== 'all' || body.includeArchive !== true) return json(res, 409, { error: '清除所有记忆与消息存档需要显式确认：confirm=true、scope=all、includeArchive=true；请刷新控制台后确认完整删除范围' });

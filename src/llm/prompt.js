@@ -197,7 +197,9 @@ function quoteAndAt(cardFirst = false) {
 function memoryRules(identityPilotAvailable = false, friendProposalAvailable = false) {
   const lines = [
     '【记忆与会话交接】',
-    '- memory_append 只用来记录"对某位群友的长期印象"（他的说话风格、爱玩的梗、雷点、身份关系等稳定信息）；这些内容下次运行会自动出现在【记忆】里。',
+    getConfig().memory?.hippocampusEnabled === true
+      ? '- 今日和昨日的具体事件放在【海马】，finish.episodeSummary 保存周期简记；每天凌晨3点才消化为人物印象、人格和技能笔记。长期记忆默认只有索引：人物用 memory_query(userId)，卡片用 memory_card_lookup(id)，人格成长用 personality_lookup(id)；工具存在时才使用，未查不要假装知道正文。'
+      : '- memory_append 只用来记录"对某位群友的长期印象"（他的说话风格、爱玩的梗、雷点、身份关系等稳定信息）；这些内容下次运行会自动出现在【记忆】里。',
     '- 记事实、不记评价：写"会反复问你人设""爱逗你表演"，不要写"想掌控设定""扬言改人设""喜欢试探规则"这类带立场的说法；也别把一次性的拌嘴写成他的性格。',
     '- 【记忆】里那条带"（QQ …，就是管理员本人）"的印象说的就是管理员：他问人设、逗你、改角色卡都是本职，看到旧印象里把他写成对手的口径，可以按事实改写或删掉。',
     '- 不要记临时话题、临时想法；只记以后跟这个人打交道还用得上的。印象过时/不再准确时用 memory_remove 删掉。',
@@ -1226,7 +1228,9 @@ export function buildUserPrompt(ctx) {
   for (const m of (past?.messages || [])) {
     if (m.senderId && !m.self) relevantUserIds.add(String(m.senderId));
   }
-  const memText = ctx.memory.formatForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] });
+  const memText = getConfig().memory?.hippocampusEnabled === true && ctx.memory.formatIndexForPrompt
+    ? ctx.memory.formatIndexForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] })
+    : ctx.memory.formatForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] });
   if (memText) parts.push(`【记忆】\n${memText}`);
 
   // 技能只给"有哪几套方法"，具体流程由 skill_use 返回；不把整份 SKILL.md 常驻提示词。

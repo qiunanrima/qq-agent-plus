@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { openDatabase } from '../core/sqlite.js';
 import { normalizePersonalityMemoryConfig } from './config.js';
+import { impressionVisible, memoryVisibilityOf } from '../core/memory-visibility.js';
 
 const kinds = new Set(['preference', 'experience', 'relationship']);
 const fail = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
@@ -123,6 +124,12 @@ export class PersonalityMemory {
   }
   prompt({ chatKey, persona, participantIds = [] }) {
     if (!this.applies(chatKey)) return '';
+    if (this.getConfig().memory?.hippocampusEnabled === true) {
+      const rows = this.recallRows({ chatKey, persona });
+      return ['【人格成长索引】', ...rows.slice(0, 30).map((r) => JSON.stringify({ id: r.id, topic: r.topic, kind: r.kind, state: r.status })),
+        '人格成长跨会话共享，正文不自动展开。需要时用 personality_lookup(id) 读取；tentative 仅是候选，不能覆盖角色卡。需要更多索引可省略id分页查询。',
+        this.config().autoCapture ? '值得延续的偏好、经历或关系变化可用 remember_personality 保存，仍须引用本会话真实消息证据。' : ''].filter(Boolean).join('\n');
+    }
     const rows = this.list({ personaKey: personalityKey(persona), scopeKey: chatKey });
     const ids = new Set(participantIds.map(String));
     const lines = [];
@@ -148,10 +155,23 @@ export class PersonalityMemory {
     ].filter(Boolean).join('\n');
   }
   toolDefs({ chatKey, persona }) {
-    if (!this.applies(chatKey) || !this.config().autoCapture) return [];
-    return [{
+    if (!this.applies(chatKey)) return [];
+    const lookup = this.getConfig().memory?.hippocampusEnabled === true ? [{
+      name: 'personality_lookup', description: '按索引查询本角色跨会话人格成长。省略id分页查看索引；提供id才返回正文与证据。',
+      parameters: { type: 'object', properties: { id: { type: 'string' }, offset: { type: 'integer', minimum: 0 } } },
+      execute: (ctx, args) => {
+        if (!this.applies(chatKey) || ctx.signal?.aborted) return { content: '人格记忆已停用', isError: true, reportIncident: false };
+        const rows = this.recallRows({ chatKey, persona });
+        const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+        const row = args.id ? rows.find((r) => r.id === args.id) : null;
+        return { content: JSON.stringify(args.id ? row ? { kind: row.kind, topic: row.topic, status: row.status, content: row.content } : { error: '索引不存在或不可见' }
+          : { total: rows.length, indexes: rows.slice(offset, offset + 30).map((r) => ({ id: r.id, kind: r.kind, topic: r.topic, state: r.status })) }) };
+      }
+    }] : [];
+    if (!this.config().autoCapture) return lookup;
+    return [...lookup, {
       name: 'remember_personality',
-      description: '保存机器人自身的人格成长：偏好、共同经历、关系变化。仅当前角色和当前会话可见，不改角色卡。需要真实消息原文证据，每次运行最多两条。',
+      description: '保存当前角色的偏好、共同经历和关系变化，不改角色卡。以当前会话原文为证据；启用海马时可跨会话查询，遵守可见性设置。每轮最多两条。',
       parameters: { type: 'object', properties: {
         kind: { type: 'string', enum: [...kinds] }, topic: { type: 'string' }, content: { type: 'string' },
         targetUserId: { type: 'string', description: '关系对象 QQ 号，仅 relationship 需要' },
@@ -169,6 +189,10 @@ export class PersonalityMemory {
         } catch (error) { return { content: error.message, isError: true, reportIncident: false }; }
       }
     }];
+  }
+  recallRows({ chatKey, persona }) {
+    return this.list({ personaKey: personalityKey(persona) }).filter((r) => impressionVisible(
+      { sourceChatKeys: [r.scope_key] }, chatKey, memoryVisibilityOf(this.getConfig())));
   }
   createResetBackup(file) {
     return this.withDb(false, (db) => {

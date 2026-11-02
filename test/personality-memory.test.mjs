@@ -35,6 +35,24 @@ test('默认关闭，不因启动、读取状态或禁用采集而创建人格�
   assert.equal(fs.existsSync(f.memory.file), false);
 });
 
+test('海马模式下人格跨会话只注入索引，正文需查询，仍服从私聊隐藏和角色隔离', (t) => {
+  const f = fixture(t);
+  f.cfg.memory = { hippocampusEnabled: true };
+  const saved = f.capture({ kind: 'preference', topic: '饮品', content: '只通过查询读取的绿茶偏好', evidence: [f.say('private:12345', '我更喜欢喝绿茶')] }, 'private:12345');
+  const prompt = f.memory.prompt({ chatKey: 'group:9', persona });
+  assert.match(prompt, /人格成长索引/);
+  assert.match(prompt, /饮品/);
+  assert.doesNotMatch(prompt, /只通过查询读取的绿茶偏好/);
+  f.cfg.personalityMemory.autoCapture = false;
+  const lookup = f.memory.toolDefs({ chatKey: 'group:9', persona }).find((d) => d.name === 'personality_lookup');
+  assert.match(lookup.execute({}, { id: saved.id }).content, /只通过查询读取的绿茶偏好/);
+  f.cfg.memory.visibility = { hidePrivateInGroup: true };
+  assert.match(lookup.execute({}, { id: saved.id }).content, /不可见/);
+  assert.doesNotMatch(f.memory.prompt({ chatKey: 'group:9', persona }), /饮品/);
+  f.cfg.memory.visibility = {};
+  assert.doesNotMatch(f.memory.prompt({ chatKey: 'group:9', persona: { ...persona, roleText: '新角色' } }), /饮品/);
+});
+
 test('偏好按真实跨日表达逐步稳定；同一消息重放不累计，新冲突不覆盖稳定记忆', (t) => {
   const f = fixture(t);
   const args = { kind: 'preference', topic: '饮品', content: '我更喜欢茶', evidence: [f.say('group:1', '我更喜欢茶', { ts: Date.now() - 86400_000 })] };

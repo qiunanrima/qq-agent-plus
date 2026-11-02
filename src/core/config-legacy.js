@@ -878,6 +878,8 @@ export const DEFAULT_CONFIG = {
   blocklist: {},
   // 记忆自动整理：条数超阈值且距上次超过冷却时间时，在运行结束后后台合并/去重/删过时
   memory: {
+    // 核心两层记忆：全局今日/昨日海马 + 长期记忆按索引取正文。
+    hippocampusEnabled: true,
     consolidateEnabled: true,
     consolidateMinIntervalMs: 21600000,  // 默认 6 小时
     handoffEnabled: true,
@@ -1416,6 +1418,9 @@ function migrateConfig(parsed) {
   out.skills.allowPrivateIndex = out.skills.allowPrivateIndex === true;
   // 记忆容量/保留期：夹在可解释范围内；手写条目不受影响。
   if (isPlainObject(out.memory)) {
+    if (out.memory.hippocampusEnabled !== undefined && typeof out.memory.hippocampusEnabled !== 'boolean') {
+      throw new Error('memory.hippocampusEnabled 必须是布尔值');
+    }
     const max = Math.round(Number(out.memory.maxImpressionsPerPerson));
     if (Number.isFinite(max)) out.memory.maxImpressionsPerPerson = Math.max(5, Math.min(200, max));
     const days = Math.round(Number(out.memory.impressionRetentionDays));

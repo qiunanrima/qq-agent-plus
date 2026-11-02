@@ -26,6 +26,8 @@ const { ReminderStore } = await import('../src/core/reminders.js');
 const { timeControlState } = await import('../src/core/time-control.js');
 const { canRun } = await import('../src/core/access.js');
 const { PersonalityMemory } = await import('../src/personality-memory/index.js');
+const { Hippocampus } = await import('../src/memory/hippocampus.js');
+const { resolvePersona } = await import('../src/personas.js');
 const { todayKey } = await import('../src/core/util.js');
 const { currentTraceId, lastTraceId } = await import('../src/core/logger.js');
 
@@ -158,6 +160,38 @@ describe('Orchestrator', () => {
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
 
+  it('海马在真实回合跨会话注入，finish写摘要；禁用后撤回工具且故障不阻断消息', async (t) => {
+    const { runner, cfg, memory, append, store } = fixture(t);
+    const role = resolvePersona(cfg, 'group:1');
+    memory.hippocampus = new Hippocampus({ dataDir: fs.mkdtempSync(path.join(root, 'hippocampus-')), getConfig: () => cfg });
+    memory.hippocampus.capture({ chatKey: 'group:99', persona: role,
+      session: { id: 'other-chat', episodeSummary: '昨天和甲一起讨论过服务器' },
+      triggerEntries: [{ eventKind: 'message', senderId: '42', senderName: '甲', text: '讨论服务器' }] });
+    let body;
+    globalThis.fetch = async (_url, options) => {
+      body = JSON.parse(options.body);
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: 'done', type: 'function', function: {
+        name: 'finish', arguments: JSON.stringify({ summary: '结束', episodeSummary: '甲今天来问服务器进展' })
+      } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1);
+    await runner.wake('group:1');
+    assert.match(JSON.stringify(body.messages), /和甲一起讨论过服务器/);
+    assert.ok(body.tools.some((t) => t.function.name === 'hippocampus_lookup'));
+    assert.ok(!body.tools.some((t) => t.function.name === 'memory_append'));
+    assert.ok(memory.hippocampus.episodes().some((r) => r.chat === 'group:1' && r.summary === '甲今天来问服务器进展'));
+    cfg.memory.hippocampusEnabled = false;
+    append(2);
+    await runner.wake('group:1');
+    assert.ok(!body.tools.some((t) => t.function.name === 'hippocampus_lookup'));
+    assert.doesNotMatch(JSON.stringify(body.messages), /【海马：/);
+    cfg.memory.hippocampusEnabled = true;
+    memory.hippocampus.prompt = () => { throw new Error('broken hippocampus'); };
+    append(3);
+    await runner.wake('group:1');
+    assert.equal(store.findByMid('group:1', '3').state, 'acked');
+  });
+
   it('人格记忆在真实回合中注入并提供采集工具，关闭后撤回；模块故障不阻断聊天', async (t) => {
     const { runner, cfg, store, append } = fixture(t);
     cfg.personalityMemory.enabled = true;
@@ -177,13 +211,13 @@ describe('Orchestrator', () => {
     append(1);
     await runner.wake('group:1');
     assert.ok(body.tools.some((tool) => tool.function.name === 'remember_personality'));
-    assert.match(JSON.stringify(body.messages), /人格成长记忆/);
+    assert.match(JSON.stringify(body.messages), /人格成长索引/);
     assert.equal(runner.personalityMemory.list().length, 1);
     cfg.personalityMemory.enabled = false;
     append(2);
     await runner.wake('group:1');
     assert.equal(body.tools.some((tool) => tool.function.name === 'remember_personality'), false);
-    assert.doesNotMatch(JSON.stringify(body.messages), /【人格成长记忆】/);
+    assert.doesNotMatch(JSON.stringify(body.messages), /【人格成长索引】/);
     cfg.personalityMemory.enabled = true;
     runner.personalityMemory.prompt = () => { throw new Error('broken personality database'); };
     append(3);

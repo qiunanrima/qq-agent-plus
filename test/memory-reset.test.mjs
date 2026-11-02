@@ -34,6 +34,8 @@ test('全部记忆和消息存档先备份再清除，保留人物身份和配�
   f.memory.append('group:1', 'memberImpression', '喜欢咖啡', { userId: '12345', target: '甲' });
   f.memory.setHandoff('group:1', { topic: '买咖啡', summary: '准备出门' });
   f.memory.search('group:1', '咖啡');
+  f.memory.hippocampus.capture({ chatKey: 'group:1', persona: {}, session: { id: 'reset-episode', episodeSummary: '和甲聊喝咖啡' },
+    triggerEntries: [{ eventKind: 'message', senderId: '12345', senderName: '甲', text: '喝咖啡' }] });
   f.store.appendIncoming('group:1', { mid: '1', senderId: '12345', senderName: '甲', text: '原聊天存档', ts: Date.now() });
   f.store.appendIncoming('private:12345', { mid: '2', senderId: '12345', senderName: '甲', text: '私聊存档', ts: Date.now(), media: [{ kind: 'image', url: 'https://example.com/image.png' }] });
   const identity = new IdentityStore({ dataDir: root });
@@ -50,6 +52,7 @@ test('全部记忆和消息存档先备份再清除，保留人物身份和配�
   assert.equal(result.ok, true);
   assert.equal(f.orchestrator.paused, true);
   assert.equal(f.memory.globalMembers().length, 0);
+  assert.equal(f.memory.hippocampus.episodes().length, 0);
   assert.equal(f.memory.getHandoff('group:1'), null);
   assert.equal(f.memory.search('group:1', '咖啡').results.length, 0);
   assert.equal(f.store.findByMid('group:1', '1'), null);
@@ -66,6 +69,7 @@ test('全部记忆和消息存档先备份再清除，保留人物身份和配�
   assert.equal(f.livingMemory.lastRecall.size, 0);
   assert.equal(getConfig().memberNotes['12345'], '老朋友');
   const backup = path.join(root, 'memory-reset-backups', result.backupId);
+  assert.ok(fs.existsSync(path.join(backup, 'hippocampus.sqlite')));
   assert.equal(JSON.parse(fs.readFileSync(path.join(backup, 'manifest.json'))).status, 'complete');
   assert.match(fs.readFileSync(path.join(backup, 'person-memory.json'), 'utf8'), /喜欢咖啡/);
   const archive = new ChatStore(0, { filename: path.join(backup, 'messages.sqlite') });

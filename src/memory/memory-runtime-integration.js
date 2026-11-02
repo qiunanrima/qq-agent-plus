@@ -25,7 +25,13 @@ function normalizeMemoryView(userId, maxMemories = 6, chatKey = '') {
   }
 
   const member = activeMemoryStore.getMember('', String(userId || ''));
-  const impressions = Array.isArray(member?.impressions) ? member.impressions : [];
+  const impressions = [...(Array.isArray(member?.impressions) ? member.impressions : [])];
+  if (chatKey && activeMemoryStore.hippocampus?.enabled()) {
+    const cards = activeMemoryStore.query(chatKey).memberImpression || [];
+    for (const entry of cards) {
+      if (entry.origin === 'hippocampus' && String(entry.userId) === String(userId)) impressions.push(entry);
+    }
+  }
   // #13：按 memory.visibility 过滤到「对当前会话可见」的印象（默认策略下与历史逐字一致）。
   // 无 chatKey（管理视图）时只按 global+不隐藏走 —— 等价于不按会话过滤。
   const vis = memoryVisibilityOf();

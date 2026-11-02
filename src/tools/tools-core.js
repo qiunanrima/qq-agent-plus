@@ -3316,6 +3316,7 @@ export function buildToolDefs() {
             maximum: 10080,
             description: '交接状态有效分钟数，默认使用管理端配置'
           },
+          episodeSummary: { type: 'string', maxLength: 100, description: '海马简记：结合本周期前文与本轮，将确实发生的人事/事件/话题/感受概括在100字内；无依据的感受不写。不是任务执行日志。' },
           clearHandoff: {
             type: 'boolean',
             description: '当前话题已完成时设为 true，清除旧交接状态'
@@ -3335,6 +3336,7 @@ export function buildToolDefs() {
           if (Object.hasOwn(args, key)) draft[key] = args[key];
         }
         ctx.session.finishReason = summary;
+        ctx.session.episodeSummary = safeSlice(String(args.episodeSummary ?? '').replace(/\s+/g, ' ').trim(), 100);
         // 交接总开关关闭时不再生成工作状态（否则 lifecycle 检查点仍会把它带上，
         // 控制台的开关就变成半生效）。
         const handoffEnabled = getConfig().memory?.handoffEnabled !== false;

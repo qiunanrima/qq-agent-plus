@@ -5,6 +5,9 @@ import { backupPersonBeforeConsolidation } from './memory-consolidation-backup.j
 import '../pilots/relationship-runtime-integration.js';
 import { impressionVisible, memoryVisibilityOf } from '../core/memory-visibility.js';
 import { sanitizeUserText } from '../core/util.js';
+import { resolvePersona } from '../personas.js';
+import { getConfig } from '../core/config.js';
+import { tokenizeText } from './memory-search.js';
 
 export class MemoryStore extends BaseMemoryStore {
   constructor(...args) {
@@ -20,6 +23,31 @@ export class MemoryStore extends BaseMemoryStore {
     return this.people.members();
   }
 
+  search(chatKey, query, options = {}) {
+    const found = super.search(chatKey, query, options);
+    if (!this.hippocampus.enabled() || !String(query || '').trim()) return found;
+    const terms = new Set(tokenizeText(query));
+    const cards = this.hippocampus.cards({ persona: resolvePersona(getConfig(), chatKey), chatKey })
+      .filter((r) => r.kind === 'person' && (!options.userId || r.subject === String(options.userId)))
+      .map((r) => {
+        const tokens = new Set(tokenizeText(r.content));
+        const score = [...terms].filter((term) => tokens.has(term)).length / Math.max(1, terms.size);
+        return { userId: r.subject, target: r.subject, content: sanitizeUserText(r.content),
+          origin: 'hippocampus', lastObservedAt: r.updated, sourceChatKeys: JSON.parse(r.sources), score };
+      }).filter((r) => r.score > 0).sort((a, b) => b.score - a.score);
+    // 各检索器的分数尺度不同，交替取结果，避免某个库永远挤掉另一个库。
+    const results = [], seen = new Set();
+    const limit = Math.max(1, Math.min(20, Number(options.limit) || 8));
+    for (let i = 0; i < Math.max(cards.length, found.results.length) && results.length < limit; i++) {
+      for (const row of [cards[i], found.results[i]]) {
+        if (!row || results.length >= limit) continue;
+        const key = `${row.userId}:${row.content}`;
+        if (!seen.has(key)) { seen.add(key); results.push(row); }
+      }
+    }
+    return { ...found, results, total: results.length };
+  }
+
   /**
    * memory_query 的底层查询：全局人物记忆，受 memory.visibility 策略约束（#13）——
    * mode='perChat' 只返回来源含当前会话的印象；hidePrivateInGroup 时群聊里剔除私聊来源。
@@ -29,6 +57,13 @@ export class MemoryStore extends BaseMemoryStore {
     if (category && category !== 'memberImpression') return { [category]: [] };
     const vis = memoryVisibilityOf();
     const memberImpression = [];
+    if (this.hippocampus.enabled()) {
+      for (const row of this.hippocampus.cards({ persona: resolvePersona(getConfig(), chatKey), chatKey })) {
+        if (row.kind !== 'person') continue;
+        memberImpression.push({ userId: row.subject, target: row.subject, content: sanitizeUserText(row.content),
+          createdAt: row.updated, lastObservedAt: row.updated, origin: 'hippocampus', sourceChatKeys: JSON.parse(row.sources) });
+      }
+    }
     for (const member of this.people.members()) {
       for (const entry of member.impressions || []) {
         if (!impressionVisible(entry, chatKey, vis)) continue;
