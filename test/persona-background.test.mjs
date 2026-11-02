@@ -95,6 +95,57 @@ test('常驻和自动正文有独立预算，不越角色，无内容不调用�
   } }), '');
 });
 
+test('模型可按语义直接选章节，不要求话题词字面命中，伪造和跨角色id被忽略', async (t) => {
+  const { store, save } = fixture(t);
+  const doc = save('# 核心身份\n角色概览。\n# 档案乙\n从前与银杏老人一同守候落星。\n# 档案丙\n无关的旧资料。');
+  const recalled = await store.recall(persona, { text: '陪在你身边的长辈是谁？', complete: async (messages) => {
+    const input = JSON.parse(messages[1].content);
+    assert.match(input.catalog, /银杏老人/);
+    assert.match(input.catalog, new RegExp(doc.sections[1].id));
+    return { sectionIds: ['forged-other-role-id', doc.sections[1].id, doc.sections[1].id], topics: [] };
+  } });
+  assert.match(recalled, /银杏老人/);
+  assert.doesNotMatch(recalled, /无关的旧资料|forged-other-role-id/);
+});
+
+test('模型离线仍可按正文检索目录后部，并围绕命中位置节选，避免相关事实被长段头部挤掉', async (t) => {
+  const { store, save } = fixture(t);
+  const doc = save('# 核心设定\n角色概览。\n' + Array.from({ length: 100 }, (_, i) =>
+    `# 文档${i}\n${i === 99 ? '旧日。'.repeat(900) + '青岚秘境位于海边，这是命中处的具体事实。' : i === 0 ? '青岚秘境还有另一份记录。' : '一份无关资料。'}`).join('\n'));
+  const recalled = await store.recall(persona, { text: '青岚秘境在哪里？', complete: async (messages) => {
+    assert.match(JSON.parse(messages[1].content).catalog, new RegExp(doc.sections.at(-1).id));
+    assert.match(JSON.parse(messages[1].content).catalog, /青岚秘境/);
+    throw new Error('offline');
+  } });
+  assert.match(recalled, /青岚秘境位于海边/);
+  assert.match(recalled, /节选/);
+});
+
+test('多章节平均分配自动预算，核心中未常驻的后半部也可按问题补入', async (t) => {
+  const { store, save } = fixture(t);
+  const doc = save('# 核心设定\n' + '概述。'.repeat(850) + '月影能力可以让时间暂停。\n# 甲篇\n甲篇的重要事实。' + '旧事。'.repeat(650)
+    + '\n# 乙篇\n乙篇的重要事实。' + '往事。'.repeat(650));
+  const core = await store.recall(persona, { text: '月影能力是什么？', complete: async () => ({ topics: ['月影能力'] }) });
+  assert.match(core, /月影能力可以让时间暂停/);
+  const recalled = await store.recall(persona, { text: '两段旧资料', complete: async () => ({ sectionIds: doc.sections.slice(1).map((s) => s.id) }) });
+  assert.match(recalled, /甲篇的重要事实/);
+  assert.match(recalled, /乙篇的重要事实/);
+  const rows = recalled.split('\n').filter((line) => line.startsWith('{'));
+  assert.equal(rows.length, 2);
+  assert.ok(rows.join('').length <= 3600);
+});
+
+test('主动查询支持关键词别名和批量id，批量范围仍只限当前角色', async (t) => {
+  const { store, save } = fixture(t);
+  const doc = save('# 核心设定\n角色概览。\n# 庭师\n<!-- keywords: 半灵 -->\n庭师负责照料花园。\n# 月夜\n一起赏过庭院的月亮。');
+  const tool = store.toolDefs(persona)[0];
+  const alias = JSON.parse(tool.execute({}, { query: '半灵' }).content);
+  assert.match(alias.entries[0].content, /照料花园/);
+  assert.doesNotMatch(alias.entries[0].content, /keywords/);
+  const batch = JSON.parse(tool.execute({}, { sectionIds: [doc.sections[2].id, 'forged', doc.sections[1].id, doc.sections[1].id] }).content);
+  assert.deepEqual(batch.entries.map((s) => s.id), [doc.sections[2].id, doc.sections[1].id]);
+});
+
 test('限制大小与分段数；并发修订冲突不覆盖，清除显式确认且自动备份', (t) => {
   const { store, dir, save } = fixture(t);
   const old = store.read(persona);
