@@ -940,6 +940,32 @@ describe('Orchestrator', () => {
     assert.ok(session.inputPayloadChars > 0);
   });
 
+  for (const broken of [false, true]) it(`人物查询${broken ? '真实数据库故障仍告警' : '无可见记录不进入异常告警，模型可继续处理'}`, async (t) => {
+    const { cfg, runner, append } = fixture(t);
+    cfg.identityPilot.enabled = true;
+    runner.getIdentityPilot = () => ({ active: true, lookupPerson: () => {
+      if (broken) throw new Error('database disk image is malformed');
+      return null;
+    } });
+    const incidents = [];
+    runner.getIncidentPilot = () => ({ capture: (...args) => incidents.push(args) });
+    let calls = 0;
+    globalThis.fetch = async (_url, options) => {
+      if (calls++) {
+        const body = JSON.parse(options.body);
+        assert.match(body.messages.find((m) => m.name === 'person_memory_lookup').content,
+          broken ? /database disk image/ : /没有可查询的身份记录/);
+        return Response.json({ choices: [{ message: { content: '已处理' } }], usage: { total_tokens: 10 } });
+      }
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: 'person-error', type: 'function', function: {
+        name: 'person_memory_lookup', arguments: '{"userId":"12345"}'
+      } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1, '查一下人物'); await runner.wake('group:1');
+    assert.equal(calls, 2);
+    assert.equal(incidents.length, broken ? 1 : 0);
+  });
+
   it('exposes and executes the unified person lookup only while the pilot is active', async (t) => {
     const { cfg, runner, append } = fixture(t);
     cfg.identityPilot.enabled = true;

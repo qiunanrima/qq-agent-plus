@@ -8,7 +8,7 @@ import path from 'node:path';
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-tools-play-'));
 process.env.QQ_AGENT_DATA_DIR = dataDir;
 
-const { buildToolDefs } = await import('../src/tools/tools-core.js');
+const { buildToolDefs, executeTool } = await import('../src/tools/tools-core.js');
 const { ReminderStore } = await import('../src/core/reminders.js');
 
 const defs = buildToolDefs();
@@ -18,6 +18,25 @@ const tool = (name) => {
   return t;
 };
 const parse = (r) => JSON.parse(r.content);
+
+test('人物查询参数、可见范围及停用是可纠正错误，不告警；真实后端故障仍上报', async () => {
+  const ctx = { chatKey: 'private:3223691957', identityPilot: { active: true, lookupPerson: () => null } };
+  for (const userId of ['群友昵称', '12345', '3223691957']) {
+    const result = await tool('person_memory_lookup').execute(ctx, { userId });
+    assert.equal(result.isError, true);
+    assert.equal(result.reportIncident, false);
+    assert.match(result.content, /3223691957/);
+  }
+  const group = await tool('person_memory_lookup').execute({ ...ctx, chatKey: 'group:1' }, { userId: '群友昵称' });
+  assert.equal(group.reportIncident, false, '子代理最小上下文没有store也应返回可纠正错误');
+  assert.match(group.content, /不要猜测/);
+  const disabled = await tool('person_memory_lookup').execute({ chatKey: ctx.chatKey }, { userId: '3223691957' });
+  assert.equal(disabled.reportIncident, false);
+  const broken = await executeTool(defs, { ...ctx, identityPilot: { active: true, lookupPerson: () => { throw new Error('database disk image is malformed'); } } },
+    'person_memory_lookup', '{"userId":"3223691957"}');
+  assert.equal(broken.isError, true);
+  assert.notEqual(broken.reportIncident, false);
+});
 
 test('dice：骰子/区间/硬币/抽人都在范围内，非法输入报错', async () => {
   for (let i = 0; i < 50; i += 1) {

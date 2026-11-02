@@ -2997,13 +2997,19 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         const userId = String(args.userId ?? '').trim();
+        const privatePeer = /^private:(\d+)$/.exec(String(ctx.chatKey || ''))?.[1];
+        const hint = privatePeer ? `当前私聊对象的 QQ 是 ${privatePeer}，只能查询此人。`
+          : ctx.store?.activeMembers ? memberHint(ctx) : '请只查询当前群中已出现的成员，不要猜测 QQ 号。';
         if (!/^\d{1,15}$/.test(userId)) {
-          return err(`userId 必须是数字 QQ 号（收到：${JSON.stringify(args.userId)}）。${memberHint(ctx)}`);
+          return err(`userId 必须是数字 QQ 号（收到：${JSON.stringify(args.userId)}）。${hint}`,
+            { reportIncident: false, errorCode: 'INVALID_PERSON_ID' });
         }
-        if (!ctx.identityPilot?.active) return err('统一 QQ 身份库当前不可用');
+        if (!ctx.identityPilot?.active) return err('统一 QQ 身份库当前未启用，请跳过此查询',
+          { reportIncident: false, errorCode: 'IDENTITY_UNAVAILABLE' });
         const person = ctx.identityPilot.lookupPerson(userId, { chatKey: ctx.chatKey });
         if (!person) {
-          return err('只能查询当前私聊对象或当前群中已经出现过的成员');
+          return err(`目标在当前会话没有可查询的身份记录，或不在允许范围。${hint}没有记录时如实说明，不要反复重试。`,
+            { reportIncident: false, errorCode: 'PERSON_NOT_VISIBLE_OR_MISSING' });
         }
         // 与工具描述一致：只给印象正文 + 跨会话计数，不给"来自哪个会话"。
         // 印象/称呼的原始材料是群聊内容：整树过一道段头弱化（形状不可控，走 JSON 往返）。
