@@ -196,103 +196,35 @@ function stickerRules(grounded = false, cardFirst = false) {
 
 
 
-function qqSceneRules(grounded = false, platform = null, chatKey = '', cardFirst = false) {
+function qqSceneRules(grounded = false, platform = null, chatKey = '') {
   const cfg = getConfig();
   const vision = visionEnabled(cfg);
-  // 视频画面还能再被「消息类型」页单独关掉（省一次抽帧 + 一次视觉调用）。
-  // 提前算好：下面**每一处**提到"视频画面能看"的地方都要用它，漏一处就是"教了但工具不给"。
-  const videoFrames = cfg.messageTypes?.videoFrames !== false;
-  // 视频画面走的也是 get_message_images：关掉「图片」时这个工具会被摘掉，
-  // 所以画面能力必须同时受 imagesOn 约束，否则会教它调一个不存在的工具。
-  const imagesOn = cfg.messageTypes?.images !== false;
-  const canSeeVideo = vision && videoFrames && imagesOn;
-  // 图片与表情包各有一个开关（默认开）：关掉后对应工具会被 orchestrator 摘掉，
-  // 提示词必须同判，否则会出现"教了但工具不在"（2026-10-07 独立审计 M2/M3 同一类问题）。
-  // 两者都关时整体退回"看不到图"的口径。
-  const stickersOn = cfg.messageTypes?.stickers !== false;
-  const canViewImages = vision && imagesOn;        // 消息里发来的图片 / 表情包
-  const canViewStickers = vision && stickersOn;    // 表情库里没备注的图
+  const canViewImages = vision && cfg.messageTypes?.images !== false;
+  const canViewStickers = vision && cfg.messageTypes?.stickers !== false;
+  const canSeeVideo = canViewImages && cfg.messageTypes?.videoFrames !== false;
+  const stickerOn = cfg.sticker?.enabled !== false;
   const search = cfg.webSearch?.enabled !== false;
   const lines = [
     '【QQ 场景规则】',
     grounded
-      ? '- QQ 以纯文本阅读为主，不用装饰性 Markdown 标题、加粗或表格；技术说明可以换行、编号。代码用独立的 fenced code block（三个反引号围栏），行内代码用反引号，发送层只去围栏并保留代码内容。'
-      : cardFirst
-        ? '- QQ 以纯文本阅读为主；不要使用 Markdown 格式（**、#、代码块在 QQ 上会显示成乱码）。篇幅、语气与语感按【角色设定】。'
-        : '- 回复保持简短，符合群友语感；不要使用 Markdown 格式（**、#、代码块在 QQ 上会显示成乱码）。',
-    ...(cardFirst ? [] : ['- 私聊被直接找通常要回，但也不用秒回；群聊更松散。']),
-    cardFirst
-      ? '- 有人明确冲着你说话（@ 你、问你问题、接你的话茬）时，默认要回一句（篇幅与语气按角色设定），别已读不回让人干等；只有明显与你无关或误 @ 时才不回。'
-      : '- 有人明确冲着你说话（@ 你、问你问题、接你的话茬）时，默认要回一句——可以短、可以敷衍、可以不痛不痒，但别已读不回让人干等；只有明显与你无关或误 @ 时才不回。',
-    '- 带「引用/回复」的消息（如 `[引用#102·某群友：原文]`）表示这句话是在回应被引用的人：`#102` 是被引用那条的消息 id，可以在历史里定位它；引用对象标着「我」时，引的就是你自己发过的话。引用对象不是你时别抢话；只有引用的是你自己的消息、或文字里明确 @/提到你，才需要回应。',
-    cardFirst
-      ? '- 消息里的 `[卡片 QQ空间：标题 — 描述]` 是别人转发进来的分享（说说、文章、音乐等），方括号里就是可见的标题与描述；写着「你自己的动态」时，那就是你自己的空间动态被转进群了——可以按角色设定接一句，别当没看见，也别把它当成图片去发表情。'
-      : '- 消息里的 `[卡片 QQ空间：标题 — 描述]` 是别人转发进来的分享（说说、文章、音乐等），方括号里就是可见的标题与描述；写着「你自己的动态」时，那就是你自己的空间动态被转进群了——可以自然接一句（认出来/意外/吐槽都行），别当没看见，也别把它当成图片去发表情。'
+      ? '- QQ用纯文本，技术内容可换行、编号；代码用独立的 fenced code block（三个反引号围栏），行内代码用反引号，保留缩进。'
+      : '- QQ用纯文本，不用Markdown排版；篇幅、语气与语感按【角色设定】。',
+    '- 私聊、被@或直接提问通常回应；引用消息是在回应被引用者，引用第三方时不要默认在找你。#数字是消息id。',
+    '- QQ空间分享卡片的标题、描述可直接读；标有“你自己的动态”就是自己的分享。卡片本身不等于图片。'
   ];
-  if (canViewImages || canViewStickers) {
-    // 表情包工具受多层开关管（orchestrator：sticker.enabled 摘 5 个工具、collectEnabled 单独摘收藏、
-    // messageTypes.images/stickers 各摘一个看图工具）：提示词必须同判，否则"教了但工具不在"。
-    const stickerOn = getConfig().sticker?.enabled !== false;
-    const collectOn = stickerOn && getConfig().sticker?.collectEnabled !== false;
-    const stickerBits = [];
-    // 看图工具按开关逐条教：教了却不给，模型会白调一轮（2026-10-03 全量审查同口径）
-    const viewTools = [];
-    const triggers = [];
-    if (canViewImages) {
-      viewTools.push('get_message_images');
-      triggers.push(`消息里出现 [图片] / [链接图片] / [表情包]${canSeeVideo ? ' / [视频]' : ''}`);
-    }
-    if (stickerOn && canViewStickers) {
-      viewTools.push('get_sticker_image');
-      triggers.push('要用某个没备注的收藏表情');
-    }
-    if (viewTools.length) {
-      stickerBits.push(`- ${triggers.join('，或')}时，可以用 ${viewTools.join(' / ')} 看图（你能直接看懂图片内容），再自然回应；不要假装看不到图，也不要编造图片内容；工具获取失败就老实说看不到。`);
-    }
-    if (canViewImages) {
-      stickerBits.push('- 卡片不等于网页：卡片或文本包含图片直链（如 qqbot.ugcimg.cn 的无扩展名链接）时，用该条消息的 #id 调 get_message_images；它会识别并缓存链接图片。不要因为消息是卡片就断言不能看图，也不要用 fetch_url 把图片当网页正文读取。');
-      stickerBits.push(cardFirst
-        ? '- 【看图先读情绪，别描述画面】别人发图/表情包时，先判断它传达的态度（无语、嘲讽、卖萌、赞同、震惊、摆烂、委屈、敷衍等），再直接对那个态度说话；不要描述画面、也不要逐帧解释。拿不准就按角色设定回应，别硬编情绪。'
-        : '- 【看图先读情绪，别描述画面】别人发图/表情包时，先定个性：它传达的是什么态度（无语/呆滞、嘲讽/阴阳、卖萌撒娇、赞同捧场、震惊、玩笑式威胁、摆烂、委屈、催人、敷衍…），然后直接对那个态度说话。禁止描述画面：像「你这猫怎么流口水了」「这图是啥意思」都算描述；对态度说话的例子：流口水的猫＝呆滞/看傻 → 「你这是什么呆滞表情」「看傻了？」；维尼拿棍＝玩笑式威胁 → 「拿棍子吓唬谁呢」。拿不准就轻描淡写回一句，别硬编情绪、也别逐帧解释。');
-    } else {
-      stickerBits.push('- 别人发来的图片/表情包你看不到内容（「消息类型」里关掉了图片查看）：消息里的 [图片] / [表情包] 只是占位提示，如实说明看不到即可，不要编造图片内容。');
-      // 角色卡是管理员内容，里面可能写着"用 get_message_images 看图"；工具已摘，
-      // 必须在机制层面明确覆盖，否则模型会按角色卡去调一个不存在的工具。
-      stickerBits.push('- 【系统设置覆盖角色设定】「消息类型」里关闭了消息图片查看：get_message_images 不在工具表里，即使角色设定提到它也无法调用；看不到图片就照实说，不要假装看过。');
-    }
-    if (!canViewStickers) {
-      stickerBits.push('- 【系统设置覆盖角色设定】「消息类型」里关闭了表情库看图：get_sticker_image 不在工具表里，即使角色设定提到它也无法调用；按备注名发送表情（send_sticker）不受影响。');
-    }
-    if (stickerOn) {
-      stickerBits.push(`- 消息里的 [QQ表情14 微笑] / [QQ表情489] 是对方发的 QQ 系统表情（编号是 QQ 表情编号，不是表情库的 stickerId）：想回同一个就用 send_face 传名字（如 微笑）；要发图片表情就用 send_sticker 传备注名（见【可用表情包】），别拿这个编号去 ${canViewStickers ? 'get_sticker_image / ' : ''}send_sticker。`);
-      stickerBits.push(cardFirst
-        ? '- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪），也可以用 send_sticker 发图库里的图片表情（stickerId 直接填备注名，不用背长 id）；都是一条只能一个表情、不能带文字。是否使用、频率与场景按角色设定。'
-        : '- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪），也可以用 send_sticker 发图库里的图片表情（stickerId 直接填备注名，不用背长 id）；都是一条只能一个表情、不能带文字。接梗、被逗笑、吐槽、无语、自嘲时，优先想一下有没有贴切的表情，该用就用，别连着刷。');
-    } else {
-      stickerBits.push(cardFirst
-        ? '- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪）；一条只能一个表情、不能带文字。是否使用、频率与场景按角色设定。'
-        : '- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪）；一条只能一个表情、不能带文字。接梗、被逗笑、吐槽、无语、自嘲时，优先想一下有没有贴切的表情，该用就用，别连着刷。');
-    }
-    if (collectOn && canViewImages) {
-      stickerBits.push(`- 图库可以自己攒：别人发的表情包会自动进库（不用你操心）；你也可以主动存——看到有意思、能当表情用的图，先 get_message_images 看一眼，确认好玩就用 collect_sticker 存进去（顺手写一句备注）。${canViewStickers ? '库里没备注的图，用 list_stickers 找、get_sticker_image 看，再用 sticker_note 补一句备注，以后用 send_sticker 发更准。' : '看不到图的条目不会出现在清单里，也先不要给它编备注；按已有备注名挑选即可。'}挑真的会用的存，别什么都收。`);
-    } else if (stickerOn && canViewStickers) {
-      stickerBits.push('- 图库里的表情可以挑着用：list_stickers 找、get_sticker_image 看、sticker_note 补备注，发的时候 send_sticker 传备注名。');
-    } else if (stickerOn) {
-      stickerBits.push('- 图库里的表情可以按备注名挑着用（看不到图片，清单里只列有备注的）：list_stickers 找、send_sticker 传备注名。');
-    }
-    lines.push(...stickerBits);
+  if (canViewImages) {
+    lines.push('- [图片]/[链接图片]/[表情包]可以用 get_message_images + 消息#id查看。卡片不等于网页：卡片或文本中的图片直链（含 qqbot.ugcimg.cn 无扩展名链接）也走此工具，自动识别缓存，不当网页抓取。',
+      '- 表情图先理解语气再接话，不机械复述画面；对方要求识图、读字或解释时正常描述。看不到或拿不准就说明，不编造内容。');
   } else {
-    lines.push(
-      '- 你无法查看图片内容：消息里的 [图片] [表情包] 只是占位提示，如实表示"看不到图"即可，绝对不要编造图片内容。'
-    );
-    // 工具全摘掉了（两种原因：消息类型里关了两项，或模型/设置本身不能看图）。
-    // 角色卡里可能写着看图工具，用机制层面的说明覆盖掉 —— 这里不再区分原因。
-    lines.push(
-      vision
-        ? '- 【系统设置覆盖角色设定】「消息类型」里关闭了图片与表情查看：get_message_images / get_sticker_image 都不在工具表里，即使角色设定提到它们也无法调用。'
-        : '- 【系统设置覆盖角色设定】图片查看不可用（「图片输入」关着，或当前模型不支持图片）：get_message_images / get_sticker_image 都不在工具表里，即使角色设定提到它们也无法调用。'
-    );
+    lines.push('- 【系统设置覆盖角色设定】get_message_images 不在工具表里；消息图片看不到内容，不编造。');
   }
+  if (stickerOn) {
+    lines.push('- QQ系统表情编号与图库stickerId不同：send_face 发系统表情，send_sticker 按备注名发图片表情；文字另发，不刷屏。');
+    if (canViewStickers) lines.push('- 图库用 list_stickers 找、get_sticker_image 看图、sticker_note 补备注。');
+    else lines.push('- 【系统设置覆盖角色设定】get_sticker_image 不在工具表里；用 list_stickers 按已有备注选，不猜图片含义。');
+    if (canViewImages && cfg.sticker?.collectEnabled !== false) lines.push('- 需要收藏时先看图确认，再 collect_sticker，挑以后会用的存。');
+  }
+  if (!canViewImages && !canViewStickers) lines.push('- 你无法查看图片内容，看不到图时不要假装看过。');
   // 平台能力（2026-10-07 协议端 1.14.22 接入，控制台「平台能力」页）：与 vision/搜索/ASR
   // 同一口径 —— 开关关掉后工具会被 orchestrator 摘掉，提示词也不能再教用法（教了白烧一轮）。
   // 逐键判定必须**带上本次会话**：按群覆盖（platform.perGroup）时，同一个群在这里判"教不教"、
@@ -384,45 +316,21 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '', cardFirst
   }
   if (search) {
     lines.push(
-      '- 遇到需要实时信息、新闻热点、价格、天气/路线、教程/文档、产品参数、事实核查、网络用语/梗、或你自己不确定的事实时，主动用 search_web 搜索；网页搜索不只用于梗。先生成简洁搜索词，count默认5、最多20；工具返回标题、链接和摘要，必要时用 fetch_url 打开正文，整理答案时附相关来源链接。',
-      '- 搜索由后端工具执行。未读取正文就只能称为搜索摘要；抓取失败要说明实际可见范围，不编造网页内容。被问到搜索机制时，只说明实际提供的工具接口和返回信息；没有依据就不猜供应商、鉴权、排序和底层源码。普通聊天不主动讲工具流程。',
-      '- 聊天里碰到看不懂或拿不准的词/说法（新梗、缩写、黑话、谐音或圈内叫法、不认识的专有名词），先用 search_web 搜它的含义再回，别靠猜、也别糊弄过去；宁可搜完发现其实认识，也别猜着答（2026-10-12 用户反馈："遇到不懂的词不会去搜"）。',
-      '- 群友解释了一个词的含义/用法（"X就是…""X是骂人的"）时，先确认一句，再用 meme_remember 记到本群梗库；下次遇到同一个词先看【本群梗库】或 meme_lookup，不要重复问、不要重复搜。梗库优先于网络搜索；梗库没有再用 search_web（meme=true；仅主源为 Bing 时走补充链）。只记梗/黑话/外号，不记隐私、人物评价和群规。',
-      cardFirst
-        ? '- 被用一个词/称呼调侃、而拿不准它指什么时（就算那个词本身你认识，也可能是群里的新梗/新外号），同样先搜一下这个词的意思/出处再决定怎么接；一轮没搜到就换个关键词再搜（加"梗""出处""抖音""什么意思"再试）。系统对这类查询会额外补一次 360 中文结果，常能搜到抖音话题页/视频标题；看到站内标题、话题名或摘要就先按它理解，抓不到正文不等于没这个梗。还是只有字面意思时，别下"没这个梗 / 它就是这个意思"的结论——照实说"只搜到字面意思、没搜到出处"，顺势问一句或接着玩（"这又是什么新梗"），别硬编、也别假装听不懂来糊弄。'
-        : '- 被用一个词/称呼调侃、而拿不准它指什么时（就算那个词本身你认识，也可能是群里的新梗/新外号），同样先搜一下这个词的意思/出处再决定怎么接；一轮没搜到就换个关键词再搜（加"梗""出处""抖音""什么意思"再试）。系统对这类查询会额外补搜狗/360 等中文结果，常能搜到抖音话题页/视频标题；看到站内标题、话题名或摘要就先按它理解，抓不到正文不等于没这个梗。还是只有字面意思时，别下"没这个梗 / 它就是这个意思"的结论——照实说"只搜到字面意思、没搜到出处"，顺势问一句或接着玩（"这又是什么新梗"），别硬编、也别装出"听不懂"的样子糊弄（装傻要像在演，不能像真懵）。',
-      '- 搜过以后，回话要让人看得出你查过：把结论自然带一句——搜到了就说"搜了下，就是XX"；没搜到出处就照实讲（"搜了两轮，只有字面意思……这什么新梗？"），别让搜了跟没搜一个样，也别把"搜不到"说成"没这回事"（2026-10-12 用户反馈："搜了怎么回答还是一样的"）。',
-      '- 群友单独发一个词/短语、没有上下文时（哪怕字面意思说得通，比如只发一个外号），也先用 search_web（meme=true）查它最近是不是梗/外号；单独发词本身就是该查一下的信号，不要直接按字面接。拿一个词形容你/骂你、而字面不搭时同样先查。',
-      '- 搜到梗后先看摘要/正文，别只看标题；对方在问含义就用一句人话点出用法，对方只是在刷就接住用一次，场景不贴合就只用来理解，别硬塞。',
-      '- 搜梗时用短查询：梗名 + "梗"或"什么意思"就够了；不要加年份、不要堆一串关键词——多出来的词会把结果带到旧内容。',
-      '- 搜索结果只有标题/摘要时，就按标题和摘要理解；不需要打开每个视频正文。',
-      '- 摘要里已经说明这个词是骂人、阴阳或外号时，就按那个用法接；别退回字面义（别人说你"太X了"，X 多半不是字面那个东西）。',
-      '- 对方明确问"这是什么梗/啥意思"时，可以简短解释用法（不是百科定义），解释完顺手用一次；只有标题、没有可靠含义就说没查到，别硬编。',
-      '- 群友直接发来 URL 并问能不能看到/写了什么时，直接用 fetch_url 抓取该 URL 读正文，不要凭记忆猜。',
-      '- 需要搜索时允许多走几步：连续 search_web / fetch_url 2~3 步，换关键词、打开页面、交叉验证后再回复；搜索过程中不需要先回复，拿到结果再回。事实性问题可以比闲聊稍微多写一点，但仍要简洁。'
+      '- 实时信息或不确定的事实主动 search_web；count默认5、最多20。给出结论和相关来源，必要时 fetch_url 读正文；用户给网页URL要求阅读时直接抓取，图片链接走看图工具。',
+      '- 不懂且影响理解的词/梗，先查本群梗库 meme_lookup，没有再 search_web（meme=true）。用短关键词，必要时换词交叉验证；普通词不必逢词就搜。群友明确解释的新梗可用 meme_remember 记用法，不记隐私或人物评价。',
+      '- 搜到梗后先看摘要或正文确认含义，再按语境解释或接话，不硬塞、不强制汇报“搜了几轮”。只有摘要就不声称读过正文；搜不到不代表不存在。',
+      '- 搜索由后端工具执行，失败如实说明；不猜供应商、鉴权或排序，不向群友汇报内部工具流程。'
     );
-  } else {
-    lines.push('- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。');
-  }
-  // 与「联网搜索」开关解耦：ASR 有自己的开关（asr.enabled），条件收敛在 config.asrAvailable
+  } else lines.push('- 联网不可用，不确定的实时信息如实说不知道，不编造。');
+  // 音频与画面独立开关，不能把看不到视频误说成听不到，反之亦然。
   const asr = asrAvailable(cfg);
-  if (asr) {
-    lines.push('- 消息里的 [语音] [视频] [文件…m4a|mp3|mp4 等音视频文件] 可以用 get_message_audio + 那条消息前的 #数字 转成文字（自动语音识别，视频只取音轨）；转写失败就老实说处理不了，不要编造音频内容。');
-    // 视频：画面与声音是两条路 —— 画面走 get_message_images（抽 4 帧拼 2×2），声音走 get_message_audio。
-    // 只提"能听声音"会让模型以为看不到画面（用户 2026-09-26 反馈：发视频回"视频只能听声"）。
-    // ⚠️ 画面这条要挂在 vision 上：关掉图片输入时 get_message_images 不在工具表里，
-    // 教它调不存在的工具会白烧一轮（2026-09-26 审查）。
-    lines.push(canSeeVideo
-      ? '- 别人发视频时两样都能拿到：画面用 get_message_images（2×2 四宫格＝按时间顺序抽的 4 帧，左上→右上→左下→右下），声音用上面那条转写。先看画面再听声音，别只回一句"视频只能听声音"。'
-      : (vision
-        ? '- 别人发视频时你只能拿到声音：画面查看在设置里关掉了（别猜也别编画面内容），用上面那条转写，然后照实回应听到的内容。'
-        : '- 别人发视频时你只能拿到声音（画面看不到，别猜也别编画面内容）：用上面那条转写，然后照实回应听到的内容。'));
-  } else {
-    lines.push(canSeeVideo
-      ? '- 你听不了语音：消息里的 [语音] [文件…m4a|mp3 等] 只是占位提示，如实话一句"这边听不了语音"即可，不要编造声音内容；但 [视频] 的**画面**可以用 get_message_images 看（2×2 四宫格＝4 帧），看完照常说画面内容。'
-      : '- 你无法处理语音/视频/音频文件：消息里的 [语音] [视频] [文件…m4a|mp3|mp4 等] 只是占位提示，如实话一句"这边听不了语音"即可，不要编造音频内容。');
-  }
-  lines.push('- [卡片消息] 是占位符无法查看；[合并转发聊天记录] / [转发消息 …] 用 read_forward 工具 + 那条消息前的 #数字 展开看全文；[卡片聊天记录 …] 这种卡片协议端常常不给可取的内容，取不到就照实说看不到，别编造里面的内容。');
+  if (asr) lines.push('- [语音]/视频音轨/音频文件用 get_message_audio + 消息#id转写；失败不编造声音内容。');
+  else lines.push('- 听不了语音，不能编造音频内容。');
+  if (canSeeVideo) lines.push(asr
+    ? '- 别人发视频时两样都能拿到：get_message_images 看画面，get_message_audio 听声音，按问题选用。'
+    : '- 视频画面可用 get_message_images 看；声音不可用。');
+  else lines.push('- 视频画面看不到，不猜画面内容。');
+  lines.push('- 合并转发/聊天记录用 read_forward + 消息#id展开；普通卡片先看已有文字或链接，取不到正文再说明，别一概断言卡片无法查看。');
   return lines.join('\n');
 }
 
@@ -621,7 +529,7 @@ export function buildSystemPrompt({
     '',
     stickerRules(grounded, cardFirst),
     '',
-    qqSceneRules(grounded, platformOverride, chatKey, cardFirst)
+    qqSceneRules(grounded, platformOverride, chatKey)
   );
   if (cfg.customRules && String(cfg.customRules).trim()) {
     parts.push('', '【管理员附加规则】', String(cfg.customRules).trim());

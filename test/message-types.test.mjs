@@ -23,11 +23,11 @@ test('默认值：四个开关都默认开（保持既有行为，不偷偷改�
 
 test('提示词：关掉视频画面后不再教它去调抽帧，且说清为什么看不到', () => {
   // 两条"画面能看"的措辞（ASR 开着/关着各一条），关掉后一条都不该在
-  const seeVideo = (text) => /两样都能拿到|的\*\*画面\*\*可以用 get_message_images/.test(text);
+  const seeVideo = (text) => /两样都能拿到|视频画面可用 get_message_images/.test(text);
   updateConfig({ api: { vision: true }, messageTypes: { videoFrames: true } });
   const on = buildSystemPrompt({ persona: DEFAULT_CONFIG.persona });
   assert.ok(seeVideo(on), '默认（开）时提示词要说明画面能看');
-  const asrBranch = on.includes('可以用 get_message_audio');
+  const asrBranch = on.includes('get_message_audio + 消息#id转写');
 
   updateConfig({ messageTypes: { videoFrames: false } });
   try {
@@ -35,11 +35,11 @@ test('提示词：关掉视频画面后不再教它去调抽帧，且说清为�
     assert.ok(!seeVideo(off), '关掉后不能再教它调一个对视频什么都不给的工具');
     if (asrBranch) {
       // ASR 可用时视频仍有声音这条路 —— 要说清是"设置里关掉了画面"，否则模型会以为自己在瞎
-      assert.match(off, /画面查看在设置里关掉了/);
+      assert.match(off, /视频画面看不到/);
     }
     // 触发器列表也要跟着收：还列着 [视频] 就等于教它去调一个对视频什么都不给的工具
     assert.ok(!/\[图片\] \/ \[表情包\] \/ \[视频\]/.test(off), '关掉后触发器列表里不该再列 [视频]');
-    assert.match(off, /\[图片\] \/ \[表情包\]/, '图片/表情仍要列（那条路没关）');
+    assert.ok(off.includes('[图片]') && off.includes('[表情包]'), '图片/表情仍要列（那条路没关）');
   } finally {
     updateConfig({ messageTypes: { videoFrames: true } });
   }
