@@ -9,6 +9,7 @@ process.env.QQ_AGENT_DATA_DIR = root;
 const {
   Orchestrator,
   estimateNextPromptTokens,
+  runTokenUsage,
   followUpPlan,
   proactiveCandidates,
   proactiveProbability,
@@ -162,7 +163,8 @@ describe('Orchestrator', () => {
   }
 
   it('角色核心常驻，记忆总结模型提词并注入背景，仍可主动查全文，换卡不串资料', async (t) => {
-    const { runner, cfg, append } = fixture(t);
+    const { runner, cfg, append, sessions } = fixture(t);
+    const before = sessions.todayUsage(todayKey()).totalTokens;
     const background = new PersonaBackground({ dataDir: root });
     const role = resolvePersona(cfg, 'group:1');
     const saved = background.save(role, { ...background.read(role), content: '# 核心设定\n我是庭院主人。\n# 旧日朋友\n只有读取后才能知道的秘密旧事。' });
@@ -178,6 +180,7 @@ describe('Orchestrator', () => {
           assert.equal(new Headers(options.headers).get('authorization'), 'Bearer test-memory-key');
         }
         assert.equal(body.tools, undefined);
+        assert.ok(body.max_tokens > 0 && body.max_tokens <= 2048);
         return Response.json({ choices: [{ message: { content: '{"topics":["旧日朋友"]}' } }], usage: { total_tokens: 10 } });
       }
       const name = round++ === 0 ? 'persona_background_lookup' : 'finish';
@@ -187,6 +190,10 @@ describe('Orchestrator', () => {
     append(1, '说说你旧日的朋友？');
     await runner.wake('group:1');
     assert.equal(scans, 1);
+    const firstSession = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(firstSession.auxiliaryUsage.totalTokens, 10);
+    assert.equal(runTokenUsage(firstSession), 30);
+    assert.equal(sessions.todayUsage(todayKey()).totalTokens - before, 30, '每日台账不重复计算辅助调用');
     assert.match(body.messages.find((m) => m.role === 'system').content, /我是庭院主人/);
     assert.match(body.messages.find((m) => m.role === 'system').content, /旧日朋友/);
     assert.doesNotMatch(body.messages.find((m) => m.role === 'system').content, /只有读取后才能知道/);
@@ -198,6 +205,8 @@ describe('Orchestrator', () => {
     append(2, '再说说那位旧友');
     await runner.wake('group:1');
     assert.equal(scans, 2, '独立记忆模型负责第二轮话题扫描');
+    assert.equal(sessions.get(sessions.listSummaries(1)[0].id).auxiliaryUsage.totalTokens, 10);
+    assert.equal(sessions.todayUsage(todayKey()).totalTokens - before, 50);
     assert.equal(body.model, 'mock', '正常回复仍使用聊天模型');
     assert.ok(body.messages.some((m) => m.role === 'user' && m.content.includes('秘密旧事')));
     cfg.persona = { ...role, templateId: 'different-background-role' };
@@ -205,6 +214,41 @@ describe('Orchestrator', () => {
     await runner.wake('group:1');
     assert.ok(!body.tools.some((tool) => tool.function.name === 'persona_background_lookup'));
     assert.doesNotMatch(body.messages.find((m) => m.role === 'system').content, /当前扮演角色的背景资料索引/);
+  });
+
+  it('人格核验受本轮预算限制，辅助用量阻止后续核验及聊天轮次，台账只计一次', async (t) => {
+    const { runner, cfg, store, append, sessions } = fixture(t);
+    cfg.api.maxRunTokens = 20000;
+    cfg.personalityMemory.enabled = true;
+    runner.personalityMemory = new PersonalityMemory({ dataDir: fs.mkdtempSync(path.join(root, 'budget-personality-')), getConfig: () => cfg });
+    const source = store.appendSelf('group:1', { text: '我更喜欢绿茶', ts: Date.now() });
+    let reviews = 0, chats = 0;
+    const before = sessions.todayUsage(todayKey()).totalTokens;
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.messages[0].content.includes('你是人格成长证据核验器')) {
+        reviews++;
+        assert.ok(body.max_tokens > 0 && body.max_tokens <= 2048);
+        return Response.json({ choices: [{ message: { content: '{"supported":true,"topic":"饮品","matchId":"","conflictIds":[]}' } }], usage: { total_tokens: 9900 } });
+      }
+      chats++;
+      return Response.json({ choices: [{ message: { tool_calls: [1, 2].map((n) => ({ id: `capture-${n}`, type: 'function', function: {
+        name: 'remember_personality', arguments: JSON.stringify({ kind: 'preference', topic: '饮品', content: '我更喜欢绿茶',
+          evidence: [{ messageId: source.id, quote: '我更喜欢绿茶' }] })
+      } })) } }], usage: { total_tokens: 10000 } });
+    };
+    append(1);
+    await runner.wake('group:1');
+    const session = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(reviews, 1, '第二次核验在请求前被预算拒绝');
+    assert.equal(chats, 1, '辅助用量也限制下一轮聊天');
+    assert.equal(session.auxiliaryUsage.totalTokens, 9900);
+    assert.equal(session.auxiliaryUsage.calls, 1);
+    assert.equal(session.auxiliaryReservedTokens, 0);
+    assert.equal(runTokenUsage(session), 19900);
+    assert.equal(session.budgetStopped, true);
+    assert.equal(sessions.todayUsage(todayKey()).totalTokens - before, 19900);
+    assert.equal(runner.personalityMemory.list().length, 1);
   });
 
   it('真实聊天使用search_web数量参数并统计联网，关闭搜索后新旧工具均不可用', async (t) => {

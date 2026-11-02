@@ -227,6 +227,11 @@ export function estimateNextPromptTokens({
   };
 }
 
+// 辅助调用按实际模型在外部台账计价；单次运行预算仍须包含它们，避免重复计入每日台账。
+export function runTokenUsage(session) {
+  return (Number(session.usage?.totalTokens) || 0) + (Number(session.auxiliaryUsage?.totalTokens) || 0);
+}
+
 export function randomWakeDelay(config = getConfig(), random = Math.random) {
   const legacy = Math.max(0, Number(config?.wakeDelayMs) || 0);
   let min = Number.isFinite(Number(config?.wakeDelayMinMs))
@@ -1972,7 +1977,7 @@ export class Orchestrator {
     const lastPromptTokens = Number(session.callUsage?.at(-1)?.promptTokens)
       || Math.ceil((Number(session.inputEstimateChars) || 0) / 2)
       || 4000;
-    const budgetLeft = (Number(session.usage?.totalTokens) || 0) + lastPromptTokens < runLimits.maxRunTokens;
+    const budgetLeft = runTokenUsage(session) + lastPromptTokens < runLimits.maxRunTokens;
     let sendFailed = false;
 
     if (sendTool && budgetLeft) {
@@ -2245,7 +2250,7 @@ export class Orchestrator {
           .slice(-8).map((m) => String(m.text || '').slice(0, 1500)).join('\n');
         backgroundRecall = await personaBackground.recall(persona, { text: scanText, signal,
           complete: async (messages) => {
-            const response = await this.#memoryChat(messages, { signal, timeoutMs: 8000 });
+            const response = await this.#memoryChat(messages, { signal, timeoutMs: 8000, session });
             return extractJsonObject(String(response?.message?.content ?? ''));
           }, onError: (error) => log.warn('[persona-background] 话题提取失败，使用关键词匹配：', error.message) });
       }
@@ -2519,7 +2524,7 @@ export class Orchestrator {
       memory: this.memory,
       identityPilot,
       reviewPersonalityMemory: async (messages, { signal: reviewSignal } = {}) => {
-        const response = await this.#memoryChat(messages, { signal: reviewSignal || signal, timeoutMs: 30000 });
+        const response = await this.#memoryChat(messages, { signal: reviewSignal || signal, timeoutMs: 30000, session });
         return extractJsonObject(String(response?.message?.content ?? ''));
       },
       stickers: this.stickers,
@@ -2586,7 +2591,7 @@ export class Orchestrator {
       // 预算检查要放过第一轮：估算只是"字符数折算"的粗估，一个繁忙会话的
       // 已读历史 + 触发批就能把估算顶到预算线以上 —— 若在 round 0 就 break，
       // 这批消息会被 ack 掉、一次模型都没调、也不会重试（用户永远等不到回复）。
-      if (round > 0 && session.usage.totalTokens + estimatedPromptTokens + outputReserveTokens > maxRunTokens) {
+      if (round > 0 && runTokenUsage(session) + estimatedPromptTokens + outputReserveTokens > maxRunTokens) {
         session.budgetStopped = true;
         session.budgetStopReason = 'next-call-budget';
         session.estimatedNextPromptTokens = estimatedPromptTokens;
@@ -3874,30 +3879,43 @@ export class Orchestrator {
    * useChatModel=true 时跟随聊天模型（cfg.api.*）；
    * false 时使用 cfg.memory.provider/model 指向的目录模型（端点/密钥取自 providers）。
    */
-  async #memoryChat(messages, { signal = null, timeoutMs = null } = {}) {
+  async #memoryChat(messages, { signal = null, timeoutMs = null, session = null } = {}) {
     const cfg = getConfig();
     const mem = cfg.memory || {};
-    if (timeoutMs) signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
-    if (mem.useChatModel !== false) {
+    let maxTokens = null, reservation = 0;
+    if (session) {
+      const promptTokens = estimateNextPromptTokens({ messages }).estimatedPromptTokens;
+      const remaining = effectiveRunLimits(cfg).maxRunTokens - runTokenUsage(session)
+        - (session.auxiliaryReservedTokens || 0) - promptTokens - 2048;
+      if (remaining < 256) throw new Error('本轮 Token 预算不足，跳过记忆辅助模型调用');
+      maxTokens = Math.min(2048, Math.floor(remaining));
+      reservation = promptTokens + maxTokens;
+      session.auxiliaryReservedTokens = (session.auxiliaryReservedTokens || 0) + reservation;
+    }
+    try {
+      if (timeoutMs) signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
+      let overrides;
+      if (mem.useChatModel === false) {
+        const p = currentProviders().find((x) => x.id === mem.provider);
+        if (!p?.baseURL || !p?.apiKey || !mem.model) {
+          throw new Error('记忆整理专用模型未配置：请在设置 → 记忆里选择提供商与模型');
+        }
+        overrides = { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: timeoutMs || 180000 };
+      }
       // 记忆整理 = 判断/总结类任务（与聊天、写作可各自设思考档位）。
-      const response = await chatCompletion({ messages, signal, temperature: 0.2, purpose: 'judge' });
-      this.#recordExternalUsage(response);
+      const response = await chatCompletion({ messages, signal, maxTokens, temperature: 0.2, purpose: 'judge', overrides });
+      this.#recordExternalUsage(response, overrides?.model);
+      if (session) this.#recordAuxiliaryUsage(session, response);
       return response;
+    } finally {
+      if (session) session.auxiliaryReservedTokens = Math.max(0, (session.auxiliaryReservedTokens || 0) - reservation);
     }
-    const providers = currentProviders();
-    const p = providers.find((x) => x.id === mem.provider);
-    if (!p?.baseURL || !p?.apiKey || !mem.model) {
-      throw new Error('记忆整理专用模型未配置：请在设置 → 记忆里选择提供商与模型');
-    }
-    const response = await chatCompletion({
-      messages,
-      signal,
-      temperature: 0.2,
-      purpose: 'judge',
-      overrides: { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: timeoutMs || 180000 }
-    });
-    this.#recordExternalUsage(response, mem.model);
-    return response;
+  }
+
+  #recordAuxiliaryUsage(session, response) {
+    session.auxiliaryUsage ||= emptyUsage();
+    addUsage(session.auxiliaryUsage, response?.usage);
+    session.auxiliaryUsage.calls += 1;
   }
 
   /** 非会话模型调用（记忆整理）计入今日台账：此前整条链路对用量完全透明（2026-10-07 复审 P3）。 */

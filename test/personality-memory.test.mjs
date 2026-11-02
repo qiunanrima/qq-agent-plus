@@ -106,7 +106,67 @@ test('合并来源仍遵守私聊隐藏和perChat；查询返回证据且不自�
   assert.match(lookup.execute({}, { id: first.id }).content, /不可见/);
   f.cfg.memory.visibility = { mode: 'perChat' };
   assert.equal(f.memory.recallRows({ chatKey: 'group:9', persona }).length, 0);
+  assert.equal(f.memory.recallRows({ chatKey: 'group:1', persona }).length, 0, '混合来源的正文也可能泄漏，不能只过滤引用');
+  assert.match(lookup.execute({}, { id: first.id }).content, /不可见/);
+  await f.capture(f.preference('群内独立的咖啡偏好'), 'group:1', async (messages) => {
+    assert.deepEqual(JSON.parse(messages[1].content).previous, [], '核验器不得读取不可见的旧正文');
+    return accepted();
+  });
   assert.equal(f.memory.recallRows({ chatKey: 'group:1', persona }).length, 1);
+});
+
+test('perChat不以精确文本回退合并隐藏条目；来源隔离覆盖核验和查询', async (t) => {
+  const f = fixture(t);
+  const privateRow = await f.capture(f.preference('我喜欢绿茶', 'private:12345'), 'private:12345');
+  f.cfg.memory.visibility = { mode: 'perChat' };
+  const groupRow = await f.capture(f.preference('我喜欢绿茶'), 'group:1', async (messages) => {
+    assert.deepEqual(JSON.parse(messages[1].content).previous, []);
+    return accepted();
+  });
+  assert.notEqual(groupRow.id, privateRow.id);
+  const lookup = f.memory.toolDefs({ chatKey: 'group:1', persona }).find((r) => r.name === 'personality_lookup');
+  assert.equal(JSON.parse(lookup.execute({}, { id: groupRow.id }).content).evidence.length, 1);
+  assert.doesNotMatch(lookup.execute({}, { id: groupRow.id }).content, /private:/);
+  await assert.rejects(f.capture(f.preference('另一条群内证据'), 'group:1', async () => ({
+    supported: true, matchId: privateRow.id, conflictIds: []
+  })), /无效的合并/);
+});
+
+test('同主题独立偏好可以同时稳定；管理员只降级有语义冲突的条目，重启后仍有效', async (t) => {
+  const f = fixture(t);
+  const stable = (quote) => ({ ...f.preference(quote), evidence: [f.say('group:1', quote), f.say('group:1', quote, { ts: Date.now() - 86400000 })] });
+  const tea = await f.capture(stable('我喜欢喝绿茶'));
+  const hot = await f.capture(stable('冬天我喜欢热饮'));
+  assert.equal(tea.status, 'active');
+  assert.equal(hot.status, 'active');
+  const dislike = await f.capture(stable('我不再喜欢绿茶'), 'group:1', async () => ({
+    supported: true, topic: '饮品', matchId: '', conflictIds: [tea.id]
+  }));
+  assert.equal(dislike.status, 'tentative');
+  const restarted = new PersonalityMemory({ dataDir: f.root, getConfig: () => f.cfg });
+  restarted.edit(dislike.id, { content: '我不再喜欢绿茶', status: 'active' });
+  const statuses = () => Object.fromEntries(restarted.list().map((r) => [r.id, r.status]));
+  assert.deepEqual(statuses(), { [tea.id]: 'tentative', [hot.id]: 'active', [dislike.id]: 'active' });
+  restarted.edit(tea.id, { content: '我喜欢喝绿茶', status: 'active' });
+  assert.deepEqual(statuses(), { [tea.id]: 'active', [hot.id]: 'active', [dislike.id]: 'tentative' });
+});
+
+test('不同角色并发采集互不作废，同角色并发仍须重新核验', async (t) => {
+  const f = fixture(t);
+  let release;
+  const waiting = new Promise((resolve) => { release = resolve; });
+  const pending = f.capture(f.preference(), 'group:1', async () => { await waiting; return accepted(); });
+  const other = await f.capture(f.preference('另一角色喜欢红茶'), 'group:1', accepted, { ...persona, botName: '另一角色' });
+  f.memory.edit(other.id, { content: '另一角色偏好红茶', status: 'active' });
+  f.memory.remove(other.id);
+  release();
+  await pending;
+  let resume;
+  const barrier = new Promise((resolve) => { resume = resolve; });
+  const stale = f.capture(f.preference(), 'group:1', async () => { await barrier; return accepted(); });
+  await f.capture(f.preference('本角色还有新偏好'));
+  resume();
+  await assert.rejects(stale, /已变化或停用/);
 });
 
 test('模型等待时清空/关闭使迟到结果失效，模型故障不写入', async (t) => {
