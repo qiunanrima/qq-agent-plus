@@ -8,6 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { assertTimeAllowed, watchTimeWindow } from '../core/time-gate.js';
 import { readJsonBounded, readTextBounded } from '../core/http-body.js';
 import { createLogger } from '../core/logger.js';
+import { usesAntigravity } from '../antigravity-cli/config.js';
+import { antigravityCompletion } from '../antigravity-cli/index.js';
 
 const log = createLogger('llm');
 
@@ -102,6 +104,7 @@ function effectiveApi() {
  *   - 主动中止（abort）
  */
 export function isRetryableError(error) {
+  if (error?.code === 'ANTIGRAVITY_NO_RETRY') return false;
   if (error?.code === 'TIME_CONTROL_INACTIVE') return false;
   const msg = String(error?.message ?? error ?? '');
 
@@ -330,6 +333,11 @@ function pickFallback(args) {
  */
 export async function chatCompletionWithRetry(args, retries = 2) {
   llmRuntimeStats.requests += 1;
+  // CLI outcomes are never replayed or sent to an HTTP fallback.
+  if (usesAntigravity(getConfig(), args)) {
+    try { return await chatCompletion(args); }
+    catch (error) { llmRuntimeStats.failures += 1; throw error; }
+  }
   let response = null;
   let primaryError = null;
   try {
@@ -398,10 +406,23 @@ export async function chatCompletion({
   overrides = null,
   cacheKey = '',
   maxTokens = null,
-  purpose = ''
+  purpose = '',
+  mcpRun = null
 }) {
   assertTimeAllowed();
   llmRuntimeStats.attempts += 1;
+  if (usesAntigravity(getConfig(), { purpose, overrides })) {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const release = watchTimeWindow(error => controller.abort(error));
+    try {
+      const result = await antigravityCompletion({ config: getConfig().antigravityCli, messages, tools, toolChoice,
+        signal: controller.signal, isEnabled: () => getConfig().antigravityCli?.enabled === true, mcpRun });
+      return result;
+    } finally { release(); signal?.removeEventListener('abort', abort); }
+  }
   const api = overrides || effectiveApi();
   // 聊天这类"随口回一句"的任务关掉思考：省一半输出 token、少 1~3 秒；
   // 判断/写作类（表情包要不要收、说说、空间互动、身份评估）不传 purpose，继续思考。

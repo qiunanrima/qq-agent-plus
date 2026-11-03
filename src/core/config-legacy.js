@@ -17,6 +17,7 @@ import { normalizeTokenSaverMode } from './token-saver.js';   // 零依赖模块
 import { normalizeMomentWindows } from '../features/moment-schedule.js';
 import { PLATFORM_GATE_KEYS, PRIVATE_FILE_DEFAULT_MAX_KIB, privateFileMaxKiB } from './platform-gates.js';
 import { LIVING_MEMORY_DEFAULTS, normalizeLivingMemoryConfig } from '../living-memory/config.js';
+import { ANTIGRAVITY_DEFAULTS, normalizeAntigravityConfig } from '../antigravity-cli/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 控制台把 updateConfig 的校验失败映射成 400：用显式标记，不靠匹配错误文案
@@ -48,6 +49,7 @@ export function getConfigConflict() {
 }
 
 export const DEFAULT_CONFIG = {
+  antigravityCli: { ...ANTIGRAVITY_DEFAULTS },
   // OpenAI 兼容 API（必填才能跑）
   api: {
     // 每日花费上限（改进方案 #8，默认关闭＝升级不改变任何行为）。按**估算价**累计当日用量，
@@ -1964,6 +1966,12 @@ export function loadConfig() {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
     const parsed = migrateConfig(JSON.parse(text));
     const merged = deepMerge(DEFAULT_CONFIG, parsed);
+    try { merged.antigravityCli = normalizeAntigravityConfig(merged.antigravityCli); }
+    catch {
+      // A broken optional CLI must not reset the rest of the installation.
+      merged.antigravityCli = { ...merged.antigravityCli, enabled: false };
+      console.warn('[config] Antigravity CLI 配置无效，已停用；保留配置以便修复');
+    }
     // ── provider 迁移（2026-09-26）──
     // 默认 provider 从 local 改成 openai 之后，**没显式存过 provider** 的老配置语义会变：
     // 本机装了 whisper 的实例会从"能用"变成"没配齐"（静默失效，2026-09-26 审查 P1）。
@@ -2202,6 +2210,11 @@ export function updateConfig(patch, { force = false } = {}) {
   next.tokenSaver = { ...(next.tokenSaver || {}), mode: normalizeTokenSaverMode(next.tokenSaver?.mode) };
   next.timeControl = normalizeTimeControl(next.timeControl);
   next.livingMemory = normalizeLivingMemoryConfig(next.livingMemory);
+  try { next.antigravityCli = normalizeAntigravityConfig(next.antigravityCli); }
+  catch (error) {
+    // Disabled malformed settings must remain repairable without blocking other settings.
+    if (Object.hasOwn(safePatch, 'antigravityCli') || next.antigravityCli?.enabled === true) throw invalidConfig(error.message);
+  }
   next.dailyMoments.scheduleWindows = normalizeMomentWindows(next.dailyMoments.scheduleWindows);
   if (!['observe', 'active'].includes(next.runtime?.mode)) throw invalidConfig('Invalid runtime mode');
   if (!['legacy', 'threaded', 'lifecycle'].includes(next.conversation?.mode)) {
