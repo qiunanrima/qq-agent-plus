@@ -474,3 +474,29 @@ test('手动唤醒带 wakeNote（见闻/提醒）时，提醒必须进模型上�
   assert.match(content, /测试视频/);
   assert.deepEqual(f.sent, ['我分享一个视频']);
 });
+
+test('输出截断不能伪装正常沉默；群内不强行发送内部草稿', async (t) => {
+  const f = fixture(t, { group: true });
+  const response = f.textReply('内部草稿未完成');
+  response.choices[0].finish_reason = 'length';
+  f.responses.push(response);
+  f.append('truncated-group', '今天天气不错');
+  await f.wake();
+  assert.equal(f.bodies.length, 1);
+  assert.deepEqual(f.sent, []);
+  assert.equal(f.lastSession().outputTruncated, true);
+  assert.equal(f.lastSession().status, 'error');
+  assert.match(f.lastSession().error, /输出达到上限/);
+});
+
+test('明确提问被截断仍走一次发送纠正，成功后不误报失败', async (t) => {
+  const f = fixture(t);
+  const response = f.textReply('未完成的内部草稿');
+  response.choices[0].finish_reason = 'length';
+  f.responses.push(response, f.sendReply('正常回答'));
+  f.append('truncated-private');
+  await f.wake();
+  assert.equal(f.bodies.length, 2);
+  assert.deepEqual(f.sent, ['正常回答']);
+  assert.equal(f.lastSession().status, 'done');
+});
