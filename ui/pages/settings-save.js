@@ -921,6 +921,7 @@ async function saveConfig({ quiet = false } = {}) {
         (Number(c.proactive?.checkIntervalMaxMs) || 5400000) / 60000, 2, 1440, 90
       ) * 60000),
       probability: numKeep(val('#cfg-pro-prob', (Number(c.proactive?.probability) || 0) * 100), (Number(c.proactive?.probability) || 0) * 100, 0, 100, 25) / 100,
+      privateProbability: numKeep(val('#cfg-pro-private-prob', Number(c.proactive?.privateProbability ?? 0.05) * 100), Number(c.proactive?.privateProbability ?? 0.05) * 100, 0, 100, 5) / 100,
       // 后端按 max(300000, …) 收口；这里同口径，避免界面显示 2 分钟、实际按 5 分钟算
       idleThresholdMs: Math.round(numKeep(
         val('#cfg-pro-idle', (Number(c.proactive?.idleThresholdMs) || 1800000) / 60000),
@@ -933,6 +934,7 @@ async function saveConfig({ quiet = false } = {}) {
       // 控件缺失时都按已保存值回退。
       groupEnabled: chk('#cfg-pro-group', c.proactive?.groupEnabled !== false),
       privateEnabled: chk('#cfg-pro-private', c.proactive?.privateEnabled === true),
+      nonAdminPrivateEnabled: chk('#cfg-pro-private-non-admin', c.proactive?.nonAdminPrivateEnabled === true),
       scopeMode: val('#cfg-pro-mode', c.proactive?.scopeMode === 'perChat' ? 'perChat' : 'shared') === 'perChat' ? 'perChat' : 'shared',
       perChatMaxPerTick: Math.round(numKeep(
         val('#cfg-pro-per-max', Number(c.proactive?.perChatMaxPerTick) || 2),

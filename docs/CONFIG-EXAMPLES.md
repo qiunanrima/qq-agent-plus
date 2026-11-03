@@ -153,8 +153,10 @@ Clash/mihomo 等代理的 fake-ip 模式会把任意域名解析到 `198.18.0.0/
     "checkIntervalMaxMs": 12600000,
     "idleThresholdMs": 1800000,
     "probability": 0.55,
+    "privateProbability": 0.05,
     "groupEnabled": true,
     "privateEnabled": false,
+    "nonAdminPrivateEnabled": false,
     "scopeMode": "shared",
     "perChatMaxPerTick": 2,
     "followUpEnabled": true,
@@ -171,22 +173,23 @@ Clash/mihomo 等代理的 fake-ip 模式会把任意域名解析到 `198.18.0.0/
 - `enabled`：会话安静时按概率发起话题（控制台「设置 → 聊天设置 → 主动开话题」第一条），只管这一条链路。
 - `groupEnabled`：安静时发起话题是否挑群聊，默认 `true`；候选沿用 `allow.groups` 与 `allowAllWhenEmpty`。
 - `scopeMode`：`shared`（默认）= 群聊/私聊各共用一次机会，每轮各挑一个会话；`perChat` = 每个群/私聊独立按概率判定。`perChatMaxPerTick`（默认 2）限制独立模式每轮最多开几个，避免群多时刷屏。
-- `privateEnabled`：是否也挑私聊，默认 `false`。打开后（且 `enabled: true`）按 `allow.private`
-  的私聊白名单挑人，`deny.private` 仍然优先；规则与平时回复私聊一致，不另建名单。
+- `privateEnabled`：是否也挑私聊，默认 `false`。打开后（且 `enabled: true`）默认只允许系统配置的管理员；仍受 `allow.private` 与 `deny.private` 限制。
+- `nonAdminPrivateEnabled`：允许主动找非管理员私聊，默认 `false`；旧配置即使已打开私聊范围也不会自动允许。需与 `privateEnabled` 同时开启，且仍按私聊白名单挑人。开启后每个非管理员最多每24小时获得一次主动发起机会，独立记录并跨重启保留；群聊与管理员不受这个24小时冷却限制。一次机会不保证发送，模型可以选择保持安静。
   被选中的私聊同样要满足：没有未读、安静超过 `idleThresholdMs`、当前允许运行。
   控制台「群聊 / 私聊」两个复选框分别对应这两项；两个都不勾时不会主动开话题。
   群聊和私聊**各自独立计时、独立掷骰、独立记录上次判定**：一个范围这次开了话题或摇到不发言，
   不会占用另一个范围的机会。
-- `followUpEnabled`：发言后无人回应时补一句（约 10 分钟后给一次机会）。与控制台同名的复选框对应。
-- `selfWakeEnabled`：允许模型用 `schedule_wake` 给自己安排稍后的主动发言；关掉后该工具会从工具列表里摘掉。
+- `followUpEnabled`：群聊/管理员私聊发言后无人回应时补一句（约10分钟后给一次机会）。非管理员私聊不自动补话。
+- `selfWakeEnabled`：允许模型在群聊/管理员私聊用 `schedule_wake` 给自己安排稍后的主动发言。非管理员私聊不提供此工具，运行中的旧工具也会拒绝；已排上的补话/自安排计划到期时作废。普通私聊来消息后的回复、人工唤醒和用户明确设置的 `remind` 定时提醒照常运行。
 - 这两项**独立于 `enabled`**，默认 `true`（与引入开关之前的行为一致）。想让它完全不主动开口，
   所有相关勾选都要关；只想关掉"补话"或"自安排唤醒"的，各关各的。
 - `activeHours.windows`：生效时段，窗口外不开口，也不消耗间隔；`24:00` 表示到当天结束（补话与自安排唤醒同样受这个窗口约束）。
   控制台「聊天设置 → 主动开话题 → 发言时段」可直接增删多行；空列表 = 全天。
 - `idleThresholdMs`：会话安静这么久才考虑开口（群聊与私聊同一口径）。
-- `probability`：每次判定开口的概率。
+- `probability`：群聊每次判定开口的概率，默认0.25。
+- `privateProbability`：所有私聊单独判定的概率，默认0.05；不继承群聊概率。`shared` 和 `perChat` 两种方式都按对应范围的概率执行，0表示该范围不随机发起话题。该概率不绕过范围开关、非管理员许可、白名单或冷却。
 - 安静判定（`idleThresholdMs`）的时间会落盘：重启后不足一个间隔会跳过（避免"重启一次多一次判定"）。
-  补话的 20 分钟节流**只在内存里**，重启后从零算，可能比预期多补一次（2026-09-26 审查发现文档与实现不一致）。
+  补话的20分钟节流与非管理员私聊的24小时冷却也落盘，重启不清零。
 - 上面示例里的数值是**示例**、不是出厂默认：出厂 `checkIntervalMinMs` 1800000（30 分钟）、
   `checkIntervalMaxMs` 5400000（90 分钟）、`idleThresholdMs` 1800000（30 分钟）、`probability` 0.25；
   照抄示例会改变行为。

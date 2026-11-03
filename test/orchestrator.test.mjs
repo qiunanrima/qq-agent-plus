@@ -444,6 +444,70 @@ describe('Orchestrator', () => {
     assert.equal(store.findByMid('group:1', '3').state, 'acked');
   });
 
+  it('非管理员私聊正常回复和明确提醒照常，不自动补话、不暴露自安排工具；旧计划取消', async (t) => {
+    const { runner, cfg, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'quiet-private-reminders.json')) });
+    cfg.admin.ownerUin = '900001'; cfg.allow.private = ['777777', '900001'];
+    cfg.proactive.privateEnabled = true; cfg.proactive.followUpEnabled = true;
+    let calls = 0;
+    globalThis.fetch = async (_url, options) => {
+      calls++;
+      const body = JSON.parse(options.body);
+      const owner = calls === 2;
+      assert.equal(body.tools.some((tool) => tool.function.name === 'schedule_wake'), owner);
+      if (!owner) assert.doesNotMatch(body.messages[0].content, /schedule_wake/);
+      return Response.json({ choices: [{ message: { tool_calls: [
+        { id: 'send', type: 'function', function: { name: 'send_message', arguments: '{"messages":["收到"]}' } },
+        { id: 'done', type: 'function', function: { name: 'finish', arguments: '{"summary":"已回复"}' } }
+      ] } }], usage: { total_tokens: 10 } });
+    };
+    for (const id of ['777777', '900001']) {
+      store.appendIncoming(`private:${id}`, { text: '在吗', senderId: id, ts: Date.now() });
+      await runner.wake(`private:${id}`);
+    }
+    assert.equal(calls, 2);
+    assert.equal(runner.scheduledWakes.has('private:777777'), false);
+    assert.equal(runner.scheduledWakes.get('private:900001')?.kind, 'followUp');
+    assert.throws(() => runner.scheduleInitiativeWake('private:777777', 60000, '追问'), /不安排自动补话/);
+    let woke = 0;
+    runner.wake = async (chatKey) => { woke++; store.appendSelf(chatKey, { text: '提醒喝水', ts: Date.now() }); };
+    for (const kind of ['followUp', 'selfWake']) {
+      runner.scheduledWakes.set('private:777777', { at: Date.now() - 1000, kind });
+      runner.fireDueScheduledWakes();
+      assert.equal(runner.scheduledWakes.has('private:777777'), false);
+    }
+    assert.equal(woke, 0);
+    runner.reminders.items.push({ id: 'explicit-private', chatKey: 'private:777777', at: Date.now() - 1000,
+      text: '提醒喝水', status: 'pending', createdBy: '777777' });
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(woke, 1, '用户明确设置的提醒仍会派发');
+  });
+
+  it('两个判定模式实际按群聊/私聊独立概率执行，私聊0不被随机数0触发', async (t) => {
+    const { runner, cfg, store } = fixture(t);
+    cfg.admin.ownerUin = '900001'; cfg.allow.private = ['900001'];
+    cfg.proactive = { ...cfg.proactive, enabled: true, privateEnabled: true, groupEnabled: true,
+      activeHours: { windows: [] }, checkIntervalMinMs: 60000, checkIntervalMaxMs: 120000 };
+    store.listChats = () => ['group:1', 'private:900001'];
+    store.getChatMeta = () => ({ lastTs: Date.now() - 3600000, unread: 0 });
+    runner.random = () => 0;
+    const woke = [];
+    runner.wake = async (key) => { woke.push(key); };
+    const file = path.join(root, 'proactive-state.json');
+    const previous = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    t.after(() => { if (previous) fs.writeFileSync(file, previous); else fs.rmSync(file, { force: true }); });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const mode of ['shared', 'perChat']) for (const [group, priv, expected] of [[1, 0, ['group:1']], [0, 1, ['private:900001']], [0, 0, []]]) {
+      runner.stopProactiveLoop(); woke.length = 0;
+      fs.writeFileSync(file, JSON.stringify({ lastAttemptAt: { group: 0, private: 0 } }));
+      cfg.proactive.scopeMode = mode; cfg.proactive.probability = group; cfg.proactive.privateProbability = priv;
+      runner.startProactiveLoop(); t.mock.timers.tick(45000);
+      await Promise.resolve(); await Promise.resolve();
+      assert.deepEqual(woke, expected, `${mode}: group=${group}, private=${priv}`);
+    }
+    runner.stopProactiveLoop();
+  });
+
   it('direct interactions use the short wake delay; ordinary group messages keep batching', async (t) => {
     const { runner, store, cfg } = fixture(t);
     const delays = [];
@@ -2765,7 +2829,10 @@ describe('proactiveCandidates（冷场开话题挑会话）', () => {
         canWake: canRun,
         now
       });
-      assert.deepEqual(out, ['private:900001'],
+      assert.deepEqual(out, [], '私聊范围本身不再放行非管理员');
+      cfg.proactive.nonAdminPrivateEnabled = true;
+      assert.deepEqual(proactiveCandidates({ chatKeys: ['private:900001', 'private:777777', 'private:555555'], cfg,
+        metaOf: () => ({ lastTs: quiet, unread: 0 }), canWake: canRun, now }), ['private:900001'],
         '白名单外的 555555 与 deny 里的 777777 都必须被 canRun 挡掉');
     } finally {
       setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
@@ -2777,20 +2844,30 @@ describe('proactiveCandidates（冷场开话题挑会话）', () => {
     assert.match(src, /canWake: \(chatKey\) => canRun\(chatKey\)/);
   });
 
-  it('勾选私聊后按私聊白名单挑人，不限于管理员', () => {
+  it('显式允许非管理员后按私聊白名单挑人', () => {
     const out = proactiveCandidates({
       chatKeys: ['group:1', 'private:900001', 'private:777777'],
-      cfg: cfg({ privateEnabled: true }),
+      cfg: cfg({ privateEnabled: true, nonAdminPrivateEnabled: true }),
       metaOf: (key) => metas()[key],
       now
     });
     assert.deepEqual(out, ['group:1', 'private:900001', 'private:777777']);
   });
 
+  it('旧私聊配置默认只挑系统管理员；显式开启非管理员后也遵守24小时冷却', () => {
+    const settings = cfg({ privateEnabled: true }); settings.admin = { ownerUin: '900001' };
+    const options = { chatKeys: ['private:900001', 'private:777777'], cfg: settings, now,
+      metaOf: (key) => metas()[key] };
+    assert.deepEqual(proactiveCandidates(options), ['private:900001']);
+    settings.proactive.nonAdminPrivateEnabled = true;
+    assert.deepEqual(proactiveCandidates(options), ['private:900001', 'private:777777']);
+    assert.deepEqual(proactiveCandidates({ ...options, lastPrivateInitiativeOf: () => now - 1000 }), ['private:900001']);
+  });
+
   it('只勾私聊时不再挑群聊', () => {
     const out = proactiveCandidates({
       chatKeys: ['group:1', 'private:900001'],
-      cfg: cfg({ groupEnabled: false, privateEnabled: true }),
+      cfg: cfg({ groupEnabled: false, privateEnabled: true, nonAdminPrivateEnabled: true }),
       metaOf: (key) => metas()[key],
       now
     });
@@ -2810,7 +2887,7 @@ describe('proactiveCandidates（冷场开话题挑会话）', () => {
   it('私聊仍有未读、刚说过话、正在运行或不在允许名单时不挑', () => {
     const base = {
       chatKeys: ['private:900001', 'private:777777'],
-      cfg: cfg({ privateEnabled: true }),
+      cfg: cfg({ privateEnabled: true, nonAdminPrivateEnabled: true }),
       now
     };
     assert.deepEqual(proactiveCandidates({ ...base, metaOf: () => ({ lastTs: quiet, unread: 1 }) }), []);

@@ -20,6 +20,8 @@ function readState(file) {
     const followUpMap = Object.fromEntries(Object.entries(followUps)
       .map(([key, ts]) => [key, Number(ts) || 0])
       .filter(([key, ts]) => /^(group|private):\d+$/.test(key) && ts > 0));
+    const privateInitiatives = Object.fromEntries(Object.entries(raw?.privateInitiatives || {})
+      .map(([key, ts]) => [key, Number(ts) || 0]).filter(([key, ts]) => /^private:\d+$/.test(key) && ts > 0));
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       const chats = value.chats && typeof value.chats === 'object' && !Array.isArray(value.chats) ? value.chats : {};
       return {
@@ -28,13 +30,13 @@ function readState(file) {
         chats: Object.fromEntries(Object.entries(chats)
           .map(([key, ts]) => [key, Number(ts) || 0])
           .filter(([key, ts]) => /^(group|private):\d+$/.test(key) && ts > 0)),
-        followUps: followUpMap
+        followUps: followUpMap, privateInitiatives
       };
     }
     const legacy = Number(value) || 0;
-    return { group: legacy, private: legacy, chats: {}, followUps: followUpMap };
+    return { group: legacy, private: legacy, chats: {}, followUps: followUpMap, privateInitiatives };
   } catch {
-    return { group: 0, private: 0, chats: {}, followUps: {} };
+    return { group: 0, private: 0, chats: {}, followUps: {}, privateInitiatives: {} };
   }
 }
 
@@ -50,9 +52,12 @@ function writeState(file, state) {
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .slice(0, MAX_CHAT_ENTRIES);
     const tmp = `${file}.${process.pid}.tmp`;
+    const privateInitiatives = Object.entries(state.privateInitiatives || {})
+      .filter(([, ts]) => now - Number(ts) < CHAT_RETENTION_MS)
+      .sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, MAX_CHAT_ENTRIES);
     fs.writeFileSync(tmp, JSON.stringify({
       lastAttemptAt: { group: Number(state.group) || 0, private: Number(state.private) || 0, chats: Object.fromEntries(chats) },
-      followUps: Object.fromEntries(followUps)
+      followUps: Object.fromEntries(followUps), privateInitiatives: Object.fromEntries(privateInitiatives)
     }), { mode: 0o600 });
     fs.renameSync(tmp, file);
   } catch { /* 写不进去也不影响正常发言 */ }
@@ -109,5 +114,13 @@ export function writeFollowUpAt(file, chatKey, ts) {
   const state = readState(file);
   if (!state.followUps) state.followUps = {};
   state.followUps[key] = Number(ts) || Date.now();
+  writeState(file, state);
+}
+
+/** 普通私聊的主动发起机会独立落盘，重启或切换判定方式不会重置24小时冷却。 */
+export function writePrivateInitiative(file, chatKey, ts) {
+  if (!/^private:\d+$/.test(String(chatKey))) return;
+  const state = readState(file);
+  state.privateInitiatives[chatKey] = Number(ts) || Date.now();
   writeState(file, state);
 }

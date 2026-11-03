@@ -10,6 +10,7 @@
 // 不同会话之间并行，受 maxConcurrentRuns 全局限流。
 import crypto from 'node:crypto';
 import { RestrictedSubagents } from '../subagents/index.js';
+import { quietPrivateChat, selfWakeAllowed, privateInitiativeAllowed, proactiveScopeProbability } from './private-proactive-policy.js';
 import path from 'node:path';
 import {
   DATA_DIR,
@@ -116,7 +117,7 @@ import { knowledgeEnabled } from '../knowledge/store.js';
 import { PersonaBackground } from '../persona-background/index.js';
 import { buildReminderNote, reminderNoteCost } from './reminders.js';
 import { ZONE_OFFSET_MS, minuteOfDayInZone, randInt, createEventBus, todayKey, sanitizeUserText } from './util.js';
-import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts } from './proactive-state.js';
+import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts, writePrivateInitiative } from './proactive-state.js';
 import { buildSystemPrompt, buildUserPrompt, isAtMe, resolveContextTier } from '../llm/prompt.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool, platformToolAllowed } from '../tools/tools.js';
@@ -276,7 +277,7 @@ export function proactiveScopes(cfg = {}) {
  */
 export function proactiveCandidates({
   chatKeys = [], cfg = {}, metaOf = () => ({}), now = Date.now(),
-  canWake = () => true, isRunning = () => false
+  canWake = () => true, isRunning = () => false, lastPrivateInitiativeOf = () => 0
 } = {}) {
   // 注入点先落本地 const（ops scan --strict 只认 const/let；同 capabilities.js 约定）
   const metaOfFn = metaOf;
@@ -293,6 +294,7 @@ export function proactiveCandidates({
       if (allowGroups.length > 0 ? !allowGroups.includes(id) : !cfg.allowAllWhenEmpty) continue;
     } else if (kind === 'private') {
       if (!scopes.private) continue;
+      if (!privateInitiativeAllowed(chatKey, cfg, lastPrivateInitiativeOf(chatKey), now)) continue;
     } else {
       continue;
     }
@@ -718,6 +720,7 @@ export class Orchestrator {
       const cfgNow = getConfig();
       // 主动私聊默认关闭：补话也不能绕过这个范围开关。
       if (chatKey.startsWith('private:') && cfgNow.proactive?.privateEnabled !== true) return;
+      if (quietPrivateChat(chatKey, cfgNow)) return;
       const window = proactiveWindowState(cfgNow.proactive?.activeHours, Date.now());
       const now = Date.now();
       const plan = followUpPlan({
@@ -2160,7 +2163,7 @@ export class Orchestrator {
     const friendProposalAvailable = identityAvailable && friendProposalEnabled() && promptFriendProposalEnabled(cfg);
     // 模型自安排唤醒的独立开关：关掉后连工具带提示词一起摘掉，
     // 否则模型还会去调一个"安排了也不会开口"的工具（生成一串假的"我到点再说"）。
-    const selfWakeEnabled = cfg.proactive?.selfWakeEnabled !== false;
+    const selfWakeEnabled = selfWakeAllowed(chatKey, cfg);
     // 图片生成按张计费：没开/没配就不注入工具，否则模型会去调一个必然失败的画图工具
     const imageGenEnabled = imageGenAvailable(cfg);
     // 每轮现建一份：工具描述里有随配置变化的文案（例如 get_message_images 会写"抽 4 帧"或
@@ -2452,7 +2455,7 @@ export class Orchestrator {
       : (privateChat
         ? '（主动机会）私聊里已经安静了一会儿，你想起了对方。'
         : '（主动机会）群里已经安静了一会儿。');
-    const selfWakeOn = cfg.proactive?.selfWakeEnabled !== false;
+    const selfWakeOn = selfWakeAllowed(chatKey, cfg);
     // 600 而不是 200：定时提醒合并派发时 note 可能有多条（单条正文上限 200），
     // 这里截到 200 会把第二条整体截掉，而它们已经被 markFired（2026-09-29 审查 P2）
     // 定时提醒（【定时提醒】标记）是"别人托的承诺"，不能套"你给自己留过话"的自留话框架 ——
@@ -2948,11 +2951,12 @@ export class Orchestrator {
       const kind = item.kind || (item.paced ? 'paced' : 'selfWake');
       // 开关关掉后，已经排上队的主动开口一并作废（不然关了开关旧的安排还会冒出来一次）
       const blocked = (kind === 'followUp' && cfgNow.proactive?.followUpEnabled === false)
-        || (kind === 'selfWake' && cfgNow.proactive?.selfWakeEnabled === false);
+        || (kind === 'selfWake' && !selfWakeAllowed(chatKey, cfgNow))
+        || (['followUp', 'selfWake'].includes(kind) && quietPrivateChat(chatKey, cfgNow));
       this.scheduledWakes.delete(chatKey);
       if (item.timer) clearTimeout(item.timer);
       if (blocked) {
-        log.info(`[wake] ${chatKey} 跳过：${kind === 'followUp' ? '补话' : '自安排唤醒'}开关已关闭，这次安排作废`);
+        log.info(`[wake] ${chatKey} 跳过：补话/自安排唤醒已关闭或受私聊免打扰限制，这次安排作废`);
         continue;
       }
       // 会话被移出允许列表（allow.groups/private 改动）后不该再唤醒：显式作废并记日志，
@@ -3037,6 +3041,7 @@ export class Orchestrator {
 
   /** 安排一次稍后的主动发言（模型调用 schedule_wake / 补话 / 自主节奏唤醒共用）。 */
   scheduleInitiativeWake(chatKey, delayMs, note = '', { paced = false, kind = '', noteLimit = 200 } = {}) {
+    if (!paced && quietPrivateChat(chatKey, getConfig())) throw new Error('非管理员私聊不安排自动补话或自安排追问；明确约定的提醒请使用 remind');
     const minMs = 60 * 1000;
     const maxMs = 4 * 60 * 60 * 1000;
     const wait = Math.max(minMs, Math.min(Number(delayMs) || minMs, maxMs));
@@ -3260,17 +3265,18 @@ export class Orchestrator {
         const state = readProactiveState(PROACTIVE_STATE_FILE);
         const minGapMs = Math.max(60000, Number(cfg.proactive?.checkIntervalMinMs) || 1800000);
         const maxPerTick = Math.max(1, Math.min(10, Number(cfg.proactive?.perChatMaxPerTick) || 2));
-        const chance = proactiveProbability(cfg.proactive?.probability);
+        const chance = proactiveScopeProbability(cfg, scope);
         let sent = 0;
         const touched = [];
         for (const chatKey of candidates) {
           if (sent >= maxPerTick) break;
           if (nowTick - Number(state.chats[chatKey] || 0) < minGapMs) continue;
           touched.push(chatKey);
-          if (this.random() > chance) continue;
+          if (chance <= 0 || this.random() >= chance) continue;
           if (this.runningChats.size >= Math.max(1, Number(cfg.maxConcurrentRuns) || 2)) break;
           sent += 1;
           log.info(`[proactive] 主动开话题（${scopeLabel(scope)}·独立） → ${chatKey}`);
+          if (quietPrivateChat(chatKey, cfg)) writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick);
           this.wake(chatKey, { proactive: true }).catch((error) => log.error('[orchestrator] proactive 出错:', error));
         }
         // 一轮只落盘一次：群多时不要为每个候选读/写整份状态文件。
@@ -3278,7 +3284,7 @@ export class Orchestrator {
         if (!sent) log.info(`[proactive] 跳过（${scopeLabel(scope)}）：本轮独立判定没有命中`);
         return;
       }
-      if (this.random() > proactiveProbability(cfg.proactive?.probability)) {
+      if (this.random() >= proactiveScopeProbability(cfg, scope)) {
         // 摇了不发言也算把这个范围这一轮用掉；另一个范围的机会不受影响
         log.info(`[proactive] 跳过（${scopeLabel(scope)}）：这次摇到了不发言`);
         writeProactiveAttempt(PROACTIVE_STATE_FILE, scope, nowTick);
@@ -3297,6 +3303,7 @@ export class Orchestrator {
       writeProactiveAttempt(PROACTIVE_STATE_FILE, scope, nowTick);
       const chatKey = candidates[Math.floor(this.random() * candidates.length)];
       log.info(`[proactive] 主动开话题（${scopeLabel(scope)}） → ${chatKey}`);
+      if (quietPrivateChat(chatKey, cfg)) writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick);
       this.wake(chatKey, { proactive: true }).catch((error) => log.error('[orchestrator] proactive 出错:', error));
     };
     const scopes = proactiveScopes(getConfig());
@@ -3307,12 +3314,14 @@ export class Orchestrator {
 
   #proactiveCandidates(cfg, scope) {
     const prefix = scope === 'private' ? 'private:' : 'group:';
+    const privateInitiatives = scope === 'private' ? readProactiveState(PROACTIVE_STATE_FILE).privateInitiatives : {};
     return proactiveCandidates({
       chatKeys: this.store.listChats().filter((key) => String(key).startsWith(prefix)),
       cfg,
       metaOf: (chatKey) => this.store.getChatMeta(chatKey),
       canWake: (chatKey) => canRun(chatKey),
-      isRunning: (chatKey) => this.runningChats.has(chatKey)
+      isRunning: (chatKey) => this.runningChats.has(chatKey),
+      lastPrivateInitiativeOf: (chatKey) => Number(privateInitiatives[chatKey]) || 0
     });
   }
 

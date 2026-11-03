@@ -275,6 +275,8 @@ return `
       <label for="cfg-pro-group">群聊（独立节奏，按群白名单）</label></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-pro-private" ${c.proactive?.privateEnabled === true ? 'checked' : ''} />
       <label for="cfg-pro-private">私聊（独立节奏，按私聊白名单）</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-pro-private-non-admin" ${c.proactive?.nonAdminPrivateEnabled === true ? 'checked' : ''} />
+      <label for="cfg-pro-private-non-admin">允许向非管理员主动发起私聊（默认关闭，需同时开启私聊范围）</label></div>
     <div class="field-row">
       <div class="field"><label>判定方式</label><select id="cfg-pro-mode"><option value="shared" ${c.proactive?.scopeMode !== 'perChat' ? 'selected' : ''}>群聊/私聊各共用一次机会</option><option value="perChat" ${c.proactive?.scopeMode === 'perChat' ? 'selected' : ''}>每个群/私聊独立判定</option></select></div>
       <div class="field"><label>独立模式每轮最多开口</label><input type="number" id="cfg-pro-per-max" min="1" max="10" step="1" value="${esc(Number(c.proactive?.perChatMaxPerTick) || 2)}" /></div>
@@ -292,18 +294,20 @@ return `
     <div class="field-row">
       <div class="field"><label>检查间隔下限（分钟）</label><input type="number" id="cfg-pro-min" min="1" value="${esc(Math.round((Number(c.proactive.checkIntervalMinMs) || 1800000) / 60000))}" /></div>
       <div class="field"><label>检查间隔上限（分钟）</label><input type="number" id="cfg-pro-max" min="2" value="${esc(Math.round((Number(c.proactive.checkIntervalMaxMs) || 5400000) / 60000))}" /></div>
-      <div class="field"><label>触发概率（%）</label><input type="number" id="cfg-pro-prob" step="1" min="0" max="100" value="${esc(Math.round((Number(c.proactive.probability) || 0) * 100))}" /></div>
+      <div class="field"><label>群聊发起话题概率（%）</label><input type="number" id="cfg-pro-prob" step="1" min="0" max="100" value="${esc(Math.round((Number(c.proactive.probability) || 0) * 100))}" /></div>
+      <div class="field"><label>私聊发起话题概率（%）</label><input type="number" id="cfg-pro-private-prob" step="1" min="0" max="100" value="${esc(Math.round(Number(c.proactive?.privateProbability ?? 0.05) * 100))}" /></div>
       <div class="field"><label>安静判定（分钟，至少 5 分钟）</label><input type="number" id="cfg-pro-idle" min="5" max="1440" step="1" value="${esc(Math.round((Number(c.proactive.idleThresholdMs) || 1800000) / 60000))}" /></div>
     </div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-pro-followup" ${c.proactive?.followUpEnabled !== false ? 'checked' : ''} />
-      <label for="cfg-pro-followup">发言后无人回应时，稍后补一句</label></div>
+      <label for="cfg-pro-followup">群聊 / 管理员私聊发言后无人回应时，稍后补一句</label></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-pro-selfwake" ${c.proactive?.selfWakeEnabled !== false ? 'checked' : ''} />
-      <label for="cfg-pro-selfwake">允许模型给自己安排稍后的主动发言</label></div>
+      <label for="cfg-pro-selfwake">允许模型在群聊 / 管理员私聊安排稍后的主动发言</label></div>
     <div class="hint">
       中间的「群聊 / 私聊」是范围：分别沿用「群白名单」与「私聊白名单」（deny 优先），两个都不勾就不主动开话题。
       群聊和私聊各自独立计时；默认「范围共用一次机会」= 每轮在所有群里挑一个、所有私聊里挑一个。选「每个群/私聊独立判定」后，每个会话各自按概率判定，并受「每轮最多开口」限制。
       后两条是补话与自安排唤醒，独立开关。完全不想让它主动开口，就把上面所有勾选都取消。
-      私聊默认不勾：勾上后私聊白名单里的人（安静够久且没有未读时）也可能收到主动消息。
+      私聊范围默认不勾；勾上后默认只允许向系统配置的管理员主动发起私聊。其他人还需要单独开启「允许向非管理员主动发起私聊」，并受私聊白名单限制。
+      私聊概率单独计算，默认5%。开启后非管理员私聊最多每24小时获得一次主动发起机会，冷却重启后仍保留；不自动补话或自安排追问。正常回复和明确设置的定时提醒不受影响。
     </div>
 
     <h3>所有模式 · 回复行为</h3>

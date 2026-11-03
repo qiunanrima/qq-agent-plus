@@ -4,13 +4,26 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { readProactiveAttempts, readProactiveState, writeProactiveAttempt, writeProactiveChatAttempt, writeProactiveChatAttempts } from '../src/core/proactive-state.js';
+import { readProactiveAttempts, readProactiveState, writeProactiveAttempt, writeProactiveChatAttempt, writeProactiveChatAttempts, writePrivateInitiative, writeFollowUpAt } from '../src/core/proactive-state.js';
 
 const tempFile = (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-proactive-state-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return path.join(dir, 'proactive-state.json');
 };
+
+test('私聊主动机会落盘，范围判定、模式切换与补话写入均不清掉24小时记录', (t) => {
+  const file = tempFile(t), now = Date.now();
+  writePrivateInitiative(file, 'private:777777', now);
+  writePrivateInitiative(file, 'group:1', now);
+  writeProactiveAttempt(file, 'private', now + 1);
+  writeProactiveChatAttempt(file, 'private:777777', now + 2);
+  writeFollowUpAt(file, 'private:900001', now + 3);
+  const state = readProactiveState(file);
+  assert.deepEqual(state.privateInitiatives, { 'private:777777': now });
+  assert.equal(state.followUps['private:900001'], now + 3);
+  assert.equal(state.chats['private:777777'], now + 2);
+});
 
 test('旧格式单时间戳迁移成群聊/私聊共用，升级后不会额外多一次机会', (t) => {
   const file = tempFile(t);

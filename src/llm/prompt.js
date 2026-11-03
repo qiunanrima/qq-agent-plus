@@ -32,6 +32,7 @@ import { filterBlockedHistory } from '../core/blocklist.js';
 import { displayNameOf } from '../core/display-name.js';
 import { voiceForPersona } from '../personas.js';
 import { roleplayRules } from './roleplay-prompt.js';
+import { selfWakeAllowed } from '../core/private-proactive-policy.js';
 import { buildStickerContext, buildStickerStrategyHint } from '../onebot/stickers.js';
 
 // ── 系统提示 ─────────────────────────────────────────────────────────────
@@ -49,10 +50,10 @@ function securityRules(grounded = false) {
   ].join('\n');
 }
 
-function toolProtocol(grounded = false, cardFirst = false) {
+function toolProtocol(grounded = false, cardFirst = false, chatKey = '') {
   const stickerOn = getConfig().sticker?.enabled !== false;
   const timedTools = [getConfig().reminders?.enabled !== false ? 'remind' : '',
-    getConfig().proactive?.selfWakeEnabled !== false ? 'schedule_wake' : ''].filter(Boolean);
+    selfWakeAllowed(chatKey, getConfig()) ? 'schedule_wake' : ''].filter(Boolean);
   return [
     '【工作方式：决策、发送与收尾】',
     '1. 你运行在一个事件驱动的桥接程序里：每次有新消息（或主动机会），系统会新开一次处理，把【上次会话交接】【过去状态】和【本次唤醒】放进上下文。生命周期模式可能同时带入同一线程的旧模型轮次；始终以最后一个【本次唤醒】为当前输入。',
@@ -309,9 +310,9 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
     if (bits.length) lines.push(`- 群相册（群聊限定）：${bits.join('；')}。`);
   }
   lines.push('- 查一个 QQ 号的公开资料（昵称/性别等）用 get_user_info；英译中可用 translate_text（你自己就会翻，只在省 token 或想看 QQ 译法时用）。');
-  // 自安排唤醒只看 proactive.selfWakeEnabled（工具摘除也用它）——不能裹在 vision 分支里，
+  // 自安排唤醒与工具表共用开关和私聊策略，不能裹在 vision 分支里，
   // 否则"文本模型 + 开着自安排唤醒"会变成"工具在、用法没了"（2026-09-26 审查 P2）
-  if (getConfig().proactive?.selfWakeEnabled !== false) {
+  if (selfWakeAllowed(chatKey, getConfig())) {
     lines.push('- 想晚一点再开口时，用 schedule_wake 给自己安排一次唤醒（比如这波聊完再接话、过会儿想追问）。别频繁安排，一次只留一个。');
   }
   if (search) {
@@ -516,7 +517,7 @@ export function buildSystemPrompt({
     '',
     securityRules(grounded),
     '',
-    toolProtocol(grounded, cardFirst),
+    toolProtocol(grounded, cardFirst, chatKey),
     // 主体性保留；角色卡优先时不追加平台的性格建议。
     ...(cardFirst ? [] : ['', subjectivity()]),
     '',

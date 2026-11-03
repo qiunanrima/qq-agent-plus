@@ -4,6 +4,7 @@
 //
 // 工具命名去掉了 qq_ 前缀（更短，省 token）。
 import crypto from 'node:crypto';
+import { selfWakeAllowed } from '../core/private-proactive-policy.js';
 import { getConfig, imageGenAvailable, imageGenMaxPerHour } from '../core/config.js';
 import { imageType } from '../core/image-type.js';
 import { MAX_REMINDER_TEXT, nextAtFromHHMM, normalizeRepeat, nextOccurrenceAt } from '../core/reminders.js';
@@ -1976,6 +1977,7 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         try {
+          if (!selfWakeAllowed(ctx.chatKey, getConfig())) return err('当前会话不允许自安排主动发言；对方明确约定的提醒请使用 remind', { reportIncident: false });
           if (typeof ctx.scheduleWake !== 'function') return err('当前环境不支持自主唤醒');
           const m = Number(args.minutes);
           if (!Number.isFinite(m) || m < 5 || m > 240) return err('minutes 需要是 5~240 之间的数字');
