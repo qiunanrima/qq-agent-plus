@@ -53,7 +53,7 @@ export class Hippocampus {
     const messages = triggerEntries.filter((m) => m.eventKind === 'message' && !m.self);
     if (!messages.length) return;
     // finish 摘要由主对话产生；缺失时仅摘录真实消息，不再额外调用模型。
-    const summary = clean(session.episodeSummary || session.handoffDraft?.summary || session.finishReason
+    const summary = clean(session.episodeSummary || session.handoffDraft?.summary
       || messages.slice(-2).map((m) => `${m.senderName || m.senderId}：${m.text}`).join('；'), 100);
     if (!summary) return;
     const now = this.now(), day = memoryDay(now), key = personaKey(persona);

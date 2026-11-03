@@ -234,3 +234,21 @@ test('海马拒绝旁路生成人格卡，旧人格卡仅后台可见，不向�
   assert.equal(f.memory.cards({ persona, chatKey: 'group:1' }).length, 0);
   assert.doesNotMatch(f.memory.prompt({ persona, chatKey: 'group:1' }), /旧人格/);
 });
+
+test('缺少正式摘要时保留聊天事实，今日不提前消化，次日3点才生成人物印象', async (t) => {
+  const { memory, setTime } = fixture(t);
+  memory.capture({ chatKey: 'group:1', persona,
+    session: { id: 'fallback-facts', finishReason: '本轮无需回复' },
+    triggerEntries: [{ eventKind: 'message', senderId: '12345', senderName: '甲', text: '我喜欢一起聊MC' }] });
+  assert.match(memory.episodes()[0].summary, /我喜欢一起聊MC/);
+  assert.doesNotMatch(memory.episodes()[0].summary, /本轮无需回复/);
+  let calls = 0;
+  const complete = async (messages) => { calls++; return digest()(messages); };
+  await memory.maintain({ complete });
+  assert.equal(calls, 0);
+  assert.equal(memory.inspectionPersonCards().entries.length, 0);
+  setTime('2026-11-02T03:00:00');
+  await memory.maintain({ complete });
+  assert.equal(calls, 1);
+  assert.equal(memory.inspectionPersonCards().entries.length, 1);
+});
