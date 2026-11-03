@@ -32,6 +32,16 @@ export const llmRuntimeStats = {
   fallbackUses: 0
 };
 
+let untrackedUsageRecorder = null;
+export function setUntrackedUsageRecorder(recorder) {
+  const previous = untrackedUsageRecorder;
+  untrackedUsageRecorder = recorder;
+  return () => { if (untrackedUsageRecorder === recorder) untrackedUsageRecorder = previous; };
+}
+export function recordUntracked(response, source = 'untracked-model') {
+  try { untrackedUsageRecorder?.(response, source); } catch { /* 记账失败不重试模型 */ }
+}
+
 function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
 }
@@ -188,7 +198,7 @@ function currentServiceId() {
   }
 }
 
-function thinkingFor(purpose, overrides = null) {
+function thinkingFor(purpose, overrides = null, intentOverride = null) {
   let raw = null;
   let customParams = null;
   let serviceId = '';
@@ -208,7 +218,7 @@ function thinkingFor(purpose, overrides = null) {
       serviceId = currentServiceId();
     }
   } catch { /* 取不到就走默认 */ }
-  const intent = normalizeThinkingIntent(raw, purpose);
+  const intent = normalizeThinkingIntent(intentOverride ?? raw, purpose);
   if (intent === 'on') return { mode: 'on', patch: null, approx: false, effectiveOff: false, serviceId };
   // 自定义/表外渠道优先用用户的档位映射（api.thinkingParams）。
   const resolved = resolveThinkingPatch(serviceId, intent, customParams);
@@ -259,6 +269,7 @@ async function runCompletionWithRetries(args, retries) {
       const response = await chatCompletion(args);
       if (!moderationRetried && isModerationRefusal(response)) {
         if (attempt >= retries) return response;   // 最后一轮还被拦：把拦截结果如实返回（重试预算已耗尽）
+        if (args.usageTracked) recordUntracked(response, 'moderation-retry');
         moderationRetried = true;
         args = { ...args, messages: trimForModerationRetry(args.messages) };
         llmRuntimeStats.retries += 1;
@@ -352,6 +363,7 @@ export async function chatCompletionWithRetry(args, retries = 2) {
     return response;
   }
 
+  if (response && args.usageTracked) recordUntracked(response, 'moderation-fallback');
   const why = primaryError
     ? `失败（${String(primaryError?.message ?? primaryError).slice(0, 90)}）`
     : '两轮都被审核拦截';
@@ -396,14 +408,14 @@ export async function chatCompletion({
   overrides = null,
   cacheKey = '',
   maxTokens = null,
-  purpose = ''
+  purpose = '',
+  usageTracked = false,
+  thinkingIntent = null
 }) {
   assertTimeAllowed();
-  llmRuntimeStats.attempts += 1;
   const api = overrides || effectiveApi();
-  // 聊天这类"随口回一句"的任务关掉思考：省一半输出 token、少 1~3 秒；
-  // 判断/写作类（表情包要不要收、说说、空间互动、身份评估）不传 purpose，继续思考。
-  const thinking = thinkingFor(purpose, overrides);
+  // 默认遵守渠道/用途设置；感知与背景提词可单次请求关闭思考，不改持久配置。
+  const thinking = thinkingFor(purpose, overrides, thinkingIntent);
   const thinkingOff = thinking.effectiveOff;
   const body = {
     model: api.model,
@@ -487,12 +499,15 @@ export async function chatCompletion({
   try {
     controller.signal.throwIfAborted();
     assertTimeAllowed();
-    const send = (payload) => fetch(joinUrl(api.baseUrl, '/chat/completions'), {
+    const send = (payload) => {
+      llmRuntimeStats.attempts += 1;
+      return fetch(joinUrl(api.baseUrl, '/chat/completions'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders(api.apiKey, api.baseUrl, api.model) },
       body: JSON.stringify(payload),
       signal: controller.signal
-    });
+      });
+    };
     let res = await send(body);
     if (!res.ok) {
       let text = await readTextBounded(res, CHAT_RESPONSE_MAX_BYTES);
@@ -506,6 +521,7 @@ export async function chatCompletion({
       const paramRejected = res.status === 400 && patchKeys.length
         && /thinking|reasoning/i.test(text);
       if (paramRejected) {
+        llmRuntimeStats.retries += 1;
         const retryBody = { ...body };
         for (const k of patchKeys) delete retryBody[k];
         if (!thinkingParamRejectedWarned.has(api.model)) {
@@ -519,13 +535,18 @@ export async function chatCompletion({
     }
     const data = await readJsonBounded(res, CHAT_RESPONSE_MAX_BYTES);
     const choice = data?.choices?.[0];
-    if (!choice) throw new Error('模型 API 响应缺少 choices');
-    return {
+    if (!choice) {
+      recordUntracked({ usage: data.usage, model: data.model || api.model, originBaseUrl: api.baseUrl }, 'invalid-response');
+      throw new Error('模型 API 响应缺少 choices');
+    }
+    const result = {
       message: choice.message ?? {}, finishReason: choice.finish_reason ?? null,
       usage: data.usage ?? null, model: data.model ?? api.model, raw: data,
       // 实际发往的端点（overrides/兜底接管后 ≠ 主渠道）—— 调用方据此把成本记到实际渠道名下
       originBaseUrl: String(api.baseUrl || '')
     };
+    if (!usageTracked) recordUntracked(result, purpose || 'untracked-model');
+    return result;
   } catch (error) {
     if (controller.signal.reason?.code === 'TIME_CONTROL_INACTIVE') throw controller.signal.reason;
     if (signal?.aborted) throw signal.reason ?? new Error('Run cancelled');

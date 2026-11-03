@@ -1425,7 +1425,7 @@ export class DailyMomentsManager {
         this.sessions.update(session.id);
         this.emit('session-update', { sessionId: session.id });
       }
-      const response = await this.complete({
+      const response = await this.complete({ usageTracked: true,
         messages,
         tools,
         toolChoice,

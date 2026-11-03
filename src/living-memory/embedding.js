@@ -1,3 +1,4 @@
+import { recordUntracked } from '../llm/llm.js';
 import { asText } from './util.js';
 
 function joinUrl(base, suffix) {
@@ -70,6 +71,7 @@ export class Embedder {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(asText(payload?.error?.message || payload?.message || `Embedding HTTP ${response.status}`, 500));
+      recordUntracked({ usage: payload.usage, model: payload.model || this.config.model, originBaseUrl: this.config.baseUrl }, 'embedding');
       const ordered = Array.isArray(payload?.data) ? [...payload.data].sort((a, b) => Number(a.index) - Number(b.index)) : [];
       const vectors = ordered.map((item) => item?.embedding).filter((vector) => Array.isArray(vector) && vector.length);
       if (vectors.length !== values.length) throw new Error('Embedding 返回数量不匹配');

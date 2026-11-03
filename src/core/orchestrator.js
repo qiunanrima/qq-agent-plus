@@ -1622,7 +1622,7 @@ export class Orchestrator {
           || triggerEntries.some((m) => mentionsOrPokesBot(m, cfgNow.onebot?.selfId || this.onebot.selfId));
         const decision = await this.perception.perceive({
           chatKey, entries: triggerEntries, persona: resolvePersona(getConfig(), chatKey), direct,
-          signal: controller.signal, complete: (messages, options) => this.#memoryChat(messages, { ...options, session })
+          signal: controller.signal, complete: (messages, options) => this.#memoryChat(messages, { ...options, session, usageSource: 'perception', thinkingIntent: 'off' })
         });
         if (conversationConfigForChat(chatKey).mode !== 'perception') throw new Error('感知模式已停用');
         session.perception = decision;
@@ -2011,7 +2011,7 @@ export class Orchestrator {
 
     if (sendTool && budgetLeft) {
       try {
-        const response = await chatCompletionWithRetry({
+        const response = await chatCompletionWithRetry({ usageTracked: true,
           messages: [...messages, {
             role: 'user',
             content: '你上一轮把回答写成了正文，没有调用 send_message —— 用户在 QQ 里收不到这段文字。'
@@ -2021,7 +2021,8 @@ export class Orchestrator {
           tools: toOpenAiTools([sendTool]),
           signal,
           // 用 chat 的思考档位：'reply-correction' 不在 api.thinking 的映射表里，会退回 default（常常是思考开）
-          purpose: 'chat'
+          purpose: 'chat',
+          maxTokens: Math.max(256, Math.min(8192, runLimits.maxRunTokens - runTokenUsage(session) - lastPromptTokens))
         });
         addUsage(session.usage, response.usage);
         session.usage.calls += 1;
@@ -2278,8 +2279,11 @@ export class Orchestrator {
           .filter((m) => m.eventKind !== 'game-secret')
           .slice(-8).map((m) => String(m.text || '').slice(0, 1500)).join('\n');
         backgroundRecall = await personaBackground.recall(persona, { text: scanText, signal,
+          scanCacheKey: conversationCfg.mode === 'lifecycle' && kind === 'group'
+            && !this.#isReplyToSelf(chatKey, triggerEntries)
+            && !triggerEntries.some((m) => mentionsOrPokesBot(m, cfg.onebot?.selfId || this.onebot.selfId)) ? chatKey : '',
           complete: async (messages) => {
-            const response = await this.#memoryChat(messages, { signal, timeoutMs: 8000, session });
+            const response = await this.#memoryChat(messages, { signal, timeoutMs: 8000, session, usageSource: 'background-scan', thinkingIntent: 'off' });
             return extractJsonObject(String(response?.message?.content ?? ''));
           }, onError: (error) => log.warn('[persona-background] 话题提取失败，使用关键词匹配：', error.message) });
       }
@@ -2304,7 +2308,7 @@ export class Orchestrator {
       getTools: (ctx) => researchTools.filter((d) => !skillGateMessage(ctx.activeSkill, ctx.pendingSkillUse, d.name)
         && (getConfig().webSearch?.enabled !== false || !['search_web', 'fetch_url'].includes(d.name))),
       allowed: () => canRun(chatKey) && !this.paused && !this.aborted,
-      complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true })
+      complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true, usageSource: 'subagent' })
     }));
     if (pluginToolDefs.length) toolDefs.push(...pluginToolDefs);
     if (mcpToolDefs.length) toolDefs.push(...mcpToolDefs);
@@ -2561,7 +2565,7 @@ export class Orchestrator {
       memory: this.memory,
       identityPilot,
       reviewPersonalityMemory: async (messages, { signal: reviewSignal } = {}) => {
-        const response = await this.#memoryChat(messages, { signal: reviewSignal || signal, timeoutMs: 30000, session });
+        const response = await this.#memoryChat(messages, { signal: reviewSignal || signal, timeoutMs: 30000, session, usageSource: 'personality-review' });
         return extractJsonObject(String(response?.message?.content ?? ''));
       },
       stickers: this.stickers,
@@ -2647,12 +2651,13 @@ export class Orchestrator {
       session.inputMessages = requestAuditMessages;
       markActivity('正在思考…');
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
-      const response = await chatCompletionWithRetry({
+      const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,
         tools: openAiTools,
         signal,
         cacheKey: `qq-agent:${promptPrefixHash.slice(0, 32)}`,
-        purpose: 'chat'
+        purpose: 'chat',
+        maxTokens: Math.max(256, Math.min(8192, maxRunTokens - runTokenUsage(session) - estimatedPromptTokens))
       });
       signal.throwIfAborted();
       session.model = response.model || session.model;
@@ -3929,10 +3934,10 @@ export class Orchestrator {
    * false 时使用 cfg.memory.provider/model 指向的目录模型（端点/密钥取自 providers）。
    */
   async #memoryChat(messages, { signal = null, timeoutMs = null, session = null, tools = null,
-    forceChatModel = false, dedicatedMemory = false, tokenLimit = Infinity } = {}) {
+    forceChatModel = false, dedicatedMemory = false, tokenLimit = Infinity, usageSource = 'memory-summary', thinkingIntent = null } = {}) {
     const cfg = getConfig();
     const mem = cfg.memory || {};
-    let maxTokens = null, reservation = 0;
+    let maxTokens = 8192, reservation = 0;
     if (session) {
       const promptTokens = estimateNextPromptTokens({ messages, tools }).estimatedPromptTokens;
       const remaining = Math.min(tokenLimit - promptTokens, effectiveRunLimits(cfg).maxRunTokens - runTokenUsage(session)
@@ -3953,8 +3958,8 @@ export class Orchestrator {
         overrides = { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: timeoutMs || 180000 };
       }
       // 记忆整理 = 判断/总结类任务（与聊天、写作可各自设思考档位）。
-      const response = await chatCompletion({ messages, tools, signal, maxTokens, temperature: 0.2, purpose: 'judge', overrides });
-      this.#recordExternalUsage(response, overrides?.model);
+      const response = await chatCompletion({ usageTracked: true, messages, tools, signal, maxTokens, temperature: 0.2, purpose: 'judge', overrides, thinkingIntent });
+      this.#recordExternalUsage(response, overrides?.model, usageSource);
       if (session) this.#recordAuxiliaryUsage(session, response);
       return response;
     } finally {
@@ -3969,12 +3974,12 @@ export class Orchestrator {
   }
 
   /** 非会话模型调用（记忆整理）计入今日台账：此前整条链路对用量完全透明（2026-10-07 复审 P3）。 */
-  #recordExternalUsage(response, model = '') {
+  #recordExternalUsage(response, model = '', source = 'memory-summary') {
     try {
       const usage = emptyUsage();
       addUsage(usage, response?.usage);
       usage.calls = 1;
-      this.sessions?.recordExternalUsage?.(usage, { model: model || response?.model || '' });
+      this.sessions?.recordExternalUsage?.(usage, { model: response?.model || model, vendor: vendorOfBaseUrl(getConfig(), response?.originBaseUrl), source });
     } catch { /* 记账失败不影响主流程 */ }
   }
 

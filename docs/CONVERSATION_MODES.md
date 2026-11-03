@@ -98,6 +98,23 @@ round, the orchestrator estimates its input from the preceding request and reser
 output headroom. If the projected run would cross the limit, it commits the completed
 work as a budget stop rather than throwing after confirmed sends.
 
+## 费用与用量核对
+
+完整生命周期仍会把活跃/倾听期间的每批消息交给主模型；它与按需运行的感知唤醒不同，
+不会仅因减少辅助调用就消除历史重发成本。聊天与回复纠正单次输出最多8192 Token，
+后续轮次同时夹到本次剩余预算；后台记忆整理也有8192 Token输出上限。
+供应商的思考通常占用输出预算；用户显式填写的额外请求参数仍有最高优先级。
+
+生命周期内普通群消息的背景提词结果按会话、角色、文档版本复用60秒，
+新消息的关键词匹配和主动背景查询照常运行；私聊、@与回复机器人立即重新扫描。
+感知和背景提词单独请求关闭思考，主聊天保留原有档位；无法关闭的渠道沿用适配器降级。
+表情判断没有有效决定时跳过，不再为了提交决定额外重问两次。
+
+辅助调用明细保存在 `data/external-usage/` 的按日JSONL账目中，不含消息正文、令牌或密码。
+用量页按实际模型与供应商合并这些明细，包括记忆辅助、向量、表情判断、模型测试，
+以及供应商返回了usage但随后被审核重试丢弃的响应。已由会话记账的最终响应不会重复补记。
+历史漏记没有伪造回填；网络超时或上游不返回usage时，无法仅靠客户端确定实际扣费。
+
 ## Persistence And Recovery
 
 `messages.sqlite` contains:

@@ -536,7 +536,7 @@ export class RelationshipPilotManager {
 
     let usage = {};
     try {
-      const response = await this.complete({
+      const response = await this.complete({ usageTracked: true,
         messages,
         tools,
         toolChoice: 'auto',

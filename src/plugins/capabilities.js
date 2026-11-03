@@ -476,7 +476,7 @@ export function createCapabilities({
         maxTokens: 500,
         purpose: 'media-describe'
       });
-      const text = String(response?.choices?.[0]?.message?.content ?? '').trim();
+      const text = String(response?.message?.content ?? '').trim();
       if (!text) throw fail('E_VISION', '视觉模型没有返回描述');
       return { description: text.slice(0, 2000) };
     },

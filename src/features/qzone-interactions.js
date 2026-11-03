@@ -914,7 +914,7 @@ export class QzoneInteractionManager {
         session.activity = '正在阅览空间动态…';
         this.sessions.update(session.id);
       }
-      const response = await this.complete({
+      const response = await this.complete({ usageTracked: true,
         messages,
         tools,
         // DeepSeek thinking mode rejects named/required tool choices.

@@ -962,7 +962,7 @@ export class IdentityPilotManager {
     );
     let consumedUsage = {};
     try {
-      const response = await this.complete({
+      const response = await this.complete({ usageTracked: true,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }

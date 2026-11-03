@@ -227,7 +227,7 @@ export class GroupDigestManager {
       '',
       sample.join('\n')
     ].join('\n');
-    const r = await chatCompletion({
+    const r = await chatCompletion({ usageTracked: true,
       messages: [
         { role: 'system', content: '你是这个群里的普通群友，用口语聊天，不用 Markdown、不列条目、不写"大家"之类的客服腔。' },
         { role: 'user', content: prompt }

@@ -144,3 +144,24 @@ describe('LLM client', () => {
     assert.match(String(response.message?.content || ''), /high risk/i, '如实返回服务商的拦截文案');
   })
 });
+
+describe('模型用量所有权', () => {
+  it('统一补记只记未归属调用和被丢弃的付费审核响应', async (t) => {
+    const { setUntrackedUsageRecorder } = await import('../src/llm/llm.js');
+    const rows = [];
+    const release = setUntrackedUsageRecorder((response, source) => rows.push({ usage: response.usage, source }));
+    const previous = globalThis.fetch;
+    t.after(() => { release(); globalThis.fetch = previous; });
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.api.baseUrl = 'https://usage.invalid'; cfg.api.model = 'test';
+    setRuntimeConfig(cfg);
+    let calls = 0;
+    globalThis.fetch = async () => Response.json({ choices: [{ message: { content: calls++ === 2 ? 'This request was considered high risk.' : 'ok' }, finish_reason: calls === 3 ? 'content_filter' : 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } });
+    await chatCompletion({ messages: [], purpose: 'judge' });
+    await chatCompletion({ messages: [], usageTracked: true });
+    assert.equal(rows.length, 1);
+    await chatCompletionWithRetry({ messages: [], usageTracked: true }, 1);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].source, 'moderation-retry');
+  });
+});

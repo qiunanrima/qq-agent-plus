@@ -1,6 +1,7 @@
 // 会话（运行）记录：每次 agent 处理 = 一个会话，完整留档供 UI 查看。
 // 文件：data/sessions/<id>.json；索引在内存里维护（最近优先）。
 import fs from 'node:fs';
+import { appendExternalUsage } from './external-usage.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR, getConfig } from './config.js';
@@ -433,9 +434,16 @@ export class SessionRegistry {
    * —— 控制台"今日花费"与预算判定都偏乐观（2026-10-07 复审 P3）。
    * 与 #bumpTodayUsage 共用同一份文件与估价口径，但不计 runs（不是一次会话运行）。
    */
-  recordExternalUsage(usage, { model = '', vendor = '' } = {}) {
+  recordExternalUsage(usage, { model = '', vendor = '', source = 'auxiliary' } = {}) {
     const totalTokens = Number(usage?.totalTokens) || 0;
     if (!(totalTokens > 0)) return;
+    const cfg = getConfig();
+    model ||= cfg.api?.model || '';
+    vendor ||= vendorOfConfig(cfg);
+    appendExternalUsage(DATA_DIR, { at: Date.now(), model, vendor, source,
+      chatKey: `[后台] ${source}`, sessionId: '', exact: true,
+      promptTokens: Number(usage.promptTokens) || 0, completionTokens: Number(usage.completionTokens) || 0,
+      cachedTokens: Number(usage.cachedTokens) || 0, totalTokens });
     this.#mergeTodayUsage({
       promptTokens: Number(usage.promptTokens) || 0,
       completionTokens: Number(usage.completionTokens) || 0,

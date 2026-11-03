@@ -203,3 +203,29 @@ test('路由在读取body后解析角色，旧角色页面保存冲突，错误�
   assert.equal((await call('POST')).status, 409);
   assert.equal((await call('GET')).value.content, '');
 });
+
+test('生命周期背景扫描一分钟内复用，但会话和文档修订隔离', async (t) => {
+  const { store, save } = fixture(t);
+  save('# 往事\n我曾住在庭院。\n# 爱好\n喜欢甜点。');
+  let calls = 0;
+  const complete = async () => { calls++; return { topics: ['庭院'], sectionIds: [] }; };
+  await store.recall(persona, { text: '你以前住哪里', complete, scanCacheKey: 'group:1' });
+  await store.recall(persona, { text: '接着说说', complete, scanCacheKey: 'group:1' });
+  assert.equal(calls, 1);
+  await store.recall(persona, { text: '你住哪里', complete, scanCacheKey: 'group:2' });
+  assert.equal(calls, 2);
+  save('# 往事\n我曾住在新庭院。\n# 爱好\n喜欢红豆。');
+  await store.recall(persona, { text: '新庭院', complete, scanCacheKey: 'group:1' });
+  assert.equal(calls, 3);
+});
+
+test('生命周期提词失败时短期退避，仍按当前关键词读取背景', async (t) => {
+  const { store, save } = fixture(t);
+  save('# 核心\n庭院主人。\n# 爱好\n喜欢红豆甜点。');
+  let calls = 0;
+  const complete = async () => { calls++; throw new Error('模型返回坏格式'); };
+  await store.recall(persona, { text: '甜点', complete, scanCacheKey: 'group:1' });
+  const content = await store.recall(persona, { text: '红豆甜点', complete, scanCacheKey: 'group:1' });
+  assert.equal(calls, 1);
+  assert.match(content, /红豆/);
+});

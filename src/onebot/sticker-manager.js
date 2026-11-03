@@ -393,7 +393,7 @@ export class StickerManager {
         pick = await this.#judgeSticker({ ...media, url }, message);
         break;
       } catch (error) {
-        if (attempt < 3) {
+        if (attempt < 3 && !/模型|model api/i.test(String(error?.message || ''))) {
           await new Promise((resolve) => {
             const timer = setTimeout(resolve, 800 * attempt);
             timer.unref?.();
@@ -401,7 +401,7 @@ export class StickerManager {
           continue;
         }
         // 三次都拿不到图就安静放弃，不要打扰群聊
-        log.info('[sticker] 取图或判断失败（已重试 3 次），这次跳过：' + (error?.message ?? error));
+        log.info('[sticker] 取图或判断失败，这次跳过：' + (error?.message ?? error));
         return null;
       }
     }
@@ -627,29 +627,16 @@ export class StickerManager {
       return null;
     };
 
-    // 最多试 3 次：服务商的内容过滤是概率性的（同一张图多数时候能过），多给一次机会；
-    // 同时把"被内容过滤"和"模型没提交"在日志里分开，便于判断到底是哪种原因。
-    let response = null;
-    let args = null;
-    let filtered = 0;
-    for (let attempt = 1; attempt <= 3 && !args; attempt += 1) {
-      response = await ask(attempt === 1
-        ? messagesUsed
-        : [
-          ...messagesUsed,
-          { role: 'assistant', content: String(response?.message?.content || '（无内容）').slice(0, 200) },
-          { role: 'user', content: '请用 submit_sticker_pick 工具正式提交你的决定（save: true/false）。' }
-        ]);
-      if (String(response?.finishReason || '') === 'content_filter') filtered += 1;
-      args = pickArgs(response);
-    }
+    // 无有效决定就跳过，避免同图多次付费；保留宽容格式解析。
+    const response = await ask(messagesUsed);
+    const args = pickArgs(response);
+    const filtered = String(response?.finishReason || '') === 'content_filter' ? 1 : 0;
     if (!args) {
-      log.info('[sticker] 三次都没拿到决定'
+      log.info('[sticker] 未拿到有效决定，跳过重复模型判断'
         + (filtered ? `（其中 ${filtered} 次被服务商内容过滤：图片含敏感内容，属正常拦截）` : '')
         + '，这张跳过：' + String(response?.message?.content || '').slice(0, 100));
       return null;
     }
-    if (!args) args = {};
     return {
       save: args.save === true,
       note: String(args.note || '').slice(0, 24),

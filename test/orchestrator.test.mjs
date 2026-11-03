@@ -199,6 +199,7 @@ describe('Orchestrator', () => {
         return Response.json({ choices: [{ message: { content: JSON.stringify({ wake: scans > 1, markedMessageIds: [markedId], topic: '红豆' }) } }], usage: { total_tokens: 10 } });
       }
       chats++; lastBody = body;
+      assert.ok(body.max_tokens > 0 && body.max_tokens <= 8192);
       return Response.json({ choices: [{ message: { tool_calls: [{ id: 'perception-finish', type: 'function', function: { name: 'finish', arguments: '{"summary":"讨论红豆"}' } }] } }], usage: { total_tokens: 10 } });
     };
     append(1, '相关红豆片段'); await runner.wake('group:1');

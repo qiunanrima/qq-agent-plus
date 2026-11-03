@@ -134,3 +134,14 @@ test('未定价 ≠ 免费：没价的调用单独计数，明细接口也要带
   assert.equal(row.unpricedCalls, 1, '明细行要带未定价计数（否则界面只剩 ¥0.00）');
   assert.equal(row.flatCalls, 0);
 });
+
+test('辅助用量进入逐模型明细并使缓存失效，只有后台调用也能查看', async (t) => {
+  const { app, get } = await bootApp({ useOfficialPrice: false, priceInputPerM: 1, priceOutputPerM: 2 });
+  t.after(async () => { await app.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  fs.rmSync(path.join(root, 'sessions'), { recursive: true, force: true });
+  const before = await get('/api/usage/stats?range=today');
+  app.sessions.recordExternalUsage({ promptTokens: 100, completionTokens: 20, totalTokens: 120 }, { model: 'small-audit', vendor: 'test', source: 'background-scan' });
+  const after = await get('/api/usage/stats?range=today');
+  assert.equal(after.body.totals.promptTokens - before.body.totals.promptTokens, 100);
+  assert.equal(after.body.totals.completionTokens - before.body.totals.completionTokens, 20);
+});

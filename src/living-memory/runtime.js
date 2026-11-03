@@ -242,7 +242,7 @@ export class LivingMemoryRuntime {
       createdAt: Date.now()
     };
     try {
-      const response = await chatCompletion({
+      const response = await chatCompletion({ usageTracked: true,
         messages: [{ role: 'system', content: cardsPrompt(batch) }],
         temperature: 0.1,
         maxTokens: 1600,

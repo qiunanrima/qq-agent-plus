@@ -1,6 +1,7 @@
 // Linux 服务总装：OneBot 事件接入 → 存储 → 编排器；HTTP API + SSE 给 UI。
 import http from 'node:http';
 import fs from 'node:fs';
+import { externalUsageSignature, readExternalUsage } from '../core/external-usage.js';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -48,14 +49,14 @@ import { searchRegistry } from '../mcp/registry.js';
 import { searchPresets } from '../mcp/presets.js';
 import { knowledgeEnabled, knowledgeStats, listKnowledgeFiles, writeKnowledgeFile, deleteKnowledgeFile, reindexKnowledge } from '../knowledge/store.js';
 import { listMemes, rememberMeme, deleteMeme, memeStats } from '../memes/store.js';
-import { listModels, chatCompletion, resolveApiKey, cachedTokensOfUsage, llmRuntimeStats, addUsage, emptyUsage } from '../llm/llm.js';
+import { listModels, chatCompletion, resolveApiKey, cachedTokensOfUsage, llmRuntimeStats, setUntrackedUsageRecorder, addUsage, emptyUsage } from '../llm/llm.js';
 import { matchesBlacklistKeyword } from '../core/keyword-rules.js';
 import { synthesizeSpeech } from '../llm/tts.js';
 import { generateImage, imageGenEffectiveHost, imageGenKeyStale, resolveImageGenAuth } from '../llm/image-gen.js';
 import { imageType } from '../core/image-type.js';
 import { IMAGEGEN_SERVICES } from '../llm/image-gen-presets.js';
 import { TTS_SERVICES, ttsServiceById, ttsServiceOfBaseUrl, ttsKeyServices, ttsServiceOf, ttsKeyFor } from '../llm/tts-presets.js';
-import { resolveOfficialPrice, listOfficialPrices, listModelAliases, isPeakHour, priceAt, resolveModelPrice, costModeOf, modelLabel, splitModelLabel, vendorOfConfig, UNKNOWN_VENDOR } from '../pricing/model-prices.js';
+import { resolveOfficialPrice, listOfficialPrices, listModelAliases, isPeakHour, priceAt, resolveModelPrice, costModeOf, modelLabel, splitModelLabel, vendorOfBaseUrl, vendorOfConfig, UNKNOWN_VENDOR } from '../pricing/model-prices.js';
 import { initPriceFeed, refreshPriceFeed, priceFeedStatus } from '../pricing/price-feed.js';
 import { probeChannelPrices, capPrices } from '../pricing/price-probe.js';
 import { initChannelPrices, refreshChannelFeed, removeChannelFeed, channelPriceStatus, maybeAutoProbeChannel } from '../pricing/channel-prices.js';
@@ -566,6 +567,12 @@ export function createApp({
   const sessions = new SessionRegistry(cfg.store?.keepSessionFiles ?? 0, {
     persistIntervalMs: cfg.store?.sessionPersistMs
   });   // 0 = 不限
+  const releaseUsageRecorder = setUntrackedUsageRecorder((response, source) => {
+    const usage = emptyUsage();
+    addUsage(usage, response?.usage);
+    sessions.recordExternalUsage(usage, { model: response?.model || '',
+      vendor: vendorOfBaseUrl(getConfig(), response?.originBaseUrl), source });
+  });
   let incidentPilot = null;
   let incidentPilotError = '';
   let autoUpdate = null;
@@ -606,7 +613,7 @@ export function createApp({
         const usage = emptyUsage();
         addUsage(usage, response?.usage);
         usage.calls = 1;
-        sessions.recordExternalUsage(usage, { model: model || response?.model || '' });
+        sessions.recordExternalUsage(usage, { model: response?.model || model, vendor: vendorOfBaseUrl(getConfig(), response?.originBaseUrl), source: 'semantic-memory' });
       } catch { /* 记账失败不影响主流程 */ }
     }
   });
@@ -6857,6 +6864,7 @@ export function createApp({
       server.closeIdleConnections?.();
     });
     memory.close();
+    releaseUsageRecorder();
     store.close();
   }
 
@@ -7171,7 +7179,7 @@ export function usageCacheSignature(range, win = resolveRange(range)) {
   const bucketStart = win?.mode === '24h'
     ? Math.floor(Number(win.start) / USAGE_CACHE_TTL_MS)
     : Number(win?.start) || 0;
-  return `${sessionsDirSignature()}@${String(range)}@${win?.mode || ''}@${bucketStart}`;
+  return `${sessionsDirSignature()}@${externalUsageSignature(DATA_DIR)}@${String(range)}@${win?.mode || ''}@${bucketStart}`;
 }
 
 function collectUsageRows({ range }) {
@@ -7193,13 +7201,13 @@ function collectUsageRows({ range }) {
 
   const dir = path.join(DATA_DIR, 'sessions');
   let files = [];
-  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return { rows: [], win, searchCount: 0, toolCounts: {} }; }
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { /* 只有后台用量时也要继续读取 */ }
   // mtime 预筛（2026-10-02）：窗口外的会话文件不必读 —— 749 个文件全读 + parse 约 1 秒，
   // 是"用量页打开要等一秒"的主因。会话文件的写入发生在运行期内/之后，mtime 只会晚于
   // startedAt，留 6 小时余量后按 mtime 跳过窗口外文件是安全的。
   const mtimeFloor = Number(win.start) > 0 ? Number(win.start) - 6 * 60 * 60 * 1000 : 0;
 
-  const rows = [];
+  const rows = readExternalUsage(DATA_DIR, win).map((row) => ({ ...row, modelKey: modelLabel(row.vendor, row.model) }));
   // 会话级计数：搜索次数、各工具的调用次数。
   // 与 rows 在同一个循环里统计 —— 不额外多读一次文件。
   // 注意这些是"次数"不是"成本"：搜索通常是资源包或免费的，

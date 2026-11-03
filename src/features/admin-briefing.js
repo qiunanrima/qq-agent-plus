@@ -276,7 +276,7 @@ export class AdminBriefingManager {
         sections.join('\n\n')
       ].join('\n');
 
-      const r = await chatCompletion({
+      const r = await chatCompletion({ usageTracked: true,
         messages: [
           { role: 'system', content: '你在 QQ 群里和群友聊天，现在是在私下跟管理员说话。用自然口语，不写公告、不列条目。' },
           { role: 'user', content: prompt }
