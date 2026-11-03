@@ -41,6 +41,7 @@ function readState(file) {
 }
 
 function writeState(file, state) {
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
     const now = Date.now();
     const chats = Object.entries(state.chats || {})
@@ -51,7 +52,6 @@ function writeState(file, state) {
       .filter(([, ts]) => now - Number(ts) < CHAT_RETENTION_MS)
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .slice(0, MAX_CHAT_ENTRIES);
-    const tmp = `${file}.${process.pid}.tmp`;
     const privateInitiatives = Object.entries(state.privateInitiatives || {})
       .filter(([, ts]) => now - Number(ts) < CHAT_RETENTION_MS)
       .sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, MAX_CHAT_ENTRIES);
@@ -60,7 +60,9 @@ function writeState(file, state) {
       followUps: Object.fromEntries(followUps), privateInitiatives: Object.fromEntries(privateInitiatives)
     }), { mode: 0o600 });
     fs.renameSync(tmp, file);
-  } catch { /* 写不进去也不影响正常发言 */ }
+    return true;
+  } catch { return false; }
+  finally { try { fs.rmSync(tmp, { force: true }); } catch { /* 只清理本次写入的临时文件 */ } }
 }
 
 /** 读状态文件；损坏/缺失按 0 处理。旧数字格式迁移成两个范围共用。 */
@@ -119,8 +121,8 @@ export function writeFollowUpAt(file, chatKey, ts) {
 
 /** 普通私聊的主动发起机会独立落盘，重启或切换判定方式不会重置24小时冷却。 */
 export function writePrivateInitiative(file, chatKey, ts) {
-  if (!/^private:\d+$/.test(String(chatKey))) return;
+  if (!/^private:\d+$/.test(String(chatKey))) return false;
   const state = readState(file);
   state.privateInitiatives[chatKey] = Number(ts) || Date.now();
-  writeState(file, state);
+  return writeState(file, state);
 }

@@ -3274,9 +3274,12 @@ export class Orchestrator {
           touched.push(chatKey);
           if (chance <= 0 || this.random() >= chance) continue;
           if (this.runningChats.size >= Math.max(1, Number(cfg.maxConcurrentRuns) || 2)) break;
+          if (quietPrivateChat(chatKey, cfg) && !writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick)) {
+            log.warn(`[proactive] 跳过 ${chatKey}：私聊冷却未能保存，未发起消息`);
+            continue;
+          }
           sent += 1;
           log.info(`[proactive] 主动开话题（${scopeLabel(scope)}·独立） → ${chatKey}`);
-          if (quietPrivateChat(chatKey, cfg)) writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick);
           this.wake(chatKey, { proactive: true }).catch((error) => log.error('[orchestrator] proactive 出错:', error));
         }
         // 一轮只落盘一次：群多时不要为每个候选读/写整份状态文件。
@@ -3302,8 +3305,11 @@ export class Orchestrator {
       // 真要开口了，才把该范围这一轮用掉（另一个范围仍有自己的机会）
       writeProactiveAttempt(PROACTIVE_STATE_FILE, scope, nowTick);
       const chatKey = candidates[Math.floor(this.random() * candidates.length)];
+      if (quietPrivateChat(chatKey, cfg) && !writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick)) {
+        log.warn(`[proactive] 跳过 ${chatKey}：私聊冷却未能保存，未发起消息`);
+        return;
+      }
       log.info(`[proactive] 主动开话题（${scopeLabel(scope)}） → ${chatKey}`);
-      if (quietPrivateChat(chatKey, cfg)) writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick);
       this.wake(chatKey, { proactive: true }).catch((error) => log.error('[orchestrator] proactive 出错:', error));
     };
     const scopes = proactiveScopes(getConfig());

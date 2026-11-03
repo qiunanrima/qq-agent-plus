@@ -25,6 +25,17 @@ test('私聊主动机会落盘，范围判定、模式切换与补话写入均�
   assert.equal(state.chats['private:777777'], now + 2);
 });
 
+test('私聊冷却写入失败明确返回false，不冒充落盘成功且清理临时文件', (t) => {
+  const file = tempFile(t);
+  const original = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (...args) => {
+    if (args[1] === file) throw Object.assign(new Error('read-only disk'), { code: 'EACCES' });
+    return original(...args);
+  });
+  assert.equal(writePrivateInitiative(file, 'private:777777', Date.now()), false);
+  assert.equal(fs.existsSync(`${file}.${process.pid}.tmp`), false);
+});
+
 test('旧格式单时间戳迁移成群聊/私聊共用，升级后不会额外多一次机会', (t) => {
   const file = tempFile(t);
   fs.writeFileSync(file, JSON.stringify({ lastAttemptAt: 123456 }));

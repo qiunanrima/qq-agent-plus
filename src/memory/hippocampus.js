@@ -81,8 +81,10 @@ export class Hippocampus {
     });
   }
   visible(row, chatKey) {
-    return impressionVisible({ sourceChatKeys: row.chat ? [row.chat] : JSON.parse(row.sources) },
-      chatKey, memoryVisibilityOf(this.getConfig()));
+    const sources = row.chat ? [row.chat] : JSON.parse(row.sources);
+    const policy = memoryVisibilityOf(this.getConfig());
+    // 合并正文可能包含任一来源的事实；只包含当前会话并不能证明整条可见。
+    return sources.length > 0 && sources.every((source) => impressionVisible({ sourceChatKeys: [source] }, chatKey, policy));
   }
   episodes() {
     return this.withDb(false, (db) => db ? db.prepare('SELECT * FROM episodes ORDER BY updated,id').all() : []);

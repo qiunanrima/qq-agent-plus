@@ -37,6 +37,25 @@ test('默认关闭，读取/清空不建库；固化与启用独立', async (t) 
   assert.equal(fs.existsSync(f.memory.file), false);
 });
 
+test('大量不可见的新记录不能挤掉当前会话的旧人格记忆，按id查询和分页仍可见', async (t) => {
+  const f = fixture(t);
+  const old = await f.capture(f.preference('本群可见的旧偏好'));
+  f.memory.withDb(true, (db) => {
+    const insert = db.prepare(`INSERT INTO entries (id,persona_key,persona_name,scope_key,kind,topic,content,target_user_id,
+      status,evidence_json,support_days_json,created_at,updated_at,verified,sources_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    for (let i = 0; i < 510; i++) insert.run(`hidden-${i}`, personalityKey(persona), persona.botName, 'group:2',
+      'preference', `主题${i}`, `其他群的偏好${i}`, '', 'active', '[]', '[]', Date.now() + i + 1, Date.now() + i + 1, 1, '["group:2"]');
+  });
+  f.cfg.memory.visibility = { mode: 'perChat' };
+  assert.deepEqual(f.memory.recallRows({ chatKey: 'group:1', persona }).map((row) => row.id), [old.id]);
+  const tool = f.memory.toolDefs({ chatKey: 'group:1', persona }).find((row) => row.name === 'personality_lookup');
+  assert.match(tool.execute({}, { id: old.id }).content, /本群可见的旧偏好/);
+  assert.equal(JSON.parse(tool.execute({}, {}).content).total, 1);
+  f.cfg.memory.visibility = {};
+  assert.equal(JSON.parse(tool.execute({}, {}).content).total, 511);
+  assert.equal(JSON.parse(tool.execute({}, { offset: 510 }).content).indexes[0].id, old.id);
+});
+
 test('真实引用不等于结论成立，独立核验拒绝无关结论，缺少核验器不能写', async (t) => {
   const f = fixture(t);
   const args = { ...f.preference(), content: '我讨厌所有群友' };

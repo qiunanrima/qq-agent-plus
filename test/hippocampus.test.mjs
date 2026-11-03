@@ -129,6 +129,20 @@ test('遵守perChat与私聊隐藏策略，索引和正文查询都不能绕过'
   assert.equal(f.memory.cards({ persona, chatKey: 'private:12345' }).length, 1);
 });
 
+test('按会话隔离不能读取由私聊和群聊混合消化出的卡片，原始卡片仍保留', async (t) => {
+  const f = fixture(t);
+  f.capture('私聊里说了暗号夜莺', { chatKey: 'private:12345' });
+  f.capture('群里只讨论游戏', { chatKey: 'group:1' });
+  f.setTime('2026-11-02T03:00:00');
+  await f.memory.maintain({ complete: digest('私聊的暗号是夜莺，群内常聊游戏') });
+  const card = f.memory.cards({ persona, chatKey: 'group:1' })[0];
+  f.cfg.memory.visibility = { mode: 'perChat' };
+  assert.deepEqual(f.memory.cards({ persona, chatKey: 'group:1' }), []);
+  const lookup = f.memory.toolDefs({ persona, chatKey: 'group:1' }).find((tool) => tool.name === 'memory_card_lookup');
+  assert.doesNotMatch(lookup.execute({}, { id: card.id }).content, /夜莺/);
+  assert.equal(f.memory.status().cardCount, 1);
+});
+
 test('模型等待期间清空或暂停，不会由迟到响应复活；并发仅调用一次', async (t) => {
   const f = fixture(t);
   f.capture('需要保存的经历');

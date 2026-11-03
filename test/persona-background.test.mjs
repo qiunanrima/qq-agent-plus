@@ -108,6 +108,19 @@ test('模型可按语义直接选章节，不要求话题词字面命中，伪�
   assert.doesNotMatch(recalled, /无关的旧资料|forged-other-role-id/);
 });
 
+test('长标题和多别名目录公平分配扫描预算，尾部语义候选不会被开头章节挤掉', async (t) => {
+  const { store, save } = fixture(t);
+  const aliases = Array.from({ length: 8 }, (_, i) => `${i}${'别名'.repeat(18)}`).join(',');
+  const doc = save('# 核心身份\n概述。\n' + Array.from({ length: 80 }, (_, i) =>
+    `# 资料${i}${'长标题'.repeat(25)}\n<!-- keywords: ${aliases} -->\n${i === 79 ? '远方长者照料过这个角色。' : '一份无关的资料。'}`).join('\n'));
+  await store.recall(persona, { text: '谈谈你的恩人', complete: async (messages) => {
+    const catalog = JSON.parse(messages[1].content).catalog;
+    assert.ok(catalog.length <= 12000);
+    assert.ok(catalog.split('\n').some((line) => JSON.parse(line).id === doc.sections.at(-1).id));
+    return { sectionIds: [doc.sections.at(-1).id], topics: [] };
+  }, onError: (error) => { throw error; } });
+});
+
 test('模型离线仍可按正文检索目录后部，并围绕命中位置节选，避免相关事实被长段头部挤掉', async (t) => {
   const { store, save } = fixture(t);
   const doc = save('# 核心设定\n角色概览。\n' + Array.from({ length: 100 }, (_, i) =>

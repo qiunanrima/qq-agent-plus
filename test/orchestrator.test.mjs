@@ -508,6 +508,36 @@ describe('Orchestrator', () => {
     runner.stopProactiveLoop();
   });
 
+  it('私聊冷却落盘失败时两种主动判定模式都不发起联系，正常消息链路不受影响', async (t) => {
+    const { runner, cfg, store } = fixture(t);
+    cfg.admin.ownerUin = '900001'; cfg.allow.private = ['777777'];
+    cfg.proactive = { ...cfg.proactive, enabled: true, privateEnabled: true, nonAdminPrivateEnabled: true,
+      groupEnabled: false, privateProbability: 1, activeHours: { windows: [] }, checkIntervalMinMs: 60000, checkIntervalMaxMs: 120000 };
+    store.listChats = () => ['private:777777'];
+    store.getChatMeta = () => ({ lastTs: Date.now() - 3600000, unread: 0 });
+    runner.random = () => 0;
+    let woke = 0;
+    runner.wake = async () => { woke++; };
+    const file = path.join(root, 'proactive-state.json');
+    const previous = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    t.after(() => { if (previous) fs.writeFileSync(file, previous); else fs.rmSync(file, { force: true }); });
+    const rename = fs.renameSync;
+    t.mock.method(fs, 'renameSync', (...args) => {
+      if (args[1] === file) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+      return rename(...args);
+    });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const mode of ['shared', 'perChat']) {
+      runner.stopProactiveLoop();
+      fs.writeFileSync(file, JSON.stringify({ lastAttemptAt: { group: 0, private: 0 } }));
+      cfg.proactive.scopeMode = mode;
+      runner.startProactiveLoop(); t.mock.timers.tick(45000);
+      await Promise.resolve(); await Promise.resolve();
+      assert.equal(woke, 0, mode);
+    }
+    runner.stopProactiveLoop();
+  });
+
   it('direct interactions use the short wake delay; ordinary group messages keep batching', async (t) => {
     const { runner, store, cfg } = fixture(t);
     const delays = [];

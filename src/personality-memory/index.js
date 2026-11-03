@@ -275,7 +275,7 @@ export class PersonalityMemory {
     }];
   }
   recallRows({ chatKey, persona }) {
-    return this.list({ personaKey: personalityKey(persona) }).filter((r) => this.visible(r, chatKey));
+    return this.list({ personaKey: personalityKey(persona), all: true }).filter((r) => this.visible(r, chatKey));
   }
   createResetBackup(file) {
     return this.withDb(false, (db) => {

@@ -80,10 +80,20 @@ function scanCatalog(entries, query) {
   for (let i = 0; i < slots; i++) chosen.add(entries[Math.floor(i * (entries.length - 1) / Math.max(1, slots - 1))]);
   const lines = [];
   let remaining = 12000;
-  for (const entry of chosen) {
-    const line = JSON.stringify({ id: entry.id, title: entry.title.slice(-100), keys: entry.keys.slice(0, 8).map((key) => key.slice(0, 40)),
-      preview: excerpt(entry.content, query, [], 100) });
-    if (line.length > remaining) continue;
+  const candidates = [...chosen];
+  for (const [index, entry] of candidates.entries()) {
+    // 为后面的每一项预留相等额度。先缩短预览/别名，不按目录顺序丢弃尾部。
+    const allowance = Math.floor(remaining / (candidates.length - index));
+    const keys = entry.keys.slice(1, 4).map((key) => key.slice(0, 24));
+    let title = entry.title.slice(-48);
+    const encode = (size) => JSON.stringify({ id: entry.id, title, keys,
+      preview: size ? excerpt(entry.content, query, [], size) : '' });
+    while (keys.length && encode(20).length > allowance) keys.pop();
+    while (title.length > 12 && encode(20).length > allowance) title = title.slice(8);
+    let size = 100;
+    while (size > 0 && encode(size).length > allowance) size -= 10;
+    const line = encode(size);
+    if (line.length > allowance) continue;
     lines.push(line); remaining -= line.length + 1;
   }
   return lines.join('\n');
