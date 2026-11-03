@@ -99,6 +99,13 @@ export class Hippocampus {
         episodes: episodes.slice().reverse().slice(offset, offset + 40), cards: cards.slice(offset, offset + 40) };
     });
   }
+  inspectionPersonCards() {
+    const entries = this.withDb(false, (db) => db ? db.prepare("SELECT * FROM cards WHERE kind='person' ORDER BY updated DESC,id").all() : []);
+    return { enabled: this.enabled(), day: memoryDay(this.now()), entries: entries.map((row) => ({
+      id: row.id, userId: row.subject, content: row.content, updatedAt: row.updated,
+      personaKey: row.persona, sourceChatKeys: JSON.parse(row.sources)
+    })) };
+  }
   cards({ persona, chatKey }) {
     const key = personaKey(persona);
     return this.withDb(false, (db) => db ? db.prepare("SELECT * FROM cards WHERE persona=? AND kind!='personality' ORDER BY updated DESC,id").all(key)

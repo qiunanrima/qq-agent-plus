@@ -22,6 +22,41 @@ function fileDigest(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+test('删除人物后只用新发言重新建档，旧发言/旧印象和旧手工档案不随重建恢复', (t) => {
+  const dir = fs.mkdtempSync(path.join(root, 'identity-relearn-'));
+  const chat = new ChatStore(0, { dataDir: dir }), identity = new IdentityStore({ dataDir: dir });
+  t.after(() => { identity.close(); chat.close(); });
+  const now = Date.now(), before = now - 60000, removed = now - 10000;
+  const first = chat.appendIncoming('group:1', { senderId: '12345', senderName: '旧名字', text: '旧发言', ts: before });
+  identity.observe('group:1', first);
+  identity.upsertIdentityAsset({ userId: '12345', primaryName: '旧手工名字', profileNote: '旧手工资料', sourceChatKey: 'group:1' });
+  assert.equal(identity.deleteIdentityAsset('12345', removed), true);
+  assert.equal(identity.observe('group:1', first), false);
+  assert.equal(identity.getPerson('12345', { chatKey: 'group:1' }), null);
+  const fresh = chat.appendIncoming('group:2', { senderId: '12345', senderName: '新名字', text: '新的互动', ts: now });
+  assert.equal(identity.observe('group:2', fresh), true);
+  assert.equal(identity.getPerson('12345', { chatKey: 'group:2' }).messageCount, 1);
+  identity.rebuild({ activityRows: chat.identityActivityRows({ sinceByUser: identity.activityCutoffs() }),
+    legacyMemories: [{ userId: '12345', chatKey: 'group:1', content: '已删的旧印象', observedAt: before }], friends: [] });
+  const rebuilt = identity.getPerson('12345', { chatKey: 'group:2' });
+  assert.equal(rebuilt.messageCount, 1);
+  assert.equal(rebuilt.primaryName, '新名字');
+  assert.equal(identity.hasSource('12345', 'group:1'), false);
+  assert.doesNotMatch(JSON.stringify(rebuilt), /旧手工资料|已删的旧印象|旧手工名字/);
+});
+
+test('停机期间产生的新归档也能在重新索引时恢复人物，旧删除标记不再永久封禁', (t) => {
+  const dir = fs.mkdtempSync(path.join(root, 'identity-reindex-new-'));
+  const chat = new ChatStore(0, { dataDir: dir }), identity = new IdentityStore({ dataDir: dir });
+  t.after(() => { identity.close(); chat.close(); });
+  const now = Date.now();
+  identity.observe('group:1', { senderId: '12345', senderName: '旧名字', ts: now - 60000 });
+  identity.deleteIdentityAsset('12345', now - 10000);
+  chat.appendIncoming('group:2', { senderId: '12345', senderName: '新的发言者', text: '新归档', ts: now });
+  identity.rebuild({ activityRows: chat.identityActivityRows({ sinceByUser: identity.activityCutoffs() }) });
+  assert.equal(identity.getPerson('12345', { chatKey: 'group:2' }).primaryName, '新的发言者');
+});
+
 test('identity pilot is promoted: legacy enabled:false no longer gates it', async (t) => {
   // 稳定特性策略（src/core/stable-feature-policy.js）把身份基建转正：
   // config.js 的 identityPilotEnabled() 恒为 true，旧的 enabled:false 只会

@@ -2,6 +2,7 @@
 
 
 import { api } from './core/api.js';
+import { switchTab } from './app.js';
 import { esc } from './core/dom.js';
 import { askForConfirmation, setBoxError, setHtmlIfChanged } from './core/dom-util.js';
 import { state } from './core/state.js';
@@ -137,12 +138,15 @@ import { invalidateChatArchive } from './pages/chat.js';
   async function fetchPeople() {
     // /api/memory-files 仍是兼容入口；每个 detail 返回的是 GlobalPersonMemoryStore
     // 在该 sourceChatKey 可见的人物。这里只按 QQ 合并，sourceChatKeys 仅保留来源。
-    const summary = await api('/api/memory-files');
+    const [summary, automatic] = await Promise.all([api('/api/memory-files'),
+      api('/api/memory/hippocampus/people').catch(() => ({ entries: [], error: true }))]);
+    const automaticEntries = Array.isArray(automatic.entries) ? automatic.entries : [];
     const stats = summary.stats;
     const statsNode = document.getElementById('gm-memory-stats');
     if (statsNode && stats) {
       const kb = Math.max(0, Math.round((Number(stats.index?.bytes) || 0) / 1024));
       statsNode.textContent = `共 ${stats.entries} 条印象 · ${stats.people} 人 · 手写 ${stats.manual} 条 · 检索索引 ${stats.index?.docs || 0} 条 / ${kb} KB · 自动印象保留 ${stats.limits?.days ? `${stats.limits.days} 天` : '不过期'} · 每人上限 ${stats.limits?.max ?? 50} 条（手写不删）`;
+      statsNode.textContent += automatic.error ? ' · 海马印象暂时无法读取' : ` · 海马自动印象 ${automaticEntries.length} 条（凌晨3点消化）`;
     }
     const files = Array.isArray(summary.files) ? summary.files : [];
     const sourceFiles = files.filter((file) => Number(file.impressionCount) > 0);
@@ -161,6 +165,15 @@ import { invalidateChatArchive } from './pages/chat.js';
         map.set(key, mergePerson(map.get(key), member));
       }
     }
+    for (const entry of automaticEntries) {
+      const userId = String(entry.userId || '');
+      if (!userId) continue;
+      const current = map.get(userId);
+      map.set(userId, mergePerson(current, { userId, name: current?.name || (state.config?.memberNotes || {})[userId] || userId,
+        updatedAt: entry.updatedAt, sourceChatKeys: entry.sourceChatKeys, impressions: [{ ...entry,
+          origin: 'hippocampus', lastObservedAt: entry.updatedAt, createdAt: entry.updatedAt }] }));
+    }
+    if (statsNode && automaticEntries.length) statsNode.textContent = `当前 ${map.size} 人 · 海马自动印象 ${automaticEntries.length} 条 · 历史/手工 ${Number(stats?.entries) || 0} 条 · 自动印象在凌晨3点消化后更新`;
     return [...map.entries()]
       .map(([key, member]) => ({ key, ...member }))
       .sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
@@ -247,14 +260,16 @@ import { invalidateChatArchive } from './pages/chat.js';
           return `<div class="gm-memory">
             <div class="gm-memory-content">${esc(item.content)}</div>
             <div class="gm-memory-meta">最近确认 ${esc(fmtTime(at))}
-              <button class="btn btn-small" type="button" data-gm-delete-memory="${esc(item.content)}">删除这条</button>
+              ${item.origin === 'hippocampus' ? '<span> · 海马自动印象</span><button class="btn btn-small" type="button" data-gm-open-hip>查看海马</button>'
+                : `<button class="btn btn-small" type="button" data-gm-delete-memory="${esc(item.content)}">删除这条</button>`}
             </div>
             <div>${sources || '<span class="muted">无来源</span>'}</div>
           </div>`;
         }).join('')
       : '<div class="gm-empty">这个人目前没有长期印象</div>';
     const manageable = /^\d{1,15}$/.test(String(person.userId || ''))
-      && Boolean(sourceFor(person));
+      && Boolean(sourceFor(person)) && memories.some((item) => item.origin !== 'hippocampus');
+    const hasAutomatic = memories.some((item) => item.origin === 'hippocampus');
 
     // 备注编辑放在人物记忆页：memberNotes 是按 QQ 全局的人物级数据，与长期印象同一层级。
     // （会话记忆页那份"拉取群成员列表（编辑备注）"按上游设计被 CSS 隐藏，见 ui/session-memory-view.js。）
@@ -279,12 +294,12 @@ import { invalidateChatArchive } from './pages/chat.js';
         <div class="sub">${person.userId ? `QQ ${esc(person.userId)} · ` : ''}${memories.length} 条全局长期印象</div>
         <div class="gm-toolbar">
           <button class="btn btn-small" type="button" id="gm-consolidate" ${manageable ? '' : 'disabled'}>重新整理人物记忆</button>
-          <button class="btn btn-small btn-danger" type="button" id="gm-delete" ${manageable ? '' : 'disabled'}>删除全部人物记忆</button>
+          <button class="btn btn-small btn-danger" type="button" id="gm-delete" ${manageable ? '' : 'disabled'}>${hasAutomatic ? '删除旧印象' : '删除全部人物记忆'}</button>
           <span class="gm-status" id="gm-action-status"></span>
         </div>
       </div>
       <div class="gm-note">
-        人物长期记忆按 QQ 全局统一；来源会话只用于证据追溯，不限制这条记忆在哪个群可见。<br>
+        此页为管理员管理视图，模型只读取当前会话权限内的资料。海马自动印象只读展示；历史和手工印象可继续整理、删除。<br>
         群聊/私聊自己的 handoff 已独立到“会话记忆”页，并继续严格按 chatKey 隔离。
       </div>
       ${noteHtml}
@@ -294,6 +309,7 @@ import { invalidateChatArchive } from './pages/chat.js';
     if (!rendered) return;
 
     const status = box.querySelector('#gm-action-status');
+    box.querySelectorAll('[data-gm-open-hip]').forEach((button) => button.addEventListener('click', () => switchTab('hippocampus')));
     const noteInput = box.querySelector('#gm-note-input');
     const noteStatus = box.querySelector('#gm-note-status');
     noteInput?.addEventListener('input', () => { noteDraft = { key: noteKey, value: noteInput.value }; });
@@ -327,7 +343,9 @@ import { invalidateChatArchive } from './pages/chat.js';
       }
     });
     box.querySelector('#gm-delete')?.addEventListener('click', async (event) => {
-      if (!await askForConfirmation(`确定删除 ${person.name || person.userId} 的全部全局人物记忆？她在所有会话里的印象都会删掉（服务端会留一份可回滚快照），聊天记录不受影响。`)) return;
+      if (!await askForConfirmation(hasAutomatic
+        ? `删除 ${person.name || person.userId} 的历史/手工印象？海马自动印象保留，聊天记录不受影响。`
+        : `确定删除 ${person.name || person.userId} 的全部全局人物记忆？她在所有会话里的印象都会删掉（服务端会留一份可回滚快照），聊天记录不受影响。`)) return;
       const button = event.currentTarget;
       button.disabled = true;
       if (status) status.textContent = '正在删除…';

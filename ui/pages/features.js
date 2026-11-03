@@ -1130,6 +1130,8 @@ function renderIdentityFeaturePageImpl(status, identities, memories, options = {
   const box = $('#identity-page');
   if (!box) return;
   const query = state.identityFeatureQuery || '';
+  const automatic = options.automatic || { entries: [] };
+  const fresh = (automatic.entries || []).filter((entry) => !query || `${entry.userId} ${entry.content}`.includes(query));
   const __html = `
     <div class="asset-head">
       <div><h2>人物统一印象</h2><span class="muted" id="identity-feature-state">${status.active ? `运行中 · 最近索引 ${status.lastIndexedAt ? esc(fmtTime(status.lastIndexedAt)) : '-'}` : status.enabled ? `启动失败${status.error ? `：${esc(status.error)}` : ''}` : '当前已停用'}</span></div>
@@ -1144,7 +1146,7 @@ function renderIdentityFeaturePageImpl(status, identities, memories, options = {
     <div class="asset-toolbar">
       <div>
         <strong>统一人物与旧印象</strong>
-        <div class="hint">统一人物记录和原始旧印象分别维护，模型只按当前会话权限读取。</div>
+        <div class="hint">删除人物只清理当前归档；此人有新的发言后会重新建档。新自动印象来自海马消化，旧印象仅为历史或手工资料。</div>
       </div>
       <div class="asset-toolbar-actions">
         <button type="button" class="btn btn-small" id="identity-add-person">＋ 人物</button>
@@ -1159,8 +1161,15 @@ function renderIdentityFeaturePageImpl(status, identities, memories, options = {
       <h3>统一人物</h3>
       <div id="identity-feature-people">${renderIdentityAssets(identities)}</div>
     </section>
+    <section class="settings-card" id="identity-automatic-memories">
+      <h3>自动人物印象 · ${fresh.length} 条</h3>
+      <p class="hint">今日聊天先形成海马摘要，凌晨3点消化后生成长期印象。这里只读展示，正文保存在海马库。</p>
+      ${automatic.error ? '<p role="alert">自动印象读取失败，请刷新重试。</p>' : fresh.length ? fresh.slice(0, 40).map((entry) =>
+        `<article class="hip-entry"><strong>QQ ${esc(entry.userId)}</strong><p class="hip-content">${esc(entry.content)}</p><span class="muted">${esc(fmtTime(entry.updatedAt))}</span></article>`).join('') : '<p class="muted">还没有新的自动人物印象；新的聊天片段会在记忆日结束后消化。</p>'}
+      <button type="button" class="btn btn-small" id="identity-open-hippocampus">查看全部海马记录</button>
+    </section>
     <section class="settings-card">
-      <h3>旧印象</h3>
+      <h3>旧印象（历史 / 手工）</h3>
       <div id="identity-feature-memories">${renderMemoryAssets(memories)}</div>
     </section>`;
   if (!setHtmlIfChanged(box, __html, options)) return;
@@ -1177,6 +1186,7 @@ function renderIdentityFeaturePageImpl(status, identities, memories, options = {
     if (event.key === 'Enter') search();
   });
   $('#identity-add-person')?.addEventListener('click', () => openAssetEditor('identities'));
+  $('#identity-open-hippocampus')?.addEventListener('click', () => switchTab('hippocampus'));
   $('#identity-add-memory')?.addEventListener('click', () => openAssetEditor('memory'));
   bindFeatureAssetActions(
     '#identity-feature-people',

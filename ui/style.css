@@ -6657,6 +6657,42 @@ html[data-side-rail='1'] .tab .pending-badge { top: 3px; right: 4px; min-width: 
 /* 周期提醒标签：列表里一眼看出哪些是持续任务 */
 .reminder-repeat { padding: 1px 8px; border: 1px solid var(--border); border-radius: var(--r-pill); font-size: var(--fs-xs); color: var(--muted); }
 
+/* 海马页自己承接滚动，避免通用 .view 裁掉长列表。 */
+#view-hippocampus.view.active { display: block; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
+.hippocampus-page { min-width: 0; width: min(100%, 1200px); margin: 0 auto; padding: 22px 26px 40px; }
+.hip-head-actions { display: flex; align-items: center; gap: var(--sp-3); flex-shrink: 0; }
+.hip-head .pane-sub { max-width: 65ch; line-height: 1.65; }
+.hip-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hip-tabs { margin-bottom: 0; }
+.hip-toolbar, .hip-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); padding: var(--sp-4) 0; color: var(--muted); font-size: var(--fs-xs); }
+.hip-pagination { display: flex; gap: var(--sp-2); }
+.hip-panel[hidden] { display: none !important; }
+.hip-entry { min-width: 0; border-top: 1px solid var(--border); padding: var(--sp-5) 0; overflow-wrap: anywhere; }
+.hip-entry-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-2); }
+.hip-entry-head h3, .hip-entry-head strong { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.hip-state { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.hip-state.is-pending { color: var(--accent); }
+.hip-content { margin: var(--sp-3) 0; font-size: var(--fs-md); line-height: 1.8; white-space: pre-wrap; }
+.hip-entry-meta { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); color: var(--muted); font-size: var(--fs-xs); }
+.hip-meta { margin-top: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); }
+.hip-meta summary { width: fit-content; cursor: pointer; }
+.hip-meta dl { margin: var(--sp-3) 0 0; display: grid; gap: var(--sp-2); }
+.hip-meta dl > div { display: grid; grid-template-columns: 6em minmax(0, 1fr); gap: var(--sp-3); }
+.hip-meta dt { color: var(--faint); }
+.hip-meta dd { margin: 0; overflow-wrap: anywhere; }
+.hip-note, .hip-empty { color: var(--muted); font-size: var(--fs-sm); line-height: 1.7; }
+.hip-note { margin: 0; padding-bottom: var(--sp-4); }
+.hip-empty { padding: var(--sp-6) 0; }
+.hip-bottom { border-top: 1px solid var(--border); }
+@media (max-width: 640px) {
+  .hippocampus-page { padding: 18px 16px 32px; }
+  .hip-head { flex-direction: column; gap: var(--sp-3); }
+  .hip-head-actions { width: 100%; justify-content: space-between; }
+  .hip-stats .kpi { padding: var(--sp-3); }
+  .hip-stats .kpi-value { font-size: var(--fs-xl); }
+  .hip-toolbar { align-items: flex-start; }
+}
+
 /* ── 长期语义记忆：页头 + KPI + 四页签（概览 / 记忆库 / 召回测试 / 设置）──
    通用 .view 为防双滚动而裁剪溢出；这个页面自己承接纵向滚动。 */
 #view-living-memory.view.active {

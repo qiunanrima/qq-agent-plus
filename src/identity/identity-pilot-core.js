@@ -188,7 +188,7 @@ export class IdentityPilotManager {
         this.log(`[identity-pilot] 好友列表读取失败，先按消息与旧库已知好友（${friends.length} 个）建库：${this.friendSyncError}`, error);
       }
       // 远程好友请求可能等待数秒；最后再截取本地消息，避免等待期间的新消息漏索引。
-      const activityRows = this.store.identityActivityRows()
+      const activityRows = this.store.identityActivityRows({ sinceByUser: db.activityCutoffs() })
         .filter((row) => allowSource(row.chatKey, row.userId));
       const legacyMemories = readLegacyIdentityMemories(this.dataDir, { allowSource });
       db.rebuild({ activityRows, legacyMemories, friends });
@@ -249,7 +249,7 @@ export class IdentityPilotManager {
       this.friendSyncError = String(error?.message ?? error);
       friends = this.identityStore.listKnownFriends();
     }
-    const activityRows = this.store.identityActivityRows()
+    const activityRows = this.store.identityActivityRows({ sinceByUser: this.identityStore.activityCutoffs() })
       .filter((row) => allowSource(row.chatKey, row.userId));
     const legacyMemories = readLegacyIdentityMemories(this.dataDir, { allowSource });
     this.identityStore.rebuild({ activityRows, legacyMemories, friends });

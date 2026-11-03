@@ -1474,15 +1474,19 @@ export class ChatStore {
    * 返回按 QQ / 会话 / 昵称聚合的只读活动快照。
    * 不在构造阶段自动执行，确保实验开关关闭时数据库结构和查询成本均不变化。
    */
-  identityActivityRows() {
+  identityActivityRows({ sinceByUser = {} } = {}) {
+    const cutoffs = Object.fromEntries(Object.entries(sinceByUser).filter(([key, value]) => /^\d+$/.test(key) && Number(value) > 0));
+    const filtered = Object.keys(cutoffs).length > 0;
     return this.db.prepare(`
       SELECT sender_id AS userId, chat_key AS chatKey, sender_name AS name,
         COUNT(*) AS messageCount, MIN(ts) AS firstSeenAt, MAX(ts) AS lastSeenAt
       FROM messages
+      ${filtered ? 'LEFT JOIN json_each(?) AS reset_cutoff ON reset_cutoff.key=messages.sender_id' : ''}
       WHERE self=0 AND sender_id!=''
+      ${filtered ? 'AND ts>COALESCE(CAST(reset_cutoff.value AS INTEGER),-1)' : ''}
       GROUP BY sender_id, chat_key, sender_name
       ORDER BY lastSeenAt DESC
-    `).all().map((row) => ({
+    `).all(...(filtered ? [JSON.stringify(cutoffs)] : [])).map((row) => ({
       userId: String(row.userId || ''),
       chatKey: String(row.chatKey || ''),
       name: String(row.name || ''),

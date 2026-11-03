@@ -32,6 +32,9 @@ test('鉴权、确认、停用管理和全量清除包含人格成长备份', as
     ...(body ? { body: JSON.stringify(body) } : {}) });
   assert.equal((await request('/api/personality-memory/status', 'GET', null, false)).status, 401);
   assert.equal((await request('/api/memory/hippocampus', 'GET', null, false)).status, 401);
+  assert.equal((await request('/api/memory/hippocampus/people', 'GET', null, false)).status, 401);
+  const automatic = await (await request('/api/memory/hippocampus/people')).json();
+  assert.deepEqual(automatic.entries, []);
   const hippocampus = await (await request('/api/memory/hippocampus')).json();
   assert.equal(hippocampus.enabled, true);
   assert.equal(hippocampus.episodeCount, 0);

@@ -1388,19 +1388,20 @@ async function loadIdentityFeaturePage(options = {}) {
   if (!box.__renderedHtml) box.innerHTML = '<div class="empty-hint">正在读取人物与旧印象…</div>';
   try {
     const query = encodeURIComponent(state.identityFeatureQuery || '');
-    const [cfg, status, identities, memories, chats] = await Promise.all([
+    const [cfg, status, identities, memories, chats, automatic] = await Promise.all([
       api('/api/config'),
       api('/api/identity-pilot/status'),
       api(`/api/assets/identities?limit=500&query=${query}`),
       api(`/api/assets/memory?query=${query}&limit=500`),
-      api('/api/chats').catch(() => ({ chats: [] }))
+      api('/api/chats').catch(() => ({ chats: [] })),
+      api('/api/memory/hippocampus/people').catch(() => ({ error: true, entries: [] }))
     ]);
     if (token !== state.identityLoadToken) return;
     if (state.tab !== 'identity') return;
     state.config = cfg;
     state.chats = chats.chats || state.chats;
     syncGraduatedFeatureNavigation(cfg);
-    renderIdentityFeaturePage(status, identities, memories, options);
+    renderIdentityFeaturePage(status, identities, memories, { ...options, automatic });
   } catch (error) {
     // 序号守卫不能只护成功分支：重叠加载时**旧的那份**在新的已经渲染之后才失败，
     // 不挡的话「读取失败」会把后发的好结果整个盖掉（2026-10-04 复审 P2）。

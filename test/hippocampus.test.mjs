@@ -33,6 +33,25 @@ test('03:00按上海时间换日，覆盖年末和闰日边界', () => {
   assert.equal(memoryDay(at('2028-03-01T02:59:59')), '2028-02-29');
 });
 
+test('清空后新聊天能重新消化成人物印象，控制台只读入口可看到新正文', async (t) => {
+  const f = fixture(t);
+  assert.deepEqual(f.memory.inspectionPersonCards().entries, []);
+  assert.equal(fs.existsSync(f.memory.file), false);
+  f.capture('旧聊天');
+  f.memory.clearAll();
+  f.capture('新聊天里甲说喜欢绿茶');
+  f.setTime('2026-11-02T03:00:00');
+  await f.memory.maintain({ complete: async (messages) => {
+    assert.doesNotMatch(messages[1].content, /旧聊天/);
+    return digest('甲喜欢绿茶')(messages);
+  } });
+  const cards = f.memory.inspectionPersonCards().entries;
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].userId, '12345');
+  assert.equal(cards[0].content, '甲喜欢绿茶');
+  assert.deepEqual(cards[0].sourceChatKeys, ['group:1']);
+});
+
 test('默认读取无建库；禁用时无采集/注入/工具/模型调用，已有数据保留', async (t) => {
   const f = fixture(t);
   assert.deepEqual(f.memory.episodes(), []);

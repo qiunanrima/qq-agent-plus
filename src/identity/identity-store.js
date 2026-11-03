@@ -334,6 +334,7 @@ export class IdentityStore {
         is_friend INTEGER,
         source_chat_key TEXT NOT NULL DEFAULT '',
         deleted INTEGER NOT NULL DEFAULT 0,
+        reset_at INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -413,6 +414,8 @@ export class IdentityStore {
       CREATE INDEX IF NOT EXISTS friend_opportunities_status
         ON friend_opportunities(status, created_at DESC);
     `);
+    ensureColumn(this.db, 'identity_asset_overrides', 'reset_at', 'INTEGER NOT NULL DEFAULT 0');
+    this.db.exec('UPDATE identity_asset_overrides SET reset_at=updated_at WHERE deleted=1 AND reset_at=0');
     ensureColumn(
       this.db,
       'friend_proposals',
@@ -525,6 +528,13 @@ export class IdentityStore {
     const overrides = new Map(this.db.prepare(
       'SELECT * FROM identity_asset_overrides'
     ).all().map((row) => [String(row.uin), row]));
+    const revived = [];
+    for (const [uin, row] of overrides) {
+      if (Number(row.deleted) !== 1 || !activityRows.some((activity) => String(activity.userId) === uin
+        && Number(activity.firstSeenAt) > Number(row.reset_at))) continue;
+      revived.push(uin);
+      overrides.set(uin, { ...row, deleted: 0, primary_name: '', profile_json: '{}', is_friend: null, source_chat_key: '' });
+    }
     const hiddenUins = new Set(
       [...overrides.values()]
         .filter((row) => Number(row.deleted) === 1)
@@ -564,6 +574,7 @@ export class IdentityStore {
       const count = Math.max(0, Number(raw.messageCount) || 0);
       const firstSeenAt = Number(raw.firstSeenAt) || 0;
       const lastSeenAt = Number(raw.lastSeenAt) || 0;
+      if (Number(overrides.get(uin)?.reset_at) > 0 && firstSeenAt <= Number(overrides.get(uin).reset_at)) continue;
       const sourceKey = `${uin}\u0000${chatKey}`;
       const source = sources.get(sourceKey) || {
         uin, chatKey, messageCount: 0, firstSeenAt: 0, lastSeenAt: 0
@@ -607,6 +618,7 @@ export class IdentityStore {
       if (
         !uin
         || hiddenUins.has(uin)
+        || (Number(overrides.get(uin)?.reset_at) > 0 && Number(raw.observedAt || raw.createdAt || 0) <= Number(overrides.get(uin).reset_at))
         || !/^(group|private):\d+$/.test(chatKey)
         || !content
       ) continue;
@@ -659,6 +671,8 @@ export class IdentityStore {
 
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      for (const uin of revived) this.db.prepare(`UPDATE identity_asset_overrides SET deleted=0,
+        primary_name='',profile_json='{}',is_friend=NULL,source_chat_key='' WHERE uin=?`).run(uin);
       this.db.exec('DELETE FROM identity_aliases; DELETE FROM identity_sources; DELETE FROM legacy_memory_refs; DELETE FROM people;');
       const insertPerson = this.db.prepare(`
         INSERT INTO people (
@@ -752,21 +766,28 @@ export class IdentityStore {
     return this.status();
   }
 
+  activityCutoffs() {
+    return Object.fromEntries(this.db.prepare('SELECT uin,reset_at FROM identity_asset_overrides WHERE reset_at>0').all()
+      .map((row) => [String(row.uin), Number(row.reset_at)]));
+  }
+
   observe(chatKey, message) {
     const uin = normalizeUin(message?.senderId);
     const source = String(chatKey || '');
     if (!uin || !/^(group|private):\d+$/.test(source) || message?.self) return false;
     const override = this.db.prepare(
-      'SELECT primary_name, deleted FROM identity_asset_overrides WHERE uin=?'
+      'SELECT primary_name, deleted, reset_at FROM identity_asset_overrides WHERE uin=?'
     ).get(uin);
-    if (Number(override?.deleted) === 1) return false;
-    const observedName = cleanName(message?.senderName);
-    const primaryName = cleanName(override?.primary_name) || observedName;
     const at = Number(message?.ts) || Date.now();
+    if (Number(override?.reset_at) > 0 && at <= Number(override.reset_at)) return false;
+    const observedName = cleanName(message?.senderName);
+    const primaryName = Number(override?.deleted) === 1 ? observedName : cleanName(override?.primary_name) || observedName;
     const now = Date.now();
 
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if (Number(override?.deleted) === 1) this.db.prepare(`UPDATE identity_asset_overrides
+        SET deleted=0,primary_name='',profile_json='{}',is_friend=NULL,source_chat_key='',updated_at=? WHERE uin=?`).run(now, uin);
       this.db.prepare(`
         INSERT INTO people (
           uin, primary_name, first_seen_at, last_seen_at, message_count, chat_count,
@@ -1436,12 +1457,13 @@ export class IdentityStore {
       this.db.prepare(`
         INSERT INTO identity_asset_overrides (
           uin, primary_name, profile_json, is_friend, source_chat_key,
-          deleted, created_at, updated_at
-        ) VALUES (?, '', '{}', NULL, '', 1, ?, ?)
+          deleted, reset_at, created_at, updated_at
+        ) VALUES (?, '', '{}', NULL, '', 1, ?, ?, ?)
         ON CONFLICT(uin) DO UPDATE SET
           deleted=1,
+          reset_at=excluded.reset_at,
           updated_at=excluded.updated_at
-      `).run(uin, now, now);
+      `).run(uin, now, now, now);
       this.db.prepare('DELETE FROM friend_proposals WHERE uin=?').run(uin);
       this.db.prepare('DELETE FROM people WHERE uin=?').run(uin);
       this.db.exec('COMMIT');
