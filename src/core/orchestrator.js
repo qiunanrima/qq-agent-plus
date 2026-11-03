@@ -2755,6 +2755,10 @@ export class Orchestrator {
         this.emit('session-update', session.id);
       }
       if (!toolCalls.length) {
+        if (response.finishReason === 'length') {
+          session.outputTruncated = true;
+          session.finishReason ||= '模型输出被上限截断，尚未完成回复';
+        }
         // 没有工具调用 = 模型结束思考（文本不会发给 QQ）
         completed = true;
         break;
@@ -2895,6 +2899,11 @@ export class Orchestrator {
       proactive, manual, signal, runLimits,
       roundsExhausted: !finish && !completed
     });
+    if (session.outputTruncated && !session.sent.length && session.visibleReply !== true) {
+      const error = new Error('模型输出达到上限且没有发送回复；保留失败状态，未当作正常沉默确认已读');
+      error.code = 'MODEL_OUTPUT_TRUNCATED';
+      throw error;
+    }
     // 轮次用尽是"干不完活"的护栏，不是"需要人工核对"的故障：与 token 预算同口径，
     // 当作本轮正常收尾（已经说的话照常发出、消息正常 ack），并在会话里标注原因。
     // 不能标成可重试去重跑整轮：一条跑满 maxRounds 的会话重跑同样会跑满，成本放大且无解。
