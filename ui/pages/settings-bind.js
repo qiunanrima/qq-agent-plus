@@ -945,12 +945,13 @@ function bindSettingsListsAndGroups(c) {
   const conversationModeShell = $('#conversation-mode-shell');
   const conversationModeHint = $('#conversation-trigger-hint');
   const triggerHints = {
+    perception: '普通消息交给记忆总结模型感知，相关打标并按需唤醒；不使用下方随机概率。',
     legacy: '每批消息都依据以下档位决定是否启动。',
     threaded: '没有有效续接线程时使用以下档位；续接对象直接进入运行。',
     lifecycle: '没有活动生命周期时使用以下档位；生命周期内消息不再受档位拦截。'
   };
   const syncConversationMode = (mode) => {
-    const next = ['legacy', 'threaded', 'lifecycle'].includes(mode) ? mode : 'legacy';
+    const next = ['legacy', 'threaded', 'lifecycle', 'perception'].includes(mode) ? mode : 'legacy';
     if (conversationModeInput) conversationModeInput.value = next;
     if (conversationModeShell) {
       conversationModeShell.dataset.mode = next;
@@ -1382,7 +1383,6 @@ function bindSettingsModelsAndKeys(c) {
     syncThinkingUi(input?.value || '');
   });
 
-  // 思考模式分段选择：委托到稳定容器（两条档位条随供应商切换会重建，委托保证点击始终有效）。
   // 点段位=显式选择：统一模式下自动取消「跟随默认」；分设模式下两条互不影响。
   const thinkingControls = $('#thinking-controls');
   const thinkingDefaultCb = $('#cfg-thinking-default');

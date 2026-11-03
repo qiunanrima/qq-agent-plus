@@ -360,9 +360,9 @@ export const DEFAULT_CONFIG = {
   maxConcurrentRuns: 2,     // 全局同时进行的 agent 运行数
   // 对话线程试点：默认关闭，可从控制台动态切换，不影响旧触发模式。
   conversation: {
-    mode: 'legacy',                  // legacy | threaded | lifecycle
+    mode: 'legacy',                  // legacy | threaded | lifecycle | perception
     unifiedMode: true,               // false 时允许 groupModes 按群覆盖
-    groupModes: {},                  // { [groupId]: legacy | threaded | lifecycle }
+    groupModes: {},                  // { [groupId]: legacy | threaded | lifecycle | perception }
     continuationWindowMs: 180000,    // 机器人发言后，同一参与者确定性续接窗口
     threadTtlMs: 1800000,            // 线程空闲多久后关闭
     continuationContextCount: 100,   // threaded 续接唤醒时携带的历史消息条数
@@ -2177,11 +2177,11 @@ export function updateConfig(patch, { force = false } = {}) {
   next.subagent = normalizeSubagentConfig(next.subagent);
   next.dailyMoments.scheduleWindows = normalizeMomentWindows(next.dailyMoments.scheduleWindows);
   if (!['observe', 'active'].includes(next.runtime?.mode)) throw invalidConfig('Invalid runtime mode');
-  if (!['legacy', 'threaded', 'lifecycle'].includes(next.conversation?.mode)) {
+  if (!['legacy', 'threaded', 'lifecycle', 'perception'].includes(next.conversation?.mode)) {
     throw invalidConfig('Invalid conversation mode');
   }
   for (const mode of Object.values(next.conversation?.groupModes || {})) {
-    if (!['legacy', 'threaded', 'lifecycle'].includes(mode)) {
+    if (!['legacy', 'threaded', 'lifecycle', 'perception'].includes(mode)) {
       throw invalidConfig('Invalid group conversation mode');
     }
   }
@@ -2582,7 +2582,7 @@ export function conversationConfigForChat(chatKey) {
   const [kind, id] = String(chatKey || '').split(':');
   if (kind !== 'group' || !id) return conversation;
   const mode = conversation.groupModes?.[id];
-  return ['legacy', 'threaded', 'lifecycle'].includes(mode)
+  return ['legacy', 'threaded', 'lifecycle', 'perception'].includes(mode)
     ? { ...conversation, mode }
     : conversation;
 }

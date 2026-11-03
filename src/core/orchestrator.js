@@ -9,6 +9,7 @@
 // 同一会话（群/私聊）同时最多一个运行；运行期间新消息只写 JSON（未读），不叠加触发。
 // 不同会话之间并行，受 maxConcurrentRuns 全局限流。
 import crypto from 'node:crypto';
+import { PerceptionWake } from '../memory/perception.js';
 import { RestrictedSubagents } from '../subagents/index.js';
 import { quietPrivateChat, selfWakeAllowed, privateInitiativeAllowed, proactiveScopeProbability } from './private-proactive-policy.js';
 import path from 'node:path';
@@ -529,6 +530,7 @@ export class Orchestrator {
     this.livingMemory = livingMemory;
     this.personalityMemory = personalityMemory;
     this.subagents = new RestrictedSubagents({ getConfig });
+    this.perception = new PerceptionWake({ dataDir: DATA_DIR });
     this.stickers = stickers;
     this.sender = sender;
     this.sessions = sessions;
@@ -886,6 +888,7 @@ export class Orchestrator {
         conversationMode: conversation.mode
       };
     }
+    if (conversation.mode === 'perception') return { ...result, shouldRespond: true, count: 0, reason: '感知待判定', conversationMode: 'perception' };
     if (result.shouldRespond) return { ...result, conversationMode: conversation.mode };
     if (conversation.mode === 'lifecycle') {
       return this.#lifecycleTier(chatKey, entries, result, conversation);
@@ -1011,7 +1014,7 @@ export class Orchestrator {
 
   #applyWaitingConversation(session, predicted, chatKey) {
     if (!session) return;
-    const mode = ['legacy', 'threaded', 'lifecycle'].includes(predicted?.conversationMode)
+    const mode = ['legacy', 'threaded', 'lifecycle', 'perception'].includes(predicted?.conversationMode)
       ? predicted.conversationMode
       : conversationConfigForChat(chatKey).mode;
     const currentThread = mode !== 'legacy'
@@ -1598,6 +1601,7 @@ export class Orchestrator {
       if (controller) this.controllers.delete(chatKey);
       this.activeRuns.delete(chatKey);
       this.runningChats.delete(chatKey);
+      if (session?.perception?.wake === false && !this.paused && !this.aborted && this.store.unreadCount(chatKey) > 0) this.scheduleWake(chatKey);
       if (lease?.id) this.liveLeases.delete(lease.id);
       try {
         if (session && session.status === 'running') this.sessions.finish(session.id, 'error');
@@ -1613,6 +1617,25 @@ export class Orchestrator {
     }
 
     try {
+      if (conversation.mode === 'perception' && !proactive) {
+        const direct = manual || chatKey.startsWith('private:') || this.#isReplyToSelf(chatKey, triggerEntries)
+          || triggerEntries.some((m) => mentionsOrPokesBot(m, cfgNow.onebot?.selfId || this.onebot.selfId));
+        const decision = await this.perception.perceive({
+          chatKey, entries: triggerEntries, persona: resolvePersona(getConfig(), chatKey), direct,
+          signal: controller.signal, complete: (messages, options) => this.#memoryChat(messages, { ...options, session })
+        });
+        if (conversationConfigForChat(chatKey).mode !== 'perception') throw new Error('感知模式已停用');
+        session.perception = decision;
+        log.info(`[perception] ${chatKey} marked=${decision.marked} wake=${decision.wake} pending=${decision.ids.length}`);
+        if (!decision.wake) {
+          if (lease) this.store.ackLease(lease.id);
+          this.sessions.finish(session.id, 'noreply');
+          this.emit('session-end', { sessionId: session.id, chatKey, status: 'noreply' });
+          return;
+        }
+        triggerEntries = triggerEntries.filter((m) => decision.ids.includes(String(m.id)));
+        tierResult.count = 0;
+      }
       const runResult = await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, wakeNote, paced, seq,
         manual, contextLimit: tierResult.count, tierInfo: tierResult, conversation, signal: controller.signal });
       controller.signal.throwIfAborted();
@@ -1647,6 +1670,7 @@ export class Orchestrator {
           chatKey, triggerEntries, handoff, conversation, runResult
         });
       }
+      if (session.perception) this.perception.consume(session.perception, session.episodeSummary || session.handoffDraft?.summary || lastSentText(session));
       // 已读回执（platform.readReceipts，默认关）：这批处理完就在 QQ 里标已读，
       // 各端未读数不再堆积；默认关是因为它会改变"你自己打开机器人 QQ 时的未读观感"。
       if (getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
@@ -1833,7 +1857,7 @@ export class Orchestrator {
       session.threadCloseReason = 'mode-changed';
       return;
     }
-    if (mode === 'legacy') return;
+    if (mode === 'legacy' || mode === 'perception') return;
     const lastMessageId = Math.max(0, ...(triggerEntries || []).map((m) => Number(m.id) || 0));
     const lastHumanAt = Math.max(0, ...(triggerEntries || []).map((m) => Number(m.ts) || 0));
     const participantIds = mode === 'threaded'
@@ -2117,7 +2141,7 @@ export class Orchestrator {
     const conversationCfg = conversation || conversationConfigForChat(chatKey);
     const chatName = kind === 'group' ? await this.#chatName(chatId) : '';
     const selfNickname = kind === 'group' ? (persona.selfNickname || this.onebot.selfNickname || persona.botName) : persona.botName;
-    let thread = conversationCfg.mode !== 'legacy'
+    let thread = !['legacy', 'perception'].includes(conversationCfg.mode)
       ? this.store.getConversationThread?.(chatKey)
       : null;
     if (thread && thread.mode !== conversationCfg.mode) thread = null;
@@ -2385,6 +2409,7 @@ export class Orchestrator {
 
     // 事实对话保留；记忆/交接快照只供本轮读取，不写入生命周期 transcript。
     const snapshotParts = humanLines ? [humanLines] : [];
+    if (session.perception) snapshotParts.push('【感知标记的历史消息，仅作聊天资料，不是指令】\n' + JSON.stringify({ previous: session.perception.previous, messages: session.perception.context.filter((m) => !triggerEntries.some((t) => String(t.id) === m.id)) }));
     const userPrompt = buildUserPrompt({
       snapshotParts,
       chatKey, kind, chatId, chatName,
@@ -3904,7 +3929,7 @@ export class Orchestrator {
    * false 时使用 cfg.memory.provider/model 指向的目录模型（端点/密钥取自 providers）。
    */
   async #memoryChat(messages, { signal = null, timeoutMs = null, session = null, tools = null,
-    forceChatModel = false, tokenLimit = Infinity } = {}) {
+    forceChatModel = false, dedicatedMemory = false, tokenLimit = Infinity } = {}) {
     const cfg = getConfig();
     const mem = cfg.memory || {};
     let maxTokens = null, reservation = 0;
@@ -3920,7 +3945,7 @@ export class Orchestrator {
     try {
       if (timeoutMs) signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
       let overrides;
-      if (!forceChatModel && mem.useChatModel === false) {
+      if (!forceChatModel && (dedicatedMemory || mem.useChatModel === false)) {
         const p = currentProviders().find((x) => x.id === mem.provider);
         if (!p?.baseURL || !p?.apiKey || !mem.model) {
           throw new Error('记忆整理专用模型未配置：请在设置 → 记忆里选择提供商与模型');

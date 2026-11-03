@@ -20,10 +20,11 @@ export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemor
   write('context.json', store.contextResetSnapshot());
   store.createResetBackup(path.join(directory, 'messages.sqlite'));
   memory.hippocampus?.createResetBackup(path.join(directory, 'hippocampus.sqlite'));
+  orchestrator.perception?.createResetBackup(path.join(directory, 'perception.sqlite'));
   write('identity-profiles.json', assets.memoryResetSnapshot());
   livingMemory.createResetBackup(path.join(directory, 'living-memory.sqlite'));
   personalityMemory?.createResetBackup(path.join(directory, 'personality-memory.sqlite'));
-  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'hippocampus', 'identity-profiles', 'living-memory', 'personality-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
+  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'hippocampus', 'perception', 'identity-profiles', 'living-memory', 'personality-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
   write('manifest.json', manifest);
   let stage = 'personality-memory';
   const cleared = {};
@@ -32,6 +33,7 @@ export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemor
     stage = 'living-memory';
     cleared.semantic = livingMemory.clearAll();
     stage = 'person-memory';
+    orchestrator.perception?.clearAll();
     cleared.people = memory.clearAll();
     stage = 'identity-profiles';
     cleared.identity = assets.clearMemoryProfiles();

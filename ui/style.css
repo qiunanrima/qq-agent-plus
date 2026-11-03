@@ -1387,7 +1387,7 @@ html[data-glass='liquid'] .chat-item.selected { padding-left: 17px; }
 .conversation-mode-shell { margin-bottom: 16px; }
 .conversation-mode-switch {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);

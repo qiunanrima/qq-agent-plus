@@ -79,7 +79,7 @@ const THEME_VALUES = ['dark', 'light', 'system'];
 
 const STATUS_LABEL = { waiting: '等待中', done: '已发言', noreply: '未回复', running: '运行中', error: '出错', aborted: '中止' };
 
-const CONVERSATION_MODE_LABEL = { legacy: '传统触发', threaded: '参与者续接', lifecycle: '完整生命周期' };
+const CONVERSATION_MODE_LABEL = { legacy: '传统触发', threaded: '参与者续接', lifecycle: '完整生命周期', perception: '感知唤醒' };
 
 const THREAD_STATE_LABEL = {
   starting: '启动中',

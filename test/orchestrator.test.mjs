@@ -162,6 +162,55 @@ describe('Orchestrator', () => {
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
 
+  it('感知专用模型缺失时不回退主模型，明确回复可直接唤醒', async (t) => {
+    const { runner, cfg, append, sessions } = fixture(t);
+    const { PerceptionWake } = await import('../src/memory/perception.js');
+    runner.perception = new PerceptionWake({ dataDir: fs.mkdtempSync(path.join(root, 'perception-missing-')) });
+    cfg.conversation.mode = 'perception';
+    cfg.memory = { ...cfg.memory, provider: '', model: '' };
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: 'direct-finish', type: 'function', function: { name: 'finish', arguments: '{"summary":"收到"}' } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1, '普通消息'); await runner.wake('group:1');
+    assert.equal(calls, 0);
+    assert.match(sessions.get(sessions.listSummaries(1)[0].id).error, /记忆整理专用模型未配置/);
+    append(2, '直接回复机器人', '42', { senderId: '888' }); await runner.wake('group:1');
+    assert.equal(calls, 1);
+  });
+
+  it('感知模式使用专用总结模型，弱注意不调用聊天，唤醒只注入标记', async (t) => {
+    const { runner, cfg, append, sessions } = fixture(t);
+    const { PerceptionWake } = await import('../src/memory/perception.js');
+    runner.perception = new PerceptionWake({ dataDir: fs.mkdtempSync(path.join(root, 'perception-')) });
+    cfg.conversation.mode = 'perception';
+    cfg.memory = { ...cfg.memory, useChatModel: true, provider: 'perception-test', model: 'small' };
+    cfg.providers = [{ id: 'perception-test', baseURL: 'https://perception.invalid', apiKey: 'test-small-key' }];
+    let scans = 0, chats = 0;
+    let markedId, lastBody;
+    globalThis.fetch = async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(url).startsWith('https://perception.invalid')) {
+        scans++;
+        assert.equal(body.model, 'small'); assert.equal(body.tools, undefined);
+        const data = JSON.parse(body.messages[1].content);
+        markedId = data.messages[0].id;
+        return Response.json({ choices: [{ message: { content: JSON.stringify({ wake: scans > 1, markedMessageIds: [markedId], topic: '红豆' }) } }], usage: { total_tokens: 10 } });
+      }
+      chats++; lastBody = body;
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: 'perception-finish', type: 'function', function: { name: 'finish', arguments: '{"summary":"讨论红豆"}' } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1, '相关红豆片段'); await runner.wake('group:1');
+    assert.equal(scans, 1); assert.equal(chats, 0);
+    append(2, '现在适合参与'); append(3, '无关片段不应注入'); await runner.wake('group:1');
+    assert.equal(scans, 2); assert.equal(chats, 1);
+    const input = JSON.stringify(lastBody.messages);
+    assert.match(input, /相关红豆片段/); assert.doesNotMatch(input, /无关片段不应注入/);
+    const session = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(session.conversationMode, 'perception');
+  });
+
   it('角色核心常驻，记忆总结模型提词并注入背景，仍可主动查全文，换卡不串资料', async (t) => {
     const { runner, cfg, append, sessions } = fixture(t);
     const before = sessions.todayUsage(todayKey()).totalTokens;

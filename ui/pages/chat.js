@@ -113,13 +113,14 @@ async function loadHumanizeState() {
 }
 
 function renderConversationModePanels(conversation = {}) {
-  const activeMode = ['legacy', 'threaded', 'lifecycle'].includes(conversation.mode)
+  const activeMode = ['legacy', 'threaded', 'lifecycle', 'perception'].includes(conversation.mode)
     ? conversation.mode
     : 'legacy';
   const modes = [
     ['legacy', '传统触发', '按规则启动'],
     ['threaded', '参与者续接', '短窗口延续'],
-    ['lifecycle', '完整生命周期', '持续批次判断']
+    ['lifecycle', '完整生命周期', '持续批次判断'],
+    ['perception', '感知唤醒', '轻量感知 · 相关才唤醒']
   ];
   const panelAttrs = (mode) =>
     `class="conversation-mode-panel${activeMode === mode ? '' : ' hidden'} mode-${mode}" `
@@ -140,6 +141,11 @@ function renderConversationModePanels(conversation = {}) {
       <input type="hidden" id="cfg-conversation-mode" value="${activeMode}" />
 
       <div class="conversation-mode-stage">
+        <section ${panelAttrs('perception')}>
+          <div class="conversation-mode-heading"><div><strong>感知唤醒</strong><span>记忆总结模型筛选相关消息，值得参与时才调用聊天模型</span></div></div>
+          <div class="conversation-mode-flow"><span>轻量感知</span><i></i><span>相关消息打标</span><i></i><span>按需唤醒</span></div>
+          <div class="hint">先在「记忆」选择专用总结模型。普通群消息只做相关性感知；@、回复机器人和私聊直接回应。标记按会话与角色隔离，保留最多60条、24小时，唤醒后统一注入并消费，不沿用完整生命周期历史。日志中搜索 [perception] 查看打标与唤醒结果。停用模式保留未过期标记。</div>
+        </section>
         <section ${panelAttrs('legacy')}>
           <div class="conversation-mode-heading">
             <div>
@@ -236,7 +242,7 @@ return `
             <select id="conversation-group-mode">
               <option value="legacy">传统触发</option>
               <option value="threaded">参与者续接</option>
-              <option value="lifecycle">完整生命周期</option>
+              <option value="lifecycle">完整生命周期</option><option value="perception">感知唤醒</option>
             </select>
           </div>
         </div>

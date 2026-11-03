@@ -34,12 +34,14 @@ function conversationStatusText(s) {
 }
 
 function renderSessionModeBand(s) {
-  const mode = ['legacy', 'threaded', 'lifecycle'].includes(s.conversationMode)
+  const mode = ['legacy', 'threaded', 'lifecycle', 'perception'].includes(s.conversationMode)
     ? s.conversationMode
     : 'legacy';
   const stateLabel = THREAD_STATE_LABEL[lifecycleStateOf(s)]
-    || (mode === 'legacy' ? '单轮运行' : '尚未建立线程');
-  const detail = mode === 'legacy'
+    || (mode === 'perception' ? (s.perception?.wake ? '已唤醒' : '轻量感知') : mode === 'legacy' ? '单轮运行' : '尚未建立线程');
+  const detail = mode === 'perception'
+    ? `本批标记 ${Number(s.perception?.marked) || 0} 条；积累 ${s.perception?.ids?.length || 0} 条，仅在需要参与时调用聊天模型`
+    : mode === 'legacy'
     ? '本轮按响应档位独立触发'
     : mode === 'threaded'
       ? '当前参与者可在续接窗口内确定性唤醒'
@@ -131,7 +133,7 @@ function buildSessionDisplayItems(sessions = []) {
   const items = [];
   const grouped = new Map();
   for (const session of sessions) {
-    const mode = ['legacy', 'threaded', 'lifecycle'].includes(session.conversationMode)
+    const mode = ['legacy', 'threaded', 'lifecycle', 'perception'].includes(session.conversationMode)
       ? session.conversationMode
       : 'legacy';
     const groupable = mode !== 'legacy' && Boolean(session.threadId);
@@ -227,7 +229,7 @@ function renderSessionList() {
     const searchHtml = Number(s.totalSearches) > 0
       ? `<span class="muted">搜 ${s.totalSearches}</span>`
       : '';
-    const mode = ['legacy', 'threaded', 'lifecycle'].includes(s.conversationMode)
+    const mode = ['legacy', 'threaded', 'lifecycle', 'perception'].includes(s.conversationMode)
       ? s.conversationMode
       : 'legacy';
     const isNew = !state.seenSessionIds.has(s.displayKey);

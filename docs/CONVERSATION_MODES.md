@@ -1,6 +1,6 @@
 # Conversation Modes
 
-The conversation engine has three runtime-selectable modes. The global default
+The conversation engine has four runtime-selectable modes. The global default
 can be overridden for each allow-listed group — turn off `conversation.unifiedMode`
 (the「统一设置响应概率」checkbox in the console) first; with it on, per-group
 overrides are ignored. Private chats use the global mode.
@@ -35,6 +35,29 @@ The default lifecycle deadlines are:
 
 These are application deadlines. No HTTP request or model process is kept open
 while waiting.
+
+### 感知唤醒（Perception）
+
+在「设置 → 聊天 → 对话模式」选择「感知唤醒」，也支持关闭统一设置后按群选择。
+这是独立聊天模式，不改变现有完整生命周期模式，切换无需重启。
+
+普通群消息按现有防抖批次进入专用记忆总结模型，只返回相关消息ID、话题及是否值得参与。
+必须先在「设置 → 记忆」选择总结模型提供商和模型；即使记忆整理设为跟随聊天模型，
+感知也使用选定的专用模型，不回退主模型。未配置或判断失败会记录错误，保留现有标记。
+@、回复机器人、私聊和人工唤醒直接运行，不必先经过感知；主动任务保留原有触发策略。
+
+感知输入只有角色简述、本批消息摘录、少量积累标记和最近话题；没有工具或完整记忆快照。
+值得留意与值得开口独立判断，不按标记次数机械唤醒。
+标记保存在 `perception.sqlite`，按会话与角色隔离，最多60条、24小时，重启保留。
+主模型唤醒时一次性接收积累标记与本批相关原消息，不重复注入本批消息，
+不携带未标记的历史或完整生命周期供应商记录。正常记忆与角色提示词照常提供。
+成功后只消费本次快照内的标记，保存最近话题；失败保留标记，不自动重试未知外部写入。
+最近成功运行五分钟内作为活跃话题供感知参考，其余时间仍由小模型决定弱注意或唤醒。
+
+日志 `[perception]` 包含会话、打标数、是否唤醒及积累条数，不输出聊天正文。
+感知用量计入辅助模型与每日用量；没有唤醒时会话记为不回复，主聊天模型调用数为零。
+切回其他模式停止感知且保留标记。一键清除全部记忆会先备份再清除感知标记与话题。
+运维备份包含该数据库。回退可直接选择原来的聊天模式。
 
 ## DeepSeek Context
 
