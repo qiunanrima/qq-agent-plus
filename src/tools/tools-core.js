@@ -1,3 +1,5 @@
+import { normalizeMid, stripMemorySources, sanitizeDeep } from './result-sanitize.js';
+export { normalizeMid, sanitizeDeep } from './result-sanitize.js';
 // 原生工具集（OpenAI function calling 格式）。
 // 与原版 MCP 工具的关键区别：每个工具自动绑定本次运行对应的会话（chatKey），
 // 不再需要 key/token 参数 —— 模型物理上无法把消息发到别的群/私聊，安全性反而更强。
@@ -6,6 +8,7 @@
 import crypto from 'node:crypto';
 import { selfWakeAllowed } from '../core/private-proactive-policy.js';
 import { getConfig, imageGenAvailable, imageGenMaxPerHour } from '../core/config.js';
+import { classifyTransportFailure } from '../onebot/sender.js';
 import { imageType } from '../core/image-type.js';
 import { MAX_REMINDER_TEXT, nextAtFromHHMM, normalizeRepeat, nextOccurrenceAt } from '../core/reminders.js';
 import { synthesizeSpeech, ttsConfigured } from '../llm/tts.js';
@@ -42,6 +45,9 @@ const avatarQuota = createQuota({ windowMs: 7 * 24 * 3600_000 }); // 换头像�
 const albumWriteQuota = createQuota({ windowMs: 3600_000 });
 // 私聊文本文件：文件比消息显眼，且内容可能很大；默认每天 10 个。
 const privateFileQuota = createQuota({ windowMs: 24 * 3600_000 });
+// TTS 按字符/按次计费，且合成发生在发送限频之前；和 ASR/生图一样必须有独立闸门。
+// 默认每会话 6 条/小时、全局 30 条/小时，可用 tts.maxPerHour / tts.maxPerHourPerChat 覆盖。
+const voiceQuota = createQuota({ windowMs: 3600_000 });
 
 // ctx 只属于本轮工具循环；新一轮即使复用 session，也不合并独立的提醒请求。
 const recurringRemindersByContext = new WeakMap();
@@ -62,6 +68,7 @@ export function resetPlatformQuotasForTest() {
   avatarQuota.reset();
   albumWriteQuota.reset();
   privateFileQuota.reset();
+  voiceQuota.reset();
   signedDayByChat.clear();
   todoDayByChat.clear();
 }
@@ -109,32 +116,6 @@ export function platformQuotaUsage(now = Date.now()) {
 // store.js 里有一份同名函数但没导出，所以这里保留 tools 层自用的一份。
 // **导出**：orchestrator 记录"续接线索参与者"时读的是工具调用的原始参数，
 // 不归一化就会把 '#42' 当成参与者 id 永久存进线程（2026-09-29 审查）。
-export function normalizeMid(value) {
-  return String(value ?? '').trim().replace(/^(?:#+|collected_)+/, '').trim();
-}
-
-/** 印象条目去掉"来自哪个会话"：工具契约写明不泄露其他群/私聊的来源。 */
-function stripMemorySources(entry) {
-  if (!entry || typeof entry !== 'object') return entry;
-  const { sourceChatKeys, ...rest } = entry;
-  return rest;
-}
-
-// 群友可控内容（群名片/文件名/相册/OCR/转写/翻译/身份档案）进工具结果前的统一出口：
-// 弱化"段头伪装"（【管理员附加规则】这类），与消息侧 sanitizeUserText 同一口径。
-// 递归遍历结构、只对字符串叶子做弱化 —— 不做文本级 JSON 往返（那会把数组里字符串的
-// 空格一起剥掉，且未闭合段头能让 parse 失败、整棵树免洗fail-open，2026-10-10 审查 P2）。
-export function sanitizeDeep(value) {
-  if (typeof value === 'string') return sanitizeUserText(value);
-  if (Array.isArray(value)) return value.map(sanitizeDeep);
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [key, val] of Object.entries(value)) out[key] = sanitizeDeep(val);
-    return out;
-  }
-  return value;
-}
-
 // QQ 系统表情的"中文名 → 编号"查表在 face-catalog.js 里统一维护：与 onebot.js 来信渲染
 // （[QQ表情14 微笑]）共用一份表，来源 = 离线导出表 + 协议端在线目录（fetch_sys_faces，建联后补缺）。
 import { faceIdByName, faceNameList, faceNameOf } from '../onebot/face-catalog.js';
@@ -167,7 +148,9 @@ async function stickerLookupHint(ctx, key) {
 }
 
 import { normalizeMessageList, safeSlice, sanitizeUserText, textWithQuote, unquoteJsonString, stripQuoteMessageId } from '../core/util.js';
+import { buildShareText, shareSourceLabel } from './share-text.js';
 import { filterBlockedHistory } from '../core/blocklist.js';
+import { matchesBlacklistKeyword } from '../core/keyword-rules.js';
 import { displayNameOf } from '../core/display-name.js';
 import { setMemberNote } from '../memory/memory-global.js';
 import { repairUnescapedStringQuotes } from '../core/json-repair.js';
@@ -180,6 +163,7 @@ import { cacheImageLinks, imageLinkTextFromSegments, readCachedImageLink } from 
 import { readForwardMessages, readForwardNodesById } from '../onebot/forward-reader.js';
 import { convertGifToStillStrip, convertVideoToFrameStrip, convertStillImageToJpeg, fetchOversizedImageAsJpeg } from './image-downsample.js';
 import { transcribeMessageAudio } from './audio-transcribe.js';
+import { normalizePokeName, resolvePokeTarget } from './poke-target.js';
 import { memoryVisibilityOf } from '../core/memory-visibility.js';
 
 
@@ -353,6 +337,50 @@ function afterSent(run) {
     run();
   } catch (error) {
     console.warn('[tools] 消息已送达但记账失败（该条仍算已发出，不会上报失败）:', error?.message ?? error);
+  }
+}
+
+/**
+ * 直连协议端的写操作没有 outbox 兜底（超时/连接重置不会进 unknown），
+ * 这里只登记到副作用账本，让"结果未知"在控制台与诊断包里可见。
+ *
+ * 第一阶段只记录、不拦截：这些动作大体幂等（重复贴一次表情、重复设一次签名结果相同），
+ * 而且各自有 24h 闸门配额。观察到真实的 unknown 比例后再决定是否禁止自动重试
+ * （docs/EFFECT-LEDGER.md A5）。账本缺失或自身出错时绝不能影响工具调用本身。
+ */
+async function trackDirectWrite(ctx, kind, detail, run) {
+  const effects = ctx?.effects;
+  if (!effects || typeof effects.begin !== 'function') return run();
+  let began = null;
+  try {
+    began = effects.begin({
+      kind: `direct:${kind}`,
+      chatKey: ctx?.chatKey || '',
+      // 每次调用一个唯一的键：只做留痕，不参与去重（重复贴表情是用户/模型自己的选择）
+      idemKey: `direct:${kind}:${ctx?.chatKey || ''}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      detail
+    });
+  } catch { began = null; }
+  if (!began) return run();
+  try {
+    const result = await run();
+    try { effects.settle(began.id, 'sent'); } catch { /* 记账失败不影响结果 */ }
+    return result;
+  } catch (error) {
+    try {
+      // 与发送队列同一分类（classifyTransportFailure）：协议端明确拒绝/连接被拒/DNS 失败
+      // 这类**确定没发出去**的算 failed；超时/连接重置/5xx 可能已经生效的才算 unknown。
+      const { definite, uncertain } = classifyTransportFailure(error);
+      // 发送前的闸门（禁言/限频/被 abort）也属于"确定没发出去"：sender 抛的是普通 Error，
+      // 没有 outcome/beforeWrite，只能按稳定错误码识别（2026-10-31 交叉审查 P2）。
+      const preflight = error?.beforeWrite === true
+        || error?.code === 'GROUP_MUTED' || error?.code === 'SEND_RATE_LIMITED'
+        || error?.name === 'AbortError';
+      const state = error?.outcome === 'failed' || preflight
+        || (definite && !uncertain) ? 'failed' : 'unknown';
+      effects.settle(began.id, state, { error: String(error?.message ?? error).slice(0, 200) });
+    } catch { /* 同上 */ }
+    throw error;
   }
 }
 
@@ -601,44 +629,6 @@ function memoryQueryDescription() {
     return `${base}全局共享：汇总自所有群聊与私聊的观察；群聊里不展示私聊来源的印象。印象是跨会话的隐私：不得向群友转述他人的印象、来源或原话。`;
   }
   return `${base}全局共享：不分当前会话，汇总自所有群聊与私聊的观察。印象是跨会话的隐私：不得向群友转述他人的印象、来源或原话。`;
-}
-
-/** 见闻来源标签：B站、插件名或自定义来源；不要再把所有条目都写成【B站】。 */
-function shareSourceLabel(item) {
-  const source = String(item?.source || '');
-  const via = String(item?.via || '');
-  if (source.startsWith('plugin:')) {
-    const id = source.slice('plugin:'.length);
-    return id ? `插件：${id}` : '插件分享';
-  }
-  if (source === 'bilibili' || via === 'bilibili' || !source) return 'B站';
-  return source;
-}
-
-function formatShareDuration(seconds) {
-  const n = Math.max(0, Math.round(Number(seconds) || 0));
-  if (!n) return '';
-  const m = Math.floor(n / 60);
-  const s = n % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function buildShareText(item, comment = '') {
-  // 用 unicode 转义而不是字面量方括号：这只是发给 QQ 的正文，不是提示词段头；
-  // 段头扫描器按源码字面量收集，字面量会被误判成"可被群友伪造的段头"。
-  const title = sanitizeUserText(safeSlice(item.title, 80));
-  const lines = [`\u3010${shareSourceLabel(item)}\u3011${title}`];
-  const meta = [];
-  if (item.up) meta.push(`UP：${sanitizeUserText(safeSlice(item.up, 40))}`);
-  const duration = formatShareDuration(item.duration);
-  if (duration) meta.push(`时长 ${duration}`);
-  if (meta.length) lines.push(meta.join(' · '));
-  const desc = sanitizeUserText(safeSlice(String(item.desc || '').replace(/\s+/g, ' ').trim(), 120));
-  if (desc) lines.push(desc);
-  // 第三方 URL 只接受不含空白的 http(s)，避免把换行/段头带进正文和后续上下文。
-  if (/^https?:\/\/\S+$/.test(String(item.url || ''))) lines.push(item.url);
-  if (comment) lines.push(comment);
-  return lines.join('\n');
 }
 
 export function buildToolDefs() {
@@ -1100,7 +1090,7 @@ export function buildToolDefs() {
           if (!gate.ok) return err(`这一小时贴的表情够多了（上限 ${reactLimit} 次），过一会儿再贴`);
           try {
             // 与 OneBotClient.reactToMessage 同一实现（wire 形状只留一处，2026-10-07 复审 P3）
-            await ctx.onebot.reactToMessage(mid, emojiId, args.set !== false, ctx.signal);
+            await trackDirectWrite(ctx, 'react', { mid, emojiId }, () => ctx.onebot.reactToMessage(mid, emojiId, args.set !== false, ctx.signal));
             actionDone(ctx, 'react');
           } catch (error) {
             reactionQuota.refund(ctx.chatKey, reservedAt);
@@ -1164,7 +1154,7 @@ export function buildToolDefs() {
           const reservedAt = Date.now();
           if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的资料改动次数用完了（每天最多 ${profileLimit} 次）`);
           try {
-            await ctx.onebot.call('set_self_longnick', { long_nick: signature }, 15000, ctx.signal);
+            await trackDirectWrite(ctx, 'signature', { signature }, () => ctx.onebot.call('set_self_longnick', { long_nick: signature }, 15000, ctx.signal));
           } catch (error) {
             profileQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -1196,7 +1186,7 @@ export function buildToolDefs() {
           const reservedAt = Date.now();
           if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的资料改动次数用完了（每天最多 ${profileLimit} 次）`);
           try {
-            await ctx.onebot.call('set_diy_online_status', { face_id: faceId, face_type: 1, wording }, 15000, ctx.signal);
+            await trackDirectWrite(ctx, 'status', { faceId, wording }, () => ctx.onebot.call('set_diy_online_status', { face_id: faceId, face_type: 1, wording }, 15000, ctx.signal));
           } catch (error) {
             profileQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -1258,7 +1248,7 @@ export function buildToolDefs() {
           const reservedAt = Date.now();
           if (!avatarQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`这周的换头像次数用完了（每周最多 ${avatarLimit} 次）`);
           try {
-            await ctx.onebot.setAvatar(file, { signal: ctx.signal });
+            await trackDirectWrite(ctx, 'avatar', {}, () => ctx.onebot.setAvatar(file, { signal: ctx.signal }));
           } catch (error) {
             avatarQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -1298,7 +1288,7 @@ export function buildToolDefs() {
           const reservedAt = Date.now();
           if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的资料改动次数用完了（每天最多 ${profileLimit} 次）`);
           try {
-            await ctx.onebot.setProfile({ nickname: nickname || undefined, personalNote, sex }, { signal: ctx.signal });
+            await trackDirectWrite(ctx, 'profile', {}, () => ctx.onebot.setProfile({ nickname: nickname || undefined, personalNote, sex }, { signal: ctx.signal }));
           } catch (error) {
             profileQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -1390,7 +1380,7 @@ export function buildToolDefs() {
           if (signedDayByChat.get(ctx.chatKey) === day) {
             return ok({ signed: false, note: '今天这个群已经签过了，不用再签。' });
           }
-          await ctx.onebot.call('set_group_sign', { group_id: Number(ctx.chatId) }, 15000, ctx.signal);
+          await trackDirectWrite(ctx, 'group-sign', { groupId: Number(ctx.chatId) }, () => ctx.onebot.call('set_group_sign', { group_id: Number(ctx.chatId) }, 15000, ctx.signal));
           signedDayByChat.set(ctx.chatKey, day);
           return ok({ signed: true, note: '已签到。' });
         } catch (error) {
@@ -1427,7 +1417,7 @@ export function buildToolDefs() {
           if (today.count >= TODO_PER_GROUP_PER_DAY) {
             return err(`今天这个群的群待办已经设了 ${TODO_PER_GROUP_PER_DAY} 条，够多了，明天再说。`);
           }
-          await ctx.onebot.call('set_group_todo', { group_id: Number(ctx.chatId), message_id: Number(mid) }, 15000, ctx.signal);
+          await trackDirectWrite(ctx, 'group-todo', { groupId: Number(ctx.chatId), mid }, () => ctx.onebot.call('set_group_todo', { group_id: Number(ctx.chatId), message_id: Number(mid) }, 15000, ctx.signal));
           today.mids.add(mid);
           today.count += 1;
           todoDayByChat.set(ctx.chatKey, today);
@@ -1555,9 +1545,9 @@ export function buildToolDefs() {
           if (!remarkQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的备注次数用完了（每天最多 ${remarkLimit} 次）`);
           try {
             if (userId) {
-              await ctx.onebot.call('set_friend_remark', { user_id: Number(userId), remark }, 15000, ctx.signal);
+              await trackDirectWrite(ctx, 'remark', { userId: Number(userId), remark }, () => ctx.onebot.call('set_friend_remark', { user_id: Number(userId), remark }, 15000, ctx.signal));
             } else {
-              await ctx.onebot.call('set_group_remark', { group_id: Number(ctx.chatId), remark }, 15000, ctx.signal);
+              await trackDirectWrite(ctx, 'remark', { groupId: Number(ctx.chatId), remark }, () => ctx.onebot.call('set_group_remark', { group_id: Number(ctx.chatId), remark }, 15000, ctx.signal));
             }
           } catch (error) {
             remarkQuota.refund(ctx.chatKey, reservedAt);
@@ -1815,9 +1805,9 @@ export function buildToolDefs() {
             return err(`这一小时的相册互动够多了（上限 ${albumLimit} 次），过一会儿再点。`);
           }
           try {
-            await ctx.onebot.call('set_group_album_media_like', {
+            await trackDirectWrite(ctx, 'album-like', { albumId, batchId, lloc }, () => ctx.onebot.call('set_group_album_media_like', {
               group_id: Number(ctx.chatId), album_id: albumId, batch_id: batchId, ...(lloc ? { lloc } : {})
-            }, 20000, ctx.signal);
+            }, 20000, ctx.signal));
           } catch (error) {
             albumWriteQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -1856,9 +1846,9 @@ export function buildToolDefs() {
             return err(`这一小时的相册互动够多了（上限 ${albumLimit} 次），过一会儿再评。`);
           }
           try {
-            await ctx.onebot.call('do_group_album_comment', {
+            await trackDirectWrite(ctx, 'album-comment', { albumId, lloc }, () => ctx.onebot.call('do_group_album_comment', {
               group_id: Number(ctx.chatId), album_id: albumId, lloc, content
-            }, 20000, ctx.signal);
+            }, 20000, ctx.signal));
           } catch (error) {
             albumWriteQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -2073,6 +2063,9 @@ export function buildToolDefs() {
         required: ['bvid']
       },
       async execute(ctx, args) {
+        // 发送前占用的分享名额；发送确定失败/异常时退回。发送成功后立刻清空，
+        // 后续 cover/feedback 出错不能把已发出的分享额度退回去。
+        let reservation = null;
         try {
           const feed = ctx.getLifeFeed?.();
           if (!feed) return err('生活层没有开启');
@@ -2084,8 +2077,16 @@ export function buildToolDefs() {
           if (!humanShare) {
             if (feed.shareMode?.() === 'manual') return err('生活层当前是手动分享模式，等管理员在控制台点分享。', { reportIncident: false });
             if (feed.isShareTarget?.(ctx.chatKey) === false) return err('当前会话不在见闻分享目标里。', { reportIncident: false });
+          }
+          // 每日分享上限对人工和自动都生效（手动只跳过“手动模式/目标白名单”这两道，不跳过额度）。
+          // 有 reserveShare 的版本用同步占位，避免两个会话都在 await 发送时同时看到剩 1 次。
+          if (typeof feed.reserveShare === 'function') {
+            const reserved = feed.reserveShare(item.id, { manual: humanShare });
+            if (reserved?.error) return err(reserved.error);
+            reservation = { feed, id: item.id };
+          } else {
             const left = feed.shareQuotaLeft?.();
-            if (Number.isFinite(left) && left <= 0) return err('今天的自动分享额度已经用完，明天再继续');
+            if (Number.isFinite(left) && left <= 0) return err('今天的分享额度已经用完，明天再继续');
           }
           const comment = safeSlice(String(args.comment ?? ''), 300);
           const text = buildShareText(item, comment);
@@ -2094,8 +2095,14 @@ export function buildToolDefs() {
             runId: ctx.session.leaseId, signal: ctx.signal, persona: false
           });
           if (!result.sent.length) {
+            if (reservation) {
+              try { reservation.feed.releaseShare?.(reservation.id); } catch { /* 忽略 */ }
+              reservation = null;
+            }
             return err(`标题链接没有发出去：${result.failed?.[0]?.error || '未知原因'}`);
           }
+          // 正文已确认发出：额度不能再退回（封面/反馈失败只会丢封面或统计）。
+          reservation = null;
           let coverSent = false;
           if (item.cover) {
             try {
@@ -2128,6 +2135,9 @@ export function buildToolDefs() {
           feed.feedback({ id: item.id, action: 'shared', chatKey: ctx.chatKey, messageId: result.sent[0]?.messageId, manual: humanShare });
           return ok({ sent: result.sent.length, cover: coverSent, note: '已发标题链接和封面；不要再重复发同一条。' });
         } catch (error) {
+          if (reservation) {
+            try { reservation.feed.releaseShare?.(reservation.id); } catch { /* 忽略 */ }
+          }
           return sendErr(error);
         }
       }
@@ -2149,9 +2159,10 @@ export function buildToolDefs() {
           if (ctx.sender?.setCard) {
             // 只传 signal：名片写入不进 outbox，没有租约记账要配对（原先还传了 runId，
             // 而 setCard 并不消费它 —— 2026-10-05 复审顺手去掉）。
-            await ctx.sender.setCard(ctx.chatKey, card, { signal: ctx.signal });
+            // 但发送路径同样要进账本：否则生产上"群名片"这类写入完全没有可见性。
+            await trackDirectWrite(ctx, 'group-card', { card }, () => ctx.sender.setCard(ctx.chatKey, card, { signal: ctx.signal }));
           } else if (ctx.onebot?.setGroupCard) {
-            await ctx.onebot.setGroupCard(ctx.chatId, ctx.selfId, card, ctx.signal);
+            await trackDirectWrite(ctx, 'group-card', { card }, () => ctx.onebot.setGroupCard(ctx.chatId, ctx.selfId, card, ctx.signal));
           } else {
             return err('当前环境不支持改群名片');
           }
@@ -2189,7 +2200,7 @@ export function buildToolDefs() {
           const minutesValue = Number(rawMinutes);
           if (!Number.isInteger(minutesValue) || minutesValue < 0) return err('minutes 必须是 0 或正整数（0 = 解禁）');
           const minutes = Math.min(43200, minutesValue);
-          await ctx.onebot.setGroupBan(ctx.chatId, Number(targetCheck.target), minutes * 60, ctx.signal);
+          await trackDirectWrite(ctx, 'ban', { target: targetCheck.target, minutes }, () => ctx.onebot.setGroupBan(ctx.chatId, Number(targetCheck.target), minutes * 60, ctx.signal));
           return ok({ targetUserId: targetCheck.target, minutes, note: minutes ? '已禁言。' : '已解除禁言。' });
         } catch (error) {
           return sendErr(error, {}, `禁言失败：${String(error?.message ?? error).slice(0, 120)}`);
@@ -2215,7 +2226,7 @@ export function buildToolDefs() {
           if (!admin.ok) return err(admin.reason, { reportIncident: false });
           const targetCheck = moderationTargetError(ctx, args.targetUserId, admin.owner);
           if (targetCheck.error) return err(targetCheck.error, { reportIncident: false });
-          await ctx.onebot.kickGroupMember(ctx.chatId, Number(targetCheck.target), args.rejectAddRequest === true, ctx.signal);
+          await trackDirectWrite(ctx, 'kick', { target: targetCheck.target }, () => ctx.onebot.kickGroupMember(ctx.chatId, Number(targetCheck.target), args.rejectAddRequest === true, ctx.signal));
           return ok({ targetUserId: targetCheck.target, note: '已移出群。' });
         } catch (error) {
           return sendErr(error, {}, `移出群失败：${String(error?.message ?? error).slice(0, 120)}`);
@@ -2247,7 +2258,7 @@ export function buildToolDefs() {
             const admin = adminRequest(ctx, [/撤回|撤掉|删掉|删除消息/]);
             if (!admin.ok) return err(admin.reason, { reportIncident: false });
           }
-          await ctx.onebot.deleteMessage(Number(mid), ctx.signal);
+          await trackDirectWrite(ctx, 'delete-msg', { mid }, () => ctx.onebot.deleteMessage(Number(mid), ctx.signal));
           // 保留 sent 记录但标 recalled：reply-guard 仍有"确实发过"的证据，不会误补兜底。
           for (const item of ctx.session?.sent || []) {
             if (item?.messageId != null && String(item.messageId) === String(mid)) item.recalled = true;
@@ -2278,7 +2289,7 @@ export function buildToolDefs() {
           if (typeof args.enable !== 'boolean') return err('enable 必须是 true 或 false');
           const targetCheck = moderationTargetError(ctx, args.targetUserId, admin.owner);
           if (targetCheck.error) return err(targetCheck.error, { reportIncident: false });
-          await ctx.onebot.setGroupAdmin(ctx.chatId, Number(targetCheck.target), args.enable, ctx.signal);
+          await trackDirectWrite(ctx, 'set-admin', { target: targetCheck.target, enable: args.enable }, () => ctx.onebot.setGroupAdmin(ctx.chatId, Number(targetCheck.target), args.enable, ctx.signal));
           return ok({ targetUserId: targetCheck.target, enable: args.enable, note: '群管理员设置已更新。' });
         } catch (error) {
           return sendErr(error, {}, `设置群管理员失败：${String(error?.message ?? error).slice(0, 120)}`);
@@ -2287,43 +2298,60 @@ export function buildToolDefs() {
     },
     {
       name: 'send_poke',
-      description: '拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 必须是数字 QQ 号：不知道对方 QQ 号时，先调 get_active_members 或 get_recent_messages 查到再拍，绝对不要传名字、昵称或"未知"。适合用"戳一下"代替一句废话、回应别人的拍一拍，或偶尔逗一下正在聊的人。别频繁。',
+      description: '拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 应传数字 QQ 号：不知道对方 QQ 号时，先调 get_active_members 或 get_recent_messages 查到再拍；传群名片/备注只在唯一对上一个成员时才会拍，重名或对不上会报错，不要传"未知"或 0 这类占位。适合用"戳一下"代替一句废话、回应别人的拍一拍，或偶尔逗一下正在聊的人。别频繁。',
       parameters: {
         type: 'object',
         properties: { targetUserId: { type: ['integer', 'string'], description: '要拍的群友 QQ 号（数字，群聊必填；不知道就先查 get_active_members）' } }
       },
       async execute(ctx, args) {
         try {
-          if (ctx.kind === 'group' && (args.targetUserId === undefined || args.targetUserId === null || String(args.targetUserId).trim() === '')) {
+          const rawText = args.targetUserId === undefined || args.targetUserId === null
+            ? ''
+            : String(args.targetUserId).trim();
+          if (ctx.kind === 'group' && rawText === '') {
             return err(`群聊拍一拍必须传 targetUserId（数字 QQ 号）。${memberHint(ctx)}`);
           }
-          let target = args.targetUserId;
-          if (target !== undefined && target !== null && String(target).trim() !== '') {
-            const targetText = String(target).trim();
-            if (!/^\d{1,15}$/.test(targetText)) {
-              return err(`targetUserId 必须是正整数的 QQ 号（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`);
-            }
-            if (ctx.kind === 'group' && !hasParticipant(ctx, targetText)) {
-              const looksLikeMessageId = modelVisible(ctx.store?.findByMid?.(ctx.chatKey, targetText));
-              return err(`${targetText} 不是当前群中已出现的成员 QQ 号`
-                + `${looksLikeMessageId ? '，它是消息 id' : ''}。${memberHint(ctx)}`);
-            }
-            if (ctx.kind === 'private' && String(ctx.chatId) !== targetText) {
-              return err('私聊只能拍当前聊天对象，省略 targetUserId 即可');
+
+          let target = null;
+          if (rawText !== '') {
+            // @ 前缀先统一剥掉，再做数字判断：模型常写 "@101"（意图是 QQ），
+            // 不能让它掉进名字前缀，误拍到 "1011号" 这类成员。
+            const nameText = normalizePokeName(rawText);
+            let targetText = normalizeTarget(nameText);
+            if (ctx.kind === 'private') {
+              if (!targetText || String(ctx.chatId) !== targetText) {
+                return err('私聊只能拍当前聊天对象，省略 targetUserId 即可');
+              }
+            } else {
+              if (!targetText) {
+                // 纯数字但位数不合法（如 16 位占位）也直接拒绝，不要再拿去做名字匹配。
+                if (/^\d+$/.test(nameText)) {
+                  return err(`targetUserId 必须是 1-15 位数字 QQ 号（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`);
+                }
+                const resolved = resolvePokeTarget(ctx, nameText);
+                if (resolved.error) {
+                  return err(`${resolved.error}${resolved.hint ? memberHint(ctx) : ''}`);
+                }
+                targetText = normalizeTarget(resolved.userId);
+                if (!targetText) {
+                  return err(`按名字反查到的 QQ 号不合法（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`);
+                }
+              }
+              if (!hasParticipant(ctx, targetText)) {
+                const looksLikeMessageId = modelVisible(ctx.store?.findByMid?.(ctx.chatKey, targetText));
+                return err(`${targetText} 不是当前群中已出现的成员 QQ 号`
+                  + `${looksLikeMessageId ? '，它是消息 id' : ''}。${memberHint(ctx)}`);
+              }
             }
             target = Number(targetText);
-            const humanGate = actionGate(ctx, 'poke');
-            if (!humanGate.ok) return err(humanGate.reason, { reportIncident: false });
-            await ctx.sender.poke(ctx.chatKey, target, { runId: ctx.session.leaseId, signal: ctx.signal });
-            actionDone(ctx, 'poke');
-          } else {
-            const humanGate = actionGate(ctx, 'poke');
-            if (!humanGate.ok) return err(humanGate.reason, { reportIncident: false });
-            await ctx.sender.poke(ctx.chatKey, null, { runId: ctx.session.leaseId, signal: ctx.signal });
-            actionDone(ctx, 'poke');
           }
+
+          const humanGate = actionGate(ctx, 'poke');
+          if (!humanGate.ok) return err(humanGate.reason, { reportIncident: false });
+          await ctx.sender.poke(ctx.chatKey, target, { runId: ctx.session.leaseId, signal: ctx.signal });
+          actionDone(ctx, 'poke');
           if (ctx.session) ctx.session.visibleReply = true;   // 拍一拍同样是可见回复
-          return ok({ poked: true });
+          return ok({ poked: true, ...(target === null ? {} : { targetUserId: target }) });
         } catch (error) {
           return sendErr(error);
         }
@@ -2406,7 +2434,9 @@ export function buildToolDefs() {
       async execute(ctx, args) {
         try {
           const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
-          if (!modelVisible(entry)) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+          if (!modelVisible(entry) || !filterBlockedHistory([entry], ctx.chatKey).length) {
+            return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+          }
           // 存档里已是展开文本（收消息时已展开/之前展开过）→ 直接给，不再请求 QQ
           if (String(entry.text || '').startsWith('[合并转发 共')) {
             return ok({ messageId: entry.mid, text: entry.text, note: '该转发已展开（读的是存档）' });
@@ -2414,6 +2444,11 @@ export function buildToolDefs() {
           const nodes = await readForwardMessages(ctx.onebot, entry.mid);
           const ex = await expandForwardNodes(nodes, { fetchNested: (rid) => readForwardNodesById(ctx.onebot, rid) });
           if (!ex || !ex.text) return err('转发内容为空或已被 QQ 服务端丢弃（发送时间太久）');
+          // 自动展开关闭时正文只在这里取回：写入/返回模型前必须补一次黑名单检查，
+          // 否则“合并转发里的广告”会绕过入站过滤（2026-11-02 全项目审查 P2）。
+          if (matchesBlacklistKeyword(ex.text, getConfig().store?.blacklistKeywords)) {
+            return err('转发内容命中消息关键词黑名单，已拦截，不写入存档。', { reportIncident: false });
+          }
           // 写回存档：一次展开，永久升级这条记录（模型/存档页/金句墙都受益）
           ctx.store.updateByMid(ctx.chatKey, entry.mid, { text: ex.text, appendMedia: ex.media || [] });
           return ok({ messageId: entry.mid, text: ex.text, images: (ex.media || []).length });
@@ -2726,6 +2761,16 @@ export function buildToolDefs() {
         if (text.length > 200) return err('语音内容太长了（≤200 字），说短一点');
         const humanGate = actionGate(ctx, 'voice');
         if (!humanGate.ok) return err(humanGate.reason, { reportIncident: false });
+        // 合成发生在发送限频之前：先原子占 TTS 额度，失败也不能让第三方账户被刷。
+        voiceQuota.configure({
+          globalMax: Number(cfg.tts?.maxPerHour) || 30,
+          perChatMax: Number(cfg.tts?.maxPerHourPerChat) || 6
+        });
+        const voiceGate = voiceQuota.tryConsume(ctx.chatKey);
+        if (!voiceGate.ok) {
+          const wait = Math.max(1, Math.ceil((voiceGate.retryAfterMs || 0) / 60000));
+          return err(`语音合成太频繁（每会话每小时 6 条/全局 30 条），约 ${wait} 分钟后再试`, { reportIncident: false });
+        }
         let audio = null;
         try {
           audio = await synthesizeSpeech({
@@ -2779,8 +2824,11 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
-        // game-secret 的行当作"不存在"：不确认它的存在，也不回正文（2026-09-29 审查 P1）
-        if (!modelVisible(entry)) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+        // game-secret 的行当作"不存在"：不确认它的存在，也不回正文（2026-09-29 审查 P1）。
+        // 屏蔽名单是"历史也不能再进工具结果"：按 mid 直读同样要过滤（2026-11-02 全项目审查 P2）。
+        if (!modelVisible(entry) || !filterBlockedHistory([entry], ctx.chatKey).length) {
+          return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+        }
         return ok({
           messageId: entry.mid,
           time: new Date(entry.ts).toLocaleString('zh-CN', { hour12: false }),

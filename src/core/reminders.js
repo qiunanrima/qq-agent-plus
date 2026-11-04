@@ -195,8 +195,9 @@ export function parseCron5(expr) {
   };
   const minutes = parseField(minF, 0, 59);
   const hours = parseField(hourF, 0, 23);
-  const dows = parseField(dowF, 0, 6, DOW_NAMES);
+  const dows = parseField(dowF, 0, 7, DOW_NAMES);
   if (!minutes || !hours || !dows) return null;
+  // 标准 cron 里 0 和 7 都表示周日；先允许解析到 7，再归一成 0。
   if (dows.has(7)) { dows.delete(7); dows.add(0); }
   return { minutes, hours, dows };
 }
@@ -404,7 +405,17 @@ export class ReminderStore {
     // #9：先把"早就过期、还没被巡检标掉"的项标成 expired（它们才是真占着 pending 名额的那批），
     // 再剪留档，最后判上限 —— 否则用户会因为一堆早该作废的提醒而被告知"满了"。
     let expiredNow = false;
-    for (const it of this.expired(now)) { it.status = 'expired'; it.finishedAt = now; expiredNow = true; }
+    for (const it of this.expired(now)) {
+      if (it.repeat) {
+        // 周期项不能整条作废：跳过这一期并 re-arm（与 orchestrator 的过期处理同口径）。
+        this.skipOccurrence(it.id, now);
+        expiredNow = true;
+        continue;
+      }
+      it.status = 'expired';
+      it.finishedAt = now;
+      expiredNow = true;
+    }
     this.#prune();
     if (expiredNow) this.#save();
     const pendingNow = () => this.items.filter((it) => it.status === 'pending');
@@ -487,6 +498,21 @@ export class ReminderStore {
    * 只改 at、不动 status：12 小时作废时钟随新 at 重新起算 —— 否则持续超预算的当天，
    * "保持到期等明天"的提醒会在迟到满 12 小时时被 expired() 静默作废，与"顺延到明天"相反。
    */
+  /**
+   * 本次 occurrence 的稳定 id：给副作用账本做幂等键用。
+   * 与 at 不同 —— deferTo/retryLater 会改 at，崩溃后顺延再派发时键必须还对得上。
+   * 周期项 markFired/reconcileRecurring 进入下一期时清空，下次派发重新生成。
+   */
+  ensureOccurrenceId(id) {
+    const hit = this.items.find((x) => x.id === id);
+    if (!hit) return '';
+    if (!hit.occurrenceId) {
+      hit.occurrenceId = crypto.randomBytes(6).toString('hex');
+      this.#save();
+    }
+    return hit.occurrenceId;
+  }
+
   deferTo(id, at) {
     const hit = this.items.find((x) => x.id === id && x.status === 'pending');
     if (!hit) return null;
@@ -530,12 +556,25 @@ export class ReminderStore {
     return hit;
   }
 
+  /** 跳过一期（迟到太久/被挡）：按周期 re-arm 到下一次，但不算正常触发。 */
+  skipOccurrence(id, now = Date.now()) {
+    return this.markFired(id, now);
+  }
+
   markFired(id, now = Date.now()) {
     const it = this.items.find((x) => x.id === id);
     if (!it) return null;
+    // 派发是异步的：用户可能在唤醒还在飞时取消/过期。收尾的 markFired 不能把
+    // canceled/expired 的周期项改回 pending，否则取消会被静默撤销（2026-11-03 全量审查 P2）。
+    if (it.status === 'canceled' || it.status === 'expired') return it;
     // 周期项：记下这次触发的 dueKey，重算下一次（re-arm），状态保持 pending。
     // 错过补最近一次的语义由 reconcileRecurring 在启动时处理；这里只管"触发后继续"。
     if (it.repeat && typeof it.repeat === 'object') {
+      // 周期项从 failed 重新 arm 时（连续未确认播报耗尽）必须恢复 pending 并清掉终态，
+      // 否则 markFired 只改了 at、状态仍停在 failed，due() 永远不会再收它。
+      it.status = 'pending';
+      it.finishedAt = 0;
+      it.error = '';
       it.dueKeys = [...(Array.isArray(it.dueKeys) ? it.dueKeys : []), { due: Number(it.at) || 0, firedAt: now }].slice(-10);
       it.fireCount = (Number(it.fireCount) || 0) + 1;
       it.lastFiredAt = now;
@@ -554,6 +593,8 @@ export class ReminderStore {
       it.at = next;
       it.originalAt = next;
       it.deliveryAttempts = 0;
+      // 下一期是新的 occurrence：账本里上一期的 sent/unknown 不能挡住它
+      delete it.occurrenceId;
       this.#save();
       return { ...it, rearmed: true, nextAt: next };
     }
@@ -582,6 +623,7 @@ export class ReminderStore {
       it.at = next;
       it.originalAt = next;
       it.deliveryAttempts = 0;
+      delete it.occurrenceId;   // 被跳过的那一期作废，下一期用新 occurrence
       touched.push({ id: it.id, skippedFrom: missed, nextAt: next });
     }
     if (touched.length) this.#save();

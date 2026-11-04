@@ -29,8 +29,15 @@ test('deploy script verifies and rolls back the update service and timer', () =>
   assert.match(source, /UPDATE_SERVICE="\$\{SERVICE\}-update"/);
   // 行锚（^…$）而不是裸子串：注掉/缩进改坏这行都要红（裸匹配连注释都算命中，2026-10-07 复核）
   assert.match(source, /^\s*systemd-analyze --user verify "\$UPDATE_UNIT_FILE"\s*$/m);
-  assert.match(source, /systemctl --user enable --now "\$UPDATE_SERVICE\.timer"/);
+  assert.match(source, /systemctl --user enable "\$UPDATE_SERVICE\.timer"/);
+  assert.match(source, /WAS_UPDATE_TIMER_ACTIVE.*systemctl --user start "\$UPDATE_SERVICE\.timer"/s);
   assert.match(source, /cp -p "\$LOCK_DIR\/state\/update\.service" "\$UPDATE_UNIT_FILE"/);
+  // 回滚失败时 EXIT trap 会删 .deploy.lock；state/ 里的部署前配置必须先复制到恢复目录。
+  assert.match(source, /deploy-recovery-/);
+  assert.match(source, /cp -a "\$LOCK_DIR\/state\/\." "\$RECOVERY_STATE_DIR\/"/);
+  // 回滚已经失败时不能再启动混合代码；启动后还要确认真的 active（Type=simple start 不等于进程活着）。
+  assert.match(source, /ROLLBACK_FAILED" != true[\s\S]*?systemctl --user start "\$SERVICE\.service"/);
+  assert.match(source, /is-active --quiet "\$SERVICE\.service" \|\| ROLLBACK_FAILED=true/);
   assert.match(source, /QQ_AGENT_SOURCE_REVISION/);
 });
 
@@ -41,8 +48,8 @@ test('deploy.sh：失败/回滚路径的防线都在（trap、健康闸门、权
   const source = fs.readFileSync(path.join(repo, 'deploy.sh'), 'utf8');
 
   // ① 出错/中断必须自动回滚：没有这条，一次半途而废的部署会把服务留在坏状态
-  assert.match(source, /^trap rollback_deployment ERR INT TERM$/m,
-    '必须装 ERR/INT/TERM → rollback_deployment 的 trap（失败与 Ctrl-C 都要退回去）');
+  assert.match(source, /^trap rollback_deployment ERR INT TERM HUP$/m,
+    '必须装 ERR/INT/TERM/HUP → rollback_deployment 的 trap（SSH 断线也要退回去）');
   assert.match(source, /^rollback_deployment\(\) \{$/m, 'rollback_deployment 本体要存在（trap 指向的函数）');
 
   // ② 健康检查是"装好了"的唯一判据：失败必须回滚 + 非 0 退出，不能打印成功
@@ -470,7 +477,7 @@ test('deploy script treats linger as best-effort and never rolls back over it', 
   );
   assert.match(
     source,
-    /elif ! sudo loginctl enable-linger "\$USER"/,
+    /elif ! sudo -n loginctl enable-linger "\$USER"/,
     'sudo 失败必须走 elif 警告分支，不能裸跑触发 ERR 回滚'
   );
   assert.match(source, /下次开机不会自启/, '警告要说明后果与手动补救命令');
@@ -487,8 +494,11 @@ test('manage backup：所有 SQLite 库都走在线 backup API，不直接拷 WA
   assert.match(manage, /name\.endsWith\('\.sqlite'\)/);
   assert.match(manage, /isSqliteFile\(/,
     '后缀是 .sqlite 的普通文件不能当数据库打开，否则整次备份中断');
-  assert.match(manage, /await backup\(db, out\)/);
+  assert.match(manage, /await backup\(db, dst\)/);
   assert.ok(manage.includes('/\\.sqlite-(wal|shm)$/'), 'WAL/SHM 不单独拷贝');
+  assert.match(manage, /const copyTree = async/, '嵌套目录要递归，不能把 living-memory 等库裸拷贝');
+  assert.match(manage, /function getCfg\(\)/, 'config.json 必须惰性读取，损坏时 stop/start 仍可用');
+  assert.doesNotMatch(manage, /^const cfg = readJson/m, '不能在模块加载时强读 config.json');
 });
 
 test('凭据轮换时预检不再用旧 token 拦截', () => {
@@ -507,8 +517,8 @@ test('deploy-all 默认只绑回环，--publish 才对外开放', () => {
   assert.match(source, /"\$\{PUBLISH_HOST\}:\$\{NOVNC_PORT\}:6081"/, 'noVNC 用 PUBLISH_HOST');
   assert.match(source, /"\$\{PUBLISH_HOST\}:\$\{SNOWLUMA_WEBUI_HOST_PORT\}:5099"/, 'WebUI 用 PUBLISH_HOST');
   assert.match(source, /DEPLOY_ARGS\+=\(--host "\$PUBLISH_HOST"\)/, '控制台 host 跟随 PUBLISH_HOST');
-  // 存量安装不能因为一次更新被改回回环
-  assert.match(source, /EXISTING_STACK.*PUBLISH_EXPLICIT|PUBLISH_EXPLICIT.*EXISTING_STACK/s);
+  // 存量安装不能因为一次更新被改回回环；显式 --publish/--loopback 才允许改。
+  assert.match(source, /if \[\[ "\$EXISTING_STACK" != true \|\| "\$PUBLISH_EXPLICIT" == true \]\]; then[\s\S]*?--host "\$PUBLISH_HOST"/s);
 });
 
 test('deploy-all.sh：栈级互斥锁覆盖 .env 到 deploy.sh 的全程，且失败方不删赢家的锁', () => {

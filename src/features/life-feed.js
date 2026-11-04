@@ -72,9 +72,10 @@ export function normalizedLifeFeedConfig(raw = {}) {
     enabled: cfg.enabled === true,
     graduated: cfg.graduated === true,
     sources: (() => {
-      const list = [...new Set(cleanList(cfg.sources, 4, 20)
+      // 缺键 = 老配置/首次运行，沿用默认；显式空数组 = 用户取消了所有来源，必须尊重。
+      if (!Array.isArray(cfg.sources)) return ['bilibili', 'plugin'];
+      return [...new Set(cleanList(cfg.sources, 4, 20)
         .filter((source) => ['bilibili', 'plugin', 'rss'].includes(source)))];
-      return list.length ? list : ['bilibili', 'plugin'];
     })(),
     forageIntervalMinutes: clampInt(cfg.forageIntervalMinutes, B.forageIntervalMinutes.min, B.forageIntervalMinutes.max, 360),
     maxCandidates: clampInt(cfg.maxCandidates, B.maxCandidates.min, B.maxCandidates.max, 200),
@@ -207,6 +208,12 @@ export class LifeFeedManager {
     return normalizedLifeFeedConfig(this.config()?.lifeFeed);
   }
 
+  /** observe/暂停时停止自动觅食：外发搜索请求本身也是"自动行为"。 */
+  #runtimeAllowsAutomation() {
+    const runtime = this.config()?.runtime || {};
+    return runtime.mode === 'active' && !runtime.paused;
+  }
+
   #personaTemplateId() {
     return String(this.config()?.persona?.templateId || '').trim();
   }
@@ -306,6 +313,10 @@ export class LifeFeedManager {
     const cfg = this.#cfg();
     if (!cfg.enabled) {
       this.started = false;
+      return;
+    }
+    if (!this.#runtimeAllowsAutomation()) {
+      this.#schedule(60000);
       return;
     }
     await this.forageNow({ reason: 'schedule' });
@@ -628,7 +639,10 @@ export class LifeFeedManager {
   #quotaLeft(cfg, day) {
     // 手动分享是用户自己点的，不占自动份额：否则点两次没发出去，自动分享当天就没了。
     const picks = this.state.offers.filter((item) => item.day === day && item.manual !== true).length;
-    const shares = this.state.records.filter((item) => item.day === day && item.action === 'shared').length;
+    // share-reserved 是发送前的原子占位：发送失败 releaseShare 会退回；
+    // 发送成功 feedback('shared') 会把占位转换成 shared，不重复计数。
+    const shares = this.state.records.filter((item) =>
+      item.day === day && (item.action === 'shared' || item.action === 'share-reserved')).length;
     return {
       pickLeft: Math.max(0, (Number(cfg.maxPicksPerDay) || 10) - picks),
       shareLeft: Math.max(0, (Number(cfg.maxOffersPerDay) || 2) - shares)
@@ -640,10 +654,13 @@ export class LifeFeedManager {
     const now = this.now();
     const day = dayKey(now);
     this.#load();
+    let take = Math.max(1, Number(count) || 1);
     if (!manual) {
       const quota = this.#quotaLeft(cfg, day);
       if (quota.pickLeft <= 0) return { error: `今天已经领取 ${cfg.maxPicksPerDay} 次了，明天再继续` };
       if (quota.shareLeft <= 0) return { error: `今天已经分享 ${cfg.maxOffersPerDay} 次了，明天再继续` };
+      // 一次 count=3 不能把只剩 1 次的领取额度冲破。
+      take = Math.min(take, quota.pickLeft);
     }
     const offeredToday = new Set(this.state.offers.filter((item) => item.day === day).map((item) => item.id));
     const usedUp = new Set(this.state.offers.filter((item) => item.day === day).map((item) => item.upMid).filter(Boolean));
@@ -667,7 +684,7 @@ export class LifeFeedManager {
       .filter((item) => !offeredToday.has(item.id))
       .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     for (const item of sorted) {
-      if (picked.length >= Math.max(1, count)) break;
+      if (picked.length >= take) break;
       if (needle) {
         const haystack = `${item.title} ${item.desc} ${(item.tags || []).join(' ')}`.toLowerCase();
         if (!haystack.includes(needle)) continue;
@@ -744,22 +761,53 @@ export class LifeFeedManager {
     const now = this.now();
     const day = dayKey(now);
     this.#load();
-    if (!manual) {
-      const quota = this.#quotaLeft(cfg, day);
-      if (quota.shareLeft <= 0) return { error: `今天已经分享 ${cfg.maxOffersPerDay} 次了` };
-      if (quota.pickLeft <= 0) return { error: `今天已经领取 ${cfg.maxPicksPerDay} 次了` };
-    }
+    // 每日分享上限对自动和手动一视同仁（手动原本只扣份额、不检查，能绕过上限）。
+    const quota = this.#quotaLeft(cfg, day);
+    if (quota.shareLeft <= 0) return { error: `今天已经分享 ${cfg.maxOffersPerDay} 次了` };
+    if (!manual && quota.pickLeft <= 0) return { error: `今天已经领取 ${cfg.maxPicksPerDay} 次了` };
     const item = this.state.candidates.find((candidate) => candidate.id === String(id || ''));
     if (!item) return { error: '这条候选不在队列里（可能已过期或已被分享）' };
     item.offeredAt = now;
     this.state.offers.push({ day, id: item.id, upMid: item.upMid, tags: item.tags || [], at: now, manual: manual === true });
     this.state.records.unshift({ at: now, action: 'manual-share', id: item.id, day, source: item.source || '' });
+    // 这里只排队、不占分享名额：模型真正调用 share_bilibili 时 reserveShare 才做原子占位。
+    // 手动点的这次如果最终没发出去，不会把自动领取一起挡住。
     this.#prune(now);
     this.#save();
     return { item: publicCandidate(item) };
   }
 
-  /** 手动分享没有真正进入发送链路时，把本次 offer/排队记录撤回，允许重试。 */
+  /**
+   * 发送前原子占用一个分享名额。并发会话都在 await 发送结果，先 peek 再发送会同时
+   * 看到剩余 1 次而各发一条（2026-11-03 全量审查 P2）。同步检查+落库，只有一个能成功。
+   */
+  reserveShare(id, { manual = false } = {}) {
+    const key = String(id || '').trim();
+    const cfg = this.#cfg();
+    const now = this.now();
+    const day = dayKey(now);
+    this.#load();
+    const item = this.state.candidates.find((candidate) => candidate.id === key);
+    if (!item) return { error: '这条候选不在队列里（可能已过期或已被分享）' };
+    const existing = this.state.records.find((record) =>
+      record.day === day && record.id === key && record.action === 'share-reserved');
+    if (existing) {
+      // 同一条候选正在被另一个会话发送：不能再发一次（占位按 id 去重，二次放行会
+      // 真正发出两条却只记一次额度）。超过 10 分钟的占位视为崩溃残留，清掉重来。
+      if (now - Number(existing.at || 0) < 10 * 60_000) {
+        return { error: '这条见闻正在分享中，请稍后再试' };
+      }
+      this.state.records = this.state.records.filter((record) => record !== existing);
+    }
+    const quota = this.#quotaLeft(cfg, day);
+    if (quota.shareLeft <= 0) return { error: `今天已经分享 ${cfg.maxOffersPerDay} 次了` };
+    this.state.records.unshift({ at: now, action: 'share-reserved', id: key, day, source: item.source || '', manual: manual === true });
+    this.#prune(now);
+    this.#save();
+    return { item: publicCandidate(item), reserved: true };
+  }
+
+  /** 分享没有真正进入发送链路/确定失败时，把 offer、排队记录与占位一起撤回。 */
   releaseShare(id) {
     const key = String(id || '').trim();
     const day = dayKey(this.now());
@@ -767,7 +815,8 @@ export class LifeFeedManager {
     this.state.offers = this.state.offers.filter((item) =>
       !(item.id === key && item.manual === true && item.day === day));
     this.state.records = this.state.records.filter((item) =>
-      !(item.id === key && item.action === 'manual-share' && item.day === day));
+      !(item.id === key && item.day === day
+        && (item.action === 'manual-share' || item.action === 'share-reserved')));
     this.#save();
     return { ok: true };
   }
@@ -777,7 +826,18 @@ export class LifeFeedManager {
     const verb = ['shared', 'skip', 'more_like_this'].includes(action) ? action : 'skip';
     this.#load();
     const item = this.state.candidates.find((candidate) => candidate.id === key);
-    if (!item) return { ok: false, error: '候选不存在' };
+    if (!item) {
+      // 候选可能已被并发的第一次分享移除；shared/skip 仍要把占位清掉，不能留下
+      // 一条永远占着额度的 share-reserved。
+      if (verb === 'shared' || verb === 'skip') {
+        const day = dayKey(this.now());
+        const before = this.state.records.length;
+        this.state.records = this.state.records.filter((record) =>
+          !(record.id === key && record.day === day && record.action === 'share-reserved'));
+        if (this.state.records.length !== before) this.#save();
+      }
+      return { ok: false, error: '候选不存在' };
+    }
     if (verb === 'more_like_this') {
       for (const tag of item.tags || []) {
         this.state.tagWeights[tag] = Math.min(50, (Number(this.state.tagWeights[tag]) || 0) + 1);
@@ -787,6 +847,13 @@ export class LifeFeedManager {
       return { ok: true, action: verb };
     }
     this.state.candidates = this.state.candidates.filter((candidate) => candidate.id !== key);
+    if (verb === 'shared' || verb === 'skip') {
+      // shared = 占位转正（先删 share-reserved 再写 shared，额度只算一次）；
+      // skip = 放弃分享，占位必须退回。
+      const day = dayKey(this.now());
+      this.state.records = this.state.records.filter((record) =>
+        !(record.id === key && record.day === day && record.action === 'share-reserved'));
+    }
     // shared 给正反馈、skip 给负反馈：只在 more_like_this 时加权的旧口径会让 skip 永远不收敛。
     const delta = verb === 'shared' ? 1 : -1;
     for (const tag of item.tags || []) {

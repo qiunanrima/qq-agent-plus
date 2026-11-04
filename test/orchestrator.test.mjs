@@ -21,6 +21,7 @@ const {
   finishBarrierBlock
 } = await import('../src/core/orchestrator.js');
 const { ChatStore } = await import('../src/core/store.js');
+const { EffectLedger } = await import('../src/core/effects.js');
 const { SessionRegistry } = await import('../src/core/sessions.js');
 const { setRuntimeConfig, DEFAULT_CONFIG } = await import('../src/core/config.js');
 const { ReminderStore } = await import('../src/core/reminders.js');
@@ -1457,7 +1458,7 @@ describe('Orchestrator', () => {
     }
   });
 
-  it('feeds both familiar and unused stickers into the system prompt', async (t) => {
+  it('feeds both familiar and unused stickers into the dynamic user prompt', async (t) => {
     const { cfg, runner, append } = fixture(t);
     cfg.sticker.enabled = true;
     cfg.sticker.promptMaxStickers = 10;
@@ -1475,8 +1476,11 @@ describe('Orchestrator', () => {
     }
     runner.stickers = { sync: async () => ({ entries }), list: async () => ({ total: entries.length, stickers: [] }) };
     let system = '';
+    let user = '';
     globalThis.fetch = async (_url, options) => {
-      system = JSON.parse(options.body).messages[0].content;
+      const body = JSON.parse(options.body);
+      system = body.messages[0].content;
+      user = body.messages.find((m) => m.role === 'user')?.content || '';
       return Response.json({
         choices: [{ message: { content: 'done' } }],
         usage: { total_tokens: 10 }
@@ -1484,9 +1488,10 @@ describe('Orchestrator', () => {
     };
     append(1, '哈哈', '42');
     await runner.wake('group:1');
-    assert.match(system, /stickerId：st-1/, '常用的要在清单里');
-    assert.match(system, /（没用过）（stickerId：st-\d+）/, '没用过的也要有机会进清单');
-    assert.equal([...system.matchAll(/stickerId：/g)].length, 10, '条数按配置取满');
+    assert.equal(system.includes('stickerId：st-'), false, '清单不能进 system 前缀');
+    assert.match(user, /stickerId：st-1/, '常用的要在清单里');
+    assert.match(user, /（没用过）（stickerId：st-\d+）/, '没用过的也要有机会进清单');
+    assert.equal([...user.matchAll(/stickerId：/g)].length, 10, '条数按配置取满');
   });
 
   it('语音回复/提醒关掉时：工具表与提示词同步撤（send_voice 必失败、remind 不会被派发）', async (t) => {
@@ -1534,19 +1539,23 @@ describe('Orchestrator', () => {
     }
     runner.stickers = { sync: async () => ({ entries }), list: async () => ({ total: entries.length, stickers: [] }) };
     let system = '';
+    let user = '';
     let tools = [];
     globalThis.fetch = async (_url, options) => {
       const body = JSON.parse(options.body);
       system = body.messages[0].content;
+      user = body.messages.find((m) => m.role === 'user')?.content || '';
       tools = body.tools || [];
       return Response.json({ choices: [{ message: { content: 'done' } }], usage: { total_tokens: 10 } });
     };
     append(1, '哈哈', '42');
     await runner.wake('group:1');
     assert.equal(tools.some((tool) => tool.function?.name === 'get_sticker_image'), false, '工具已摘掉');
-    // 只看【可用表情包】那一段（角色卡正文是管理员内容，可能仍提到这个工具，不归这里管）：
-    // 清单不能再说"可以先 get_sticker_image 看一眼"——那句话指向一个不存在的工具
-    const listBlock = system.slice(system.indexOf('【可用表情包】'));
+    // 表情清单已移到动态 user prompt（Issue #86）；系统提示里不再随收藏变化。
+    const prompt = `${system}\n${user}`;
+    const listBlock = prompt.slice(prompt.indexOf('【可用表情包】'));
+    assert.equal(system.includes('st-1'), false, '表情清单不能进 system 前缀');
+    assert.ok(user.includes('st-1'), '清单应随动态 user prompt 发送');
     assert.ok(listBlock.includes('stickerId：'), '清单段要在');
     // 只断言"教它去看"的那句不在；工具名本身会出现在后面的机制说明里
     //（"get_sticker_image 不在工具表里"），那是刻意保留的覆盖说明
@@ -2371,6 +2380,21 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     assert.equal(runner.reminders.items[0].status, 'pending', '租约还在时不能标记已触发（否则提醒永久丢失）');
   });
 
+  it('周期提醒迟到超过 12 小时：跳过这一期而不是永久作废整条', async (t) => {
+    const { runner } = fixture(t, { reminders: new ReminderStore(path.join(root, 'reminders-repeat-expired.json')) });
+    runner.reminders.items.push({
+      id: 'r-repeat', chatKey: 'group:1', at: Date.now() - 13 * 3600 * 1000,
+      text: '每天吃药', status: 'pending', createdBy: '42',
+      repeat: { kind: 'daily', hour: 9, minute: 0 }
+    });
+    runner.wake = async () => { throw new Error('不该派发'); };
+    runner.fireDueReminders();
+    const item = runner.reminders.items[0];
+    assert.equal(item.status, 'pending', '周期项不能变成 expired');
+    assert.ok(item.at > Date.now(), '要 re-arm 到下一次，而不是立刻补发');
+    assert.equal(Number(item.fireCount) || 0, 1, '记录跳过的一期');
+  });
+
   it('定时提醒：预算闸门会丢的唤醒顺延 24 小时而不是标成已触发；没超预算就正常派发', async (t) => {
     const { runner, store, cfg, append } = fixture(t, { reminders: new ReminderStore(path.join(root, 'reminders-budget.json')) });
     append(1);
@@ -2380,6 +2404,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     runner.wake = async (chatKey) => {
       woke++;
       store.appendSelf(chatKey, { mid: `self-budget-${woke}`, ts: Date.now(), text: '提醒' });
+      return { sent: [{ text: '提醒' }] };
     };
     // 今天已花超 + 策略「停止」：#wake 的预算闸门会直接丢弃这次唤醒，派发侧必须先接住
     setRuntimeConfig({ ...cfg, api: { ...cfg.api, budget: { enabled: true, dailyYuan: 0.01, onExceed: 'block' } } });
@@ -2401,6 +2426,156 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(woke, 1, '没超预算要正常派发');
     assert.equal(runner.reminders.items.find((x) => x.id === 'r-budget').status, 'fired');
+  });
+
+  it('定时提醒：上次投递结果未知（崩溃残留）→ 不再重复播报，标记人工核对', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-ledger-unknown.json')) });
+    const effects = new EffectLedger(store.db);
+    runner.effects = effects;
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({ id: 'r-unknown', chatKey: 'group:1', at, text: '喝水', status: 'pending', createdBy: '42' });
+    const occUnknown = runner.reminders.ensureOccurrenceId('r-unknown');
+    // 模拟上一条命在"发送后、结算前"崩溃：planned 行留着，且已超过 TTL
+    effects.begin({ kind: 'reminder', chatKey: 'group:1', idemKey: `reminder:r-unknown:${occUnknown}` });
+    store.db.prepare('UPDATE effects SET created_at=?').run(Date.now() - 3600_000);
+
+    let woke = 0;
+    runner.wake = async () => { woke += 1; };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(woke, 0, '结果未知时绝不能再唤醒重说一遍');
+    assert.equal(effects.get('reminder', `reminder:r-unknown:${occUnknown}`).state, 'unknown');
+    const item = runner.reminders.items.find((x) => x.id === 'r-unknown');
+    assert.equal(item.status, 'failed');
+    assert.match(String(item.error), /未知/);
+  });
+
+  it('定时提醒：周期项结果未知只跳过本期并重排，不会把整条提醒永久停掉', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-ledger-repeat.json')) });
+    const effects = new EffectLedger(store.db);
+    runner.effects = effects;
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({
+      id: 'r-repeat', chatKey: 'group:1', at, text: '站会', status: 'pending', createdBy: '42',
+      repeat: { kind: 'daily', hour: 9, minute: 0, tz: 'Asia/Shanghai' }
+    });
+    const occ = runner.reminders.ensureOccurrenceId('r-repeat');
+    effects.begin({ kind: 'reminder', chatKey: 'group:1', idemKey: `reminder:r-repeat:${occ}` });
+    store.db.prepare('UPDATE effects SET created_at=?').run(Date.now() - 3600_000);
+
+    let woke = 0;
+    runner.wake = async () => { woke += 1; };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(woke, 0, '本期结果未知，不能重发');
+    const item = runner.reminders.items.find((x) => x.id === 'r-repeat');
+    assert.equal(item.status, 'pending', '周期项要留在 pending，下一期继续');
+    assert.ok(item.at > at, '要重排到下一次触发');
+    assert.equal(item.occurrenceId, undefined, '下一期换新的 occurrenceId');
+  });
+
+  it('定时提醒：正常播报后账本结算 sent，同一提醒不会二次派发', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-ledger-sent.json')) });
+    const effects = new EffectLedger(store.db);
+    runner.effects = effects;
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({ id: 'r-sent', chatKey: 'group:1', at, text: '喝水', status: 'pending', createdBy: '42' });
+    runner.wake = async (chatKey) => {
+      store.appendSelf(chatKey, { mid: 'self-ledger-1', ts: Date.now(), text: '该喝水了' });
+      return { sent: [{ text: '该喝水了' }] };
+    };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(runner.reminders.items.find((x) => x.id === 'r-sent').status, 'fired');
+    const occSent = runner.reminders.items.find((x) => x.id === 'r-sent').occurrenceId;
+    assert.equal(effects.get('reminder', `reminder:r-sent:${occSent}`).state, 'sent');
+
+    // 同一 occurrence 再派发一次（模拟重启后 due() 又返回）——账本 done，直接跳过
+    const again = { ...runner.reminders.items.find((x) => x.id === 'r-sent'), status: 'pending', id: 'r-sent' };
+    runner.reminders.items = [again];
+    let woke = 0;
+    runner.wake = async () => { woke += 1; };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(woke, 0, '已结算的提醒不能再唤醒');
+  });
+
+  it('定时提醒：本轮没发出（可证明未送达）→ 账本 failed，提醒按 5 分钟重试', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-ledger-nosend.json')) });
+    const effects = new EffectLedger(store.db);
+    runner.effects = effects;
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({ id: 'r-nosend', chatKey: 'group:1', at, text: '喝水', status: 'pending', createdBy: '42' });
+    runner.wake = async (chatKey) => {
+      // 群里刚好有日报/游戏/插件发出的 self 消息，但不是本轮提醒的回复：
+      // 旧实现 hasSelfSince 会误判成已播报（A3），新实现只认本轮 sent。
+      store.appendSelf(chatKey, { mid: `self-unrelated-${Date.now()}`, ts: Date.now(), text: '日报：今天聊了这些' });
+      return { sent: [] };
+    };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const occNoSend = runner.reminders.items.find((x) => x.id === 'r-nosend').occurrenceId;
+    assert.equal(effects.get('reminder', `reminder:r-nosend:${occNoSend}`).state, 'failed');
+    const item = runner.reminders.items.find((x) => x.id === 'r-nosend');
+    assert.equal(item.status, 'pending', '没发出要保留 pending 等下一次重试');
+    assert.ok(item.deliveryAttempts >= 1);
+  });
+
+  it('定时提醒：本轮出现未知外发 → 账本 unknown，停止自动重试', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-ledger-uncertain.json')) });
+    const effects = new EffectLedger(store.db);
+    runner.effects = effects;
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({ id: 'r-uncertain', chatKey: 'group:1', at, text: '喝水', status: 'pending', createdBy: '42' });
+    runner.wake = async (chatKey) => {
+      const id = store.beginSend(chatKey, null, { type: 'text' });
+      store.finishSend(id, { error: 'socket timeout', outcome: 'unknown' });
+    };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const occUncertain = runner.reminders.items.find((x) => x.id === 'r-uncertain').occurrenceId;
+    assert.equal(effects.get('reminder', `reminder:r-uncertain:${occUncertain}`).state, 'unknown');
+    assert.equal(runner.reminders.items.find((x) => x.id === 'r-uncertain').status, 'failed');
+  });
+
+  it('定时提醒：周期项遇到未知外发 → 只跳过本期并重排，不能永久停用', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-repeat-uncertain.json')) });
+    runner.effects = new EffectLedger(store.db);
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({
+      id: 'r-repeat-uncertain', chatKey: 'group:1', at, text: '吃药', status: 'pending', createdBy: '42',
+      repeat: { kind: 'daily', hour: 9, minute: 0, tz: 'Asia/Shanghai' }
+    });
+    runner.wake = async (chatKey) => {
+      const id = store.beginSend(chatKey, null, { type: 'text' });
+      store.finishSend(id, { error: 'socket timeout', outcome: 'unknown' });
+    };
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const item = runner.reminders.items.find((x) => x.id === 'r-repeat-uncertain');
+    assert.equal(item.status, 'pending', '周期项必须留在 pending');
+    assert.ok(item.at > at, '要重排到下一期');
+    assert.equal(item.occurrenceId, undefined, '下一期换新的 occurrenceId');
+  });
+
+  it('定时提醒：周期项连续未确认耗尽 → 仍要重排下一期，而不是 failed', async (t) => {
+    const { runner, store } = fixture(t, { reminders: new ReminderStore(path.join(root, 'rem-repeat-exhausted.json')) });
+    runner.effects = new EffectLedger(store.db);
+    const at = Date.now() - 1000;
+    runner.reminders.items.push({
+      id: 'r-repeat-exhausted', chatKey: 'group:1', at, text: '吃药', status: 'pending', createdBy: '42',
+      deliveryAttempts: 3,
+      repeat: { kind: 'daily', hour: 9, minute: 0, tz: 'Asia/Shanghai' }
+    });
+    runner.wake = async () => {};
+    runner.fireDueReminders();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const item = runner.reminders.items.find((x) => x.id === 'r-repeat-exhausted');
+    assert.equal(item.status, 'pending', '耗尽后也要 re-arm');
+    assert.ok(item.at > at, '要重排到下一期');
+    assert.equal(item.deliveryAttempts, 0, '新一期重新计尝试次数');
   });
 
   it('测试用远景时间窗在任何时刻都成立：下一个窗口至少 4 分钟外（跨午夜回归）', () => {
@@ -2433,6 +2608,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     runner.wake = async (chatKey) => {
       woke++;
       store.appendSelf(chatKey, { mid: `self-time-${woke}`, ts: Date.now(), text: '提醒' });
+      return { sent: [{ text: '提醒' }] };
     };
     // 时间控制开着、当前落在静默段（farWindowFor：窗口在"不是今天"的星期几，任何时刻跑都成立）：
     // #wakePreflight 的 canRun 会拒掉这次唤醒 —— 派发侧必须先接住并顺延，不能 markFired。
@@ -2463,6 +2639,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     runner.wake = async (chatKey) => {
       woke++;
       store.appendSelf(chatKey, { mid: `self-observe-${woke}`, ts: Date.now(), text: '提醒' });
+      return { sent: [{ text: '提醒' }] };
     };
     setRuntimeConfig({ ...cfg, runtime: { ...cfg.runtime, mode: 'observe' } });
     runner.fireDueReminders();
@@ -2507,6 +2684,29 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     assert.equal(runner.scheduledWakes.has('group:1'), false);
   });
 
+  it('预算 degrade 不拦 proactive 自安排唤醒；只有 block 才顺延 24 小时', async (t) => {
+    const { runner, cfg } = fixture(t, {});
+    runner.sessions.todayUsage = () => ({ estimatedYuan: 999 });
+    let woke = 0;
+    runner.wake = async () => { woke += 1; return { sent: [] }; };
+    const note = '【自安排】过会儿回来看看';
+
+    setRuntimeConfig({ ...cfg, api: { ...cfg.api, budget: { enabled: true, dailyYuan: 0.01, onExceed: 'degrade' } } });
+    runner.scheduledWakes.set('group:1', { at: Date.now() - 1000, note, kind: 'selfWake' });
+    runner.fireDueScheduledWakes();
+    assert.equal(woke, 1, 'degrade 只挡非 proactive，自安排唤醒应该照常发出');
+    assert.equal(runner.scheduledWakes.has('group:1'), false);
+
+    setRuntimeConfig({ ...cfg, api: { ...cfg.api, budget: { enabled: true, dailyYuan: 0.01, onExceed: 'block' } } });
+    runner.scheduledWakes.set('group:1', { at: Date.now() - 1000, note, kind: 'selfWake' });
+    runner.fireDueScheduledWakes();
+    assert.equal(woke, 1, 'block 下不能真的唤醒（#wake 会静默 return）');
+    const kept = runner.scheduledWakes.get('group:1');
+    assert.ok(kept, 'block 下必须保留安排与留言');
+    assert.equal(kept.note, note);
+    assert.ok(kept.at > Date.now() + 23 * 60 * 60 * 1000, '预算按日重置，顺延接近 24 小时');
+  });
+
   it('定时提醒：@ 落在第 51–100 条未读里时 degrade 不会丢这次唤醒，提醒也不该被顺延', async (t) => {
     // 派发预检与 #wake 的 degrade 闸门必须看同一批未读（都是 100 条）。看少 50 条时，
     // @ 落在第 51–100 条会被预检判成"会丢"→ 提醒无谓顺延 24 小时，而 #wake 其实照常派发
@@ -2524,6 +2724,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     runner.wake = async (chatKey) => {
       woke++;
       store.appendSelf(chatKey, { mid: `self-degrade-${woke}`, ts: Date.now(), text: '提醒' });
+      return { sent: [{ text: '提醒' }] };
     };
     setRuntimeConfig({ ...cfg, api: { ...cfg.api, budget: { enabled: true, dailyYuan: 0.01, onExceed: 'degrade' } } });
     runner.sessions.todayUsage = () => ({ estimatedYuan: 5 });   // 已超限，但 degrade 只丢"没 @"的那批
@@ -2549,6 +2750,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     runner.wake = async (chatKey, opts = {}) => {
       notes.push(String(opts.wakeNote || ''));
       store.appendSelf(chatKey, { mid: `self-merge-${Date.now()}-${notes.length}`, ts: Date.now(), text: '提醒' });
+      return { sent: [{ text: '提醒' }] };
     };
 
     runner.fireDueReminders();
@@ -2589,7 +2791,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     runner.wake = (chatKey) => {
       woke++;
       store.appendSelf(chatKey, { mid: `self-inflight-${woke}`, ts: Date.now(), text: '提醒' });
-      return new Promise((resolve) => { release = resolve; });
+      return new Promise((resolve) => { release = () => resolve({ sent: [{ text: '提醒' }] }); });
     };
     runner.fireDueReminders();
     runner.fireDueReminders();
@@ -2638,7 +2840,7 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     assert.ok(orch.includes("const isReminderNote = String(wakeNote).startsWith('【定时提醒】');"), '要有提醒专用分支');
     assert.ok(orch.includes('? `${safeSlice(String(wakeNote), 600)}\\n`'), '提醒 note 要逐字进入（不套"给自己留过话"框架）');
     assert.ok(orch.includes('把提醒自然地说出来即可；说完就结束'), '提醒分支要有自己的收尾语');
-    assert.ok(orch.includes('buildReminderNote(chosen, { now })') && orch.includes('reminderNoteCost(item)'),
+    assert.ok(orch.includes('buildReminderNote(batch.map((pair) => pair.it), { now })') && orch.includes('reminderNoteCost(item)'),
       '话术与预算要共用 reminders 的唯一实现');
     assert.ok(orch.includes('triggerEntries: (triggerEntries || []).map'),
       '工具 ctx 要带本轮触发消息（remind 的 from 兜底要用）');
@@ -2712,8 +2914,10 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     };
     await runner.wake('group:1', { proactive: true });
     assert.equal(modelCalls, 0, 'block 策略下主动唤醒同样不许调模型（"今天别再花钱"就该真的停）');
+    await runner.wake('group:1', { manual: true, paced: true });
+    assert.equal(modelCalls, 0, 'paced 唤醒在 block 下同样不许调模型');
     assert.equal(sentTo.filter((s) => s.messages.join('').includes('今天的额度用完了')).length, 0,
-      'proactive 不该往群里发"额度用完"（那是新消息场景的回话）');
+      'proactive/paced 不该往群里发"额度用完"（那是新消息场景的回话）');
   });
 
   it('主动机会落在私聊时用私聊措辞，不说"群里"', async (t) => {
@@ -2862,6 +3066,38 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     await runner.wake('group:1');
     assert.ok(!bodies[2].tools.some((tool) => tool.function.name === 'demo__echo'),
       '注册表不给的时候，插件工具一个都不该出现');
+  });
+
+  it('paced 唤醒把 paced 传给工具：life_feed_next 收到 manual=false', async (t) => {
+    const feedCalls = [];
+    const feed = {
+      shareMode: () => 'auto',
+      isShareTarget: () => true,
+      next: (args) => { feedCalls.push(args); return { items: [] }; },
+      candidate: () => null,
+      shareQuotaLeft: () => 0
+    };
+    const { cfg, runner } = fixture(t, { getLifeFeed: () => feed });
+    cfg.lifeFeed = { ...(cfg.lifeFeed || {}), enabled: true };
+    setRuntimeConfig(cfg);
+    let first = true;
+    globalThis.fetch = async () => {
+      if (first) {
+        first = false;
+        return Response.json({
+          choices: [{ message: { tool_calls: [{
+            id: 'lf1', type: 'function',
+            function: { name: 'life_feed_next', arguments: '{}' }
+          }] } }],
+          usage: { total_tokens: 10 }
+        });
+      }
+      return Response.json({ choices: [{ message: { content: 'done' } }], usage: { total_tokens: 10 } });
+    };
+
+    await runner.wake('group:1', { manual: true, paced: true, wakeNote: '到点看看' });
+    assert.deepEqual(feedCalls.map((call) => call.manual), [false],
+      'paced 带 manual:true 只是调度标记，工具侧必须看到 paced 并不当人工分享');
   });
 });
 

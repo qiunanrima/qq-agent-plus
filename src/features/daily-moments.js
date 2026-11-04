@@ -13,6 +13,7 @@ import {
 import { safeFetchBinary, validateImageUrl } from '../llm/safe-fetch.js';
 import { convertGifToStillStrip } from '../tools/image-downsample.js';
 import { sanitizeUserText } from '../core/util.js';
+import { filterBlockedHistory } from '../core/blocklist.js';
 import { displayNameOf } from '../core/display-name.js';
 import { visibleImpressions } from '../core/memory-visibility.js';
 import { webFetch, webSearch, searchCount } from '../llm/web-search.js';
@@ -1199,8 +1200,9 @@ export class DailyMomentsManager {
     for (const chatKey of chatKeys) {
       const [, groupId] = chatKey.split(':');
       const scanLimit = Math.min(2000, Math.max(cfg.maxMessagesPerGroup * 4, 200));
-      const dayMessages = this.store.recent(chatKey, { limit: scanLimit, readOnly: true })
-        .filter((message) => Number(message.ts) >= start && Number(message.ts) < end);
+      const dayMessages = filterBlockedHistory(
+        this.store.recent(chatKey, { limit: scanLimit, readOnly: true }), chatKey
+      ).filter((message) => Number(message.ts) >= start && Number(message.ts) < end);
       const humanCount = dayMessages.filter((message) => !message.self).length;
       const members = this.memory.members(chatKey);
       const handoff = this.memory.getHandoff(chatKey);
@@ -1718,6 +1720,14 @@ export class DailyMomentsManager {
         const fresh = String(image?.data?.url || image?.data?.file || '').trim();
         if (fresh) return fresh;
       } catch { /* 使用落库地址兜底 */ }
+      // 草稿发布通常是次日：QQ 图片链接/ getMsg 可能已失效。用本条消息落库时保存的媒体地址兜底，
+      // 不把易过期 URL 写进状态文件（2026-11-03 复核 P2）。
+      try {
+        const row = this.store.findByMid?.(candidate.chatKey, candidate.mid);
+        const media = Array.isArray(row?.media) ? row.media[candidate.mediaIndex] || row.media[0] : null;
+        const stored = String(media?.url || media?.file || '').trim();
+        if (stored) return stored;
+      } catch { /* 继续走 fallbackUrl */ }
     }
     return String(candidate.fallbackUrl || '');
   }

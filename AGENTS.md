@@ -13,8 +13,9 @@ In particular:
 
 ## 本地访问 Web 控制台（给用户/协作者的入口）
 
-控制台监听地址取决于安装方式：`deploy.sh` 默认只监听服务器本机 `127.0.0.1:3210`；
-`deploy-all.sh` / `install.sh` 默认监听 `0.0.0.0:3210`（需自行用安全组/防火墙限制来源）。
+控制台监听地址取决于安装方式：`deploy.sh`、`deploy-all.sh`、`install.sh` 新装默认都只监听
+服务器本机 `127.0.0.1:3210`；`deploy-all.sh --publish` / `install.sh --publish` 才监听
+`0.0.0.0:3210`（需自行用安全组/防火墙限制来源）。存量安装沿用原绑定。
 两条等价入口：
 
 - **无需 Node（推荐给终端用户）**：Windows 用 `console-tunnel.bat`，macOS/Linux 用
@@ -38,8 +39,9 @@ In particular:
   `systemctl --user`。
 - **`manage.sh` 必须在安装目录（含 `.deployment.json` 的那一层）里执行**；在源码 checkout 里跑会
   报 `Deployed Node.js runtime is unavailable` —— 那是目录不对，不要因此重跑 `deploy.sh`。
-- **`install-timers` 现在装四个定时器**：backup（每周日 04:10）、process-guard（每 10 分钟）、
-  health（每 5 分钟巡检；连续 3 次失败私聊 owner，恢复补发）、audit-prune（每月 1 日 04:20 清理审计日志）。
+- **`install-timers` 现在装五个定时器**：backup（每周日 04:10）、backup-drill（每月 1 日 05:10
+  验证备份可解密/可恢复）、process-guard（每 10 分钟）、health（每 5 分钟巡检；连续 3 次失败
+  私聊 owner，恢复补发）、audit-prune（每月 1 日 04:20 清理审计日志）。
 - **更新时 `--install-dir` / `--data-dir` 必须与现有安装一致**：`deploy.sh` 会在部署开始前把全部参数
   与 `.deployment.json` 记录做强校验（`scripts/verify-deployment-target.mjs`），`--data-dir` / `--service` /
   `--repository` / `--branch` 不符直接拒绝（此时什么都没动，无需回滚）；数据目录迁移需同时给

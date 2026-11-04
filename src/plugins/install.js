@@ -52,10 +52,16 @@ function verifyTarChecksum(header) {
 
 /** 解一段八进制字段（tar 里都是 "\0" 结尾的八进制串）。 */
 function readOctal(buffer) {
+  // base-256（首字节 0x80）是 GNU 扩展；本解析器不支持，必须明确拒绝。
+  // 以前 parseInt 失败返回 0，会让后续数据块被当成新的 tar 头继续解析 ——
+  // 标准 tar 与安装器看到两套文件树，等于供应链审阅被绕过。
+  if (buffer[0] & 0x80) throw fail('E_ARCHIVE', '归档数字字段用了 base-256 编码，不支持（请用 ustar）');
   const text = buffer.toString('utf8').replace(/\0.*$/, '').trim();
   if (!text) return 0;
+  if (!/^[0-7]+$/.test(text)) throw fail('E_ARCHIVE', `归档数字字段不是合法八进制：${JSON.stringify(text)}`);
   const value = Number.parseInt(text, 8);
-  return Number.isFinite(value) ? value : 0;
+  if (!Number.isSafeInteger(value)) throw fail('E_ARCHIVE', '归档数字字段超出安全范围');
+  return value;
 }
 
 /**
@@ -91,6 +97,14 @@ export function parseTarGz(buffer) {
     const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
     const prefix = header.subarray(345, 500).toString('utf8').replace(/\0.*$/, '');
     const size = readOctal(header.subarray(124, 136));
+    // 负长度会让 offset 原地踏步（dataEnd=offset-512 + padding 又回到 offset），
+    // 主进程同步死循环 + entries 无限增长（2026-10-31 盲审 P2）。
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw fail('E_ARCHIVE', `归档条目长度非法：${size}`);
+    }
+    if (size > MAX_TOTAL_UNPACKED) {
+      throw fail('E_ARCHIVE', `单个条目超过解包上限 ${Math.round(MAX_TOTAL_UNPACKED / 1024 / 1024)}MB`);
+    }
     const typeByte = header[156];
     const type = String.fromCharCode(typeByte || 0x30);
     // 名字归一化：`tar -czf x .` 打出来的条目叫 `./x`，`tar -czf x dir/` 会带尾斜杠 ——
@@ -117,24 +131,41 @@ export function parseTarGz(buffer) {
         : '（符号链接/硬链接/设备节点都不允许）';
       throw fail('E_ARCHIVE', `归档里有不允许的条目类型 ${type}${hint}`);
     }
-    if (!full || full.startsWith('/') || /^[A-Za-z]:/.test(full) || full.split('/').some((seg) => seg === '..')) {
+    if (!full || full.startsWith('/') || /^[A-Za-z]:/.test(full)
+      || full.split('/').some(unsafePathSegment)) {
       throw fail('E_ARCHIVE', `归档里有不安全的路径：${full || '(空)'}`);
     }
     total += size;
     if (total > MAX_TOTAL_UNPACKED) throw fail('E_ARCHIVE', '解包后体积超过上限，已拒绝安装');
     if (type !== '5') entries.push({ name: full, type: 'file', data: raw.subarray(offset, dataEnd) });
     else entries.push({ name: full.replace(/\/$/, ''), type: 'dir', data: null });
-    offset = dataEnd + ((TAR_BLOCK - (size % TAR_BLOCK)) % TAR_BLOCK);
+    const nextOffset = dataEnd + ((TAR_BLOCK - (size % TAR_BLOCK)) % TAR_BLOCK);
+    if (nextOffset < offset) throw fail('E_ARCHIVE', '归档条目长度非法（解析无法前进）');
+    offset = nextOffset;
   }
   if (!entries.length) throw fail('E_ARCHIVE', '归档里没有任何文件');
   return entries;
 }
 
+/** 跨平台路径段校验：Windows 会吃掉段末尾的点和空格，必须按“归一化后”的名字判。 */
+function unsafePathSegment(segment) {
+  if (!segment || segment === '.' || segment === '..') return true;
+  // 控制字符、Windows 非法字符与 ADS 冒号：插件包不应包含这些文件名。
+  if (/[<>:"|?*\x00-\x1f]/.test(segment)) return true;
+  const trimmed = segment.replace(/[. ]+$/g, '');
+  // 末尾点/空格（`.. `、`...`、`name.`）在 Win32 打开时会被剥掉，可能变成父目录穿越。
+  if (!trimmed || trimmed !== segment) return true;
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(trimmed)) return true;
+  return false;
+}
+
+
 /** 把条目写进目标目录（只在解析器已经校验过路径的前提下调用）。 */
 export function extractEntries(entries, targetDir) {
+  const root = path.resolve(targetDir);
   for (const entry of entries) {
-    const full = path.join(targetDir, entry.name);
-    if (full !== targetDir && !full.startsWith(targetDir + path.sep)) {
+    const full = path.resolve(root, entry.name);
+    if (full !== root && !full.startsWith(root + path.sep)) {
       throw fail('E_ARCHIVE', `拒绝写出目录外：${entry.name}`);
     }
     if (entry.type === 'dir') { fs.mkdirSync(full, { recursive: true }); continue; }
@@ -245,6 +276,12 @@ export async function installPlugin({
     const parsed = parsePluginManifest(raw, { dir: staging });
     if (!parsed.ok) throw fail('E_MANIFEST', parsed.error);
     if (id && parsed.manifest.id !== id) throw fail('E_ID_MISMATCH', `包里的 id（${parsed.manifest.id}）与预期（${id}）不一致`);
+    // 安装/升级前就校验包内 engines.minVersion：只在加载时拒绝会让管理员看到
+    // “安装成功”但插件从此消失，旧版本也被换走了。hostVersion 未知时不做有罪推定。
+    const minEngine = parsed.manifest.engines?.minVersion || '';
+    if (minEngine && hostVersion && compareSemver(hostVersion, minEngine) < 0) {
+      throw fail('E_ENGINE', `插件要求宿主 ≥ ${minEngine}，当前是 ${hostVersion}，已中止安装`);
+    }
     // 索引声明 vs 包内 manifest：索引把权限写窄、包里却更宽，是最容易被忽略的信任缺口。
     // 只在索引**确实声明了**对应字段时比较（没写的旧条目不做有罪推定）。
     if (indexMeta && typeof indexMeta === 'object' && !allowIndexMismatch) {

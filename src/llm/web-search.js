@@ -9,9 +9,16 @@ import { withTimeWindow } from '../core/time-gate.js';
 import { readJsonBounded, readTextBounded } from '../core/http-body.js';
 
 // 各上游响应体量上限（防畸形/超大响应把常驻进程读爆，只设超时挡不住这一点）。
-// 搜索 API 返回的是结构化短文本，2 MiB 已远超正常结果；Bing 抓的是 HTML 结果页，1 MiB 足够。
+// 搜索 API 返回的是结构化短文本，2 MiB 已远超正常结果；Bing 的 RSS/HTML 响应 1 MiB 足够。
 const SEARCH_JSON_MAX_BYTES = 2 * 1024 * 1024;
 const BING_HTML_MAX_BYTES = 1024 * 1024;
+// RSS 先尝试 5 秒；回退 HTML 只使用总预算的剩余时间，不把原有 15 秒上限翻倍。
+const BING_TOTAL_TIMEOUT_MS = 15_000;
+const BING_RSS_TIMEOUT_MS = 5_000;
+const BING_HEADERS = {
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  'accept-language': 'zh-CN,zh;q=0.9'
+};
 
 // 数量是单次请求的上下文，不能临时改全局配置：不同聊天会并发搜索。
 const searchRequest = new AsyncLocalStorage();
@@ -32,19 +39,6 @@ function searchSignal(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-// 只去除已知追踪参数；id、v、q 等可能决定页面内容，必须保留。
-function searchResultKey(value) {
-  try {
-    const url = new URL(String(value || ''));
-    if (!['http:', 'https:'].includes(url.protocol)) return '';
-    url.hash = '';
-    for (const key of [...url.searchParams.keys()]) {
-      if (/^(utm_.*|fbclid|gclid|msclkid)$/i.test(key)) url.searchParams.delete(key);
-    }
-    url.searchParams.sort();
-    return url.href;
-  } catch { return ''; }
-}
 
 // B 站 wbi 签名：不带签名时，搜索几次后会只返回 v_voucher（人机验证），没有 result。
 // 公开的 mixinKey 置换表；key 从 nav 接口的 wbi_img 文件名拼出来，缓存半小时。
@@ -114,6 +108,49 @@ function decodeHtml(s) {
     .trim();
 }
 
+const TRACKING_QUERY_KEYS = new Set([
+  // 广告点击 ID 与跨站归因
+  'gclid', 'gclsrc', 'dclid', 'gbraid', 'wbraid', 'fbclid', 'msclkid', 'twclid', 'ttclid',
+  'yclid', 'srsltid',
+  // 邮件/联盟/社交归因
+  'mc_cid', 'mc_eid', 'mkt_tok', 'igshid', '_ga', '_gl',
+  // 站内分享归因（B 站等）
+  'spm_id_from', 'vd_source', 'share_source', 'share_medium', 'share_plat',
+  'share_session_id', 'share_tag', 'unique_k'
+]);
+
+// 只忽略普通锚点；hash 路由（Vue `#/`、旧 AJAX `#!`、hash query `#?`）参与身份判断。
+const HASH_ROUTE_PREFIXES = ['#/', '#!', '#?'];
+
+/**
+ * 仅用于结果去重的 URL 规范化：保留可能决定页面身份的 query，只移除明确的跟踪参数。
+ * 普通锚点忽略；hash 路由仍参与身份判断。导出仅供测试。
+ */
+export function searchResultDedupeKey(rawUrl) {
+  const raw = String(rawUrl ?? '').trim();
+  if (!raw) return '';
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return '';
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) return '';
+
+  const parameters = [...url.searchParams].filter(([key]) => {
+    const normalized = key.toLowerCase();
+    return !normalized.startsWith('utm_') && !TRACKING_QUERY_KEYS.has(normalized);
+  });
+  // 只排序参数名；同名参数的相对顺序可能表示有序列表，不能擅自交换。
+  parameters.sort(([leftKey], [rightKey]) => {
+    if (leftKey === rightKey) return 0;
+    return leftKey < rightKey ? -1 : 1;
+  });
+  url.search = new URLSearchParams(parameters).toString();
+  if (!HASH_ROUTE_PREFIXES.some((prefix) => url.hash.startsWith(prefix))) url.hash = '';
+  return url.toString();
+}
+
 /**
  * 聚合搜索：并发跑多个 provider，结果按来源标注合并去重。
  * config.webSearch.aggregate.sources = ['doubao','bing','baidu',...]（按优先级排序），
@@ -143,28 +180,62 @@ export async function aggregateSearch(query, { signal } = {}) {
   const results = [];
   for (const { source, results: items } of ok) {
     for (const item of items) {
-      const url = searchResultKey(item?.url);
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
+      const key = searchResultDedupeKey(item?.url);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
       results.push({ ...item, source });
     }
   }
   return { query, results, sources: ok.map((o) => o.source), failed: sources.filter((s) => !ok.some((o) => o.source === s)) };
 }
 
-/** Bing 搜索（解析 b_algo 结果块）。searchUrl 可在配置中替换（测试/换引擎）。 */
-export async function bingSearch(query, { signal } = {}) {
-  const cfg = getConfig().webSearch ?? {};
-  const searchUrl = String(cfg.searchUrl || 'https://cn.bing.com/search');
-  const maxResults = resultLimit();
+function isBingSearchUrl(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'bing.com' || hostname.endsWith('.bing.com');
+  } catch {
+    return false;
+  }
+}
+
+function parseBingRss(xml, maxResults) {
+  const results = [];
+  const items = String(xml || '').matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi);
+  for (const match of items) {
+    const block = match[1];
+    const pick = (tag) => {
+      const found = block.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+      return found ? decodeHtml(found[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')) : '';
+    };
+    const title = pick('title') || '（无标题）';
+    const url = pick('link');
+    if (!/^https?:\/\//i.test(url)) continue;
+    results.push({ title, url, snippet: pick('description') });
+    if (results.length >= maxResults) break;
+  }
+  return results;
+}
+
+async function bingRssSearch(query, { searchUrl, maxResults, deadline, signal }) {
+  const url = new URL(searchUrl);
+  url.searchParams.set('q', query);
+  url.searchParams.set('format', 'rss');
+  const timeoutMs = Math.max(1, Math.min(BING_RSS_TIMEOUT_MS, deadline - Date.now()));
+  const res = await fetch(url, {
+    headers: BING_HEADERS,
+    signal: searchSignal(signal, timeoutMs)
+  });
+  if (!res.ok) throw new Error(`Bing RSS HTTP ${res.status}`);
+  const xml = await readTextBounded(res, BING_HTML_MAX_BYTES);
+  return parseBingRss(xml, maxResults);
+}
+
+async function bingHtmlSearch(query, { searchUrl, maxResults, deadline, signal }) {
   const url = new URL(searchUrl);
   url.searchParams.set('q', query);
   const res = await fetch(url, {
-    headers: {
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      'accept-language': 'zh-CN,zh;q=0.9'
-    },
-    signal: searchSignal(signal, 15000)
+    headers: BING_HEADERS,
+    signal: searchSignal(signal, Math.max(1, deadline - Date.now()))
   });
   if (!res.ok) throw new Error(`搜索服务 HTTP ${res.status}`);
   const html = await readTextBounded(res, BING_HTML_MAX_BYTES);
@@ -185,7 +256,23 @@ export async function bingSearch(query, { signal } = {}) {
   // Bing 是 HTML 抓取，命中验证页/同意页/改版 DOM 时这里会是空数组——
   // 不抛错的话模型只看到一个空列表，容易转而编造内容（Issue #9）。
   if (!results.length) throw new Error('Bing 搜索没有返回可解析的结果（可能命中验证页或页面结构变化，可换个搜索提供方）');
-  return { query, results };
+  return results;
+}
+
+/** Bing 搜索：优先 RSS，失败或为空时回退原 HTML 结果页。searchUrl 可换成非 Bing 地址。 */
+export async function bingSearch(query, { signal } = {}) {
+  signal?.throwIfAborted();
+  const cfg = getConfig().webSearch ?? {};
+  const searchUrl = String(cfg.searchUrl || 'https://cn.bing.com/search');
+  const maxResults = resultLimit();
+  const deadline = Date.now() + BING_TOTAL_TIMEOUT_MS;
+  if (isBingSearchUrl(searchUrl)) {
+    try {
+      const results = await bingRssSearch(query, { searchUrl, maxResults, deadline, signal });
+      if (results.length) return { query, results };
+    } catch { signal?.throwIfAborted(); /* RSS 不可用时保留原 HTML 解析路径 */ }
+  }
+  return { query, results: await bingHtmlSearch(query, { searchUrl, maxResults, deadline, signal }) };
 }
 
 // 抖音站内内容基本不进 Bing 的索引；中文新梗在 Bing 上还常被拆成单字（"奶绿波"只剩"奶"）。
@@ -215,7 +302,7 @@ function mergeSearchResults(primary, extra, limit) {
   const results = [];
   // 梗查询把 360 放前面：Bing 的抖音首页/字面词会挤掉真正有用的视频和解释文章。
   for (const item of [...(extra?.results || []), ...(primary?.results || [])]) {
-    const key = searchResultKey(item?.url);
+    const key = searchResultDedupeKey(item?.url);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     results.push(item);

@@ -76,6 +76,8 @@ jobs:
             exit 1
           fi
           echo "版本号一致：$TAG_VERSION"
+      - name: 发布元数据一致性（CHANGES / compose / README / DOCKER / tag 提交）
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME"
       - name: Shell 脚本语法检查
         run: |
           set -e
@@ -114,11 +116,9 @@ jobs:
         run: npm ci --no-audit --no-fund
       - run: npm run test:local
       - name: 提示词 / 渲染 / 滚动 / 用量端到端回归
-        run: |
-          node test/test-prompt.mjs
-          node test/render-test.mjs
-          node test/scroll-test.mjs
-          node test/usage-e2e.mjs
+        # 必须走 test-suite 包装器：它会重定向 TMPDIR 并关掉启动期真实索引/网络探测。
+        # 裸跑四个脚本会让 release runner 发真实外网、并把临时目录散到默认位置。
+        run: npm run test:regression
       # 与 ci.yml 的 browser job 同口径：发布前用真 Chromium 跑一遍控制台冒烟。
       # 放在最后：它需要 devDeps（上一段已恢复），且不参与加固门禁的依赖裁剪。
       - name: 安装 Chromium（浏览器冒烟）
@@ -126,8 +126,21 @@ jobs:
       - name: 浏览器冒烟（真 Chromium）
         run: npm run test:browser
 
+  windows:
+    # release tag 不触发 ci.yml；这里补跑 Windows 门禁，避免 tag 绕过 test:unit:win。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - run: npm run test:unit:win
+
   release:
-    needs: verify
+    needs: [verify, windows]
     runs-on: ubuntu-latest
     # 写权限只给这个 job：它只做"生成说明 + 建草稿 Release"，不跑 npm ci、不跑测试。
     permissions:

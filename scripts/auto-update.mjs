@@ -119,6 +119,36 @@ function networkGitArgs(args) {
   return [...gitTransportPrefix(networkSettings), ...args];
 }
 
+/** codeload 源码包也要过与 restore 同级的路径/类型检查，不能直接丢给 tar -xzf。 */
+function validateSourceArchive(archive) {
+  const run = (args) => spawnSync('tar', args, {
+    encoding: 'utf8', timeout: 2 * 60 * 1000, maxBuffer: 24 * 1024 * 1024
+  });
+  const listed = run(['-tzf', archive]);
+  if (listed.error || listed.status !== 0) {
+    throw new Error(`源码包读取失败：${listed.error?.message || listed.stderr || `tar 退出 ${listed.status}`}`);
+  }
+  const names = String(listed.stdout || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  if (!names.length) throw new Error('源码包是空的');
+  if (names.length > 50000) throw new Error(`源码包条目过多（${names.length}）`);
+  for (const name of names) {
+    const normalized = name.replace(/\\/g, '/');
+    if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)
+      || normalized.split('/').includes('..')) {
+      throw new Error(`源码包里有不安全的路径：${name}`);
+    }
+  }
+  const verbose = run(['-tvzf', archive]);
+  if (verbose.error || verbose.status !== 0) {
+    throw new Error(`源码包类型读取失败：${verbose.error?.message || verbose.stderr || `tar 退出 ${verbose.status}`}`);
+  }
+  for (const line of String(verbose.stdout || '').split('\n')) {
+    if (/^[lhcbps]/i.test(line.trim())) {
+      throw new Error(`源码包里有不允许的条目类型：${line.trim().slice(0, 120)}`);
+    }
+  }
+}
+
 function commandFailure(binary, args, result) {
   if (result?.error) return result.error;
   // 与 command() 同一口径（见 failureDetail）：有 TAP 失败项就别拿输出结尾当详情
@@ -616,6 +646,7 @@ async function materializeFromApi(workDir, revision) {
   console.log(`[auto-update] 源码包 sha256=${crypto.createHash('sha256').update(downloaded.value).digest('hex')}（${downloaded.value.length} 字节，revision ${revision.slice(0, 12)}）`);
   fs.writeFileSync(archive, downloaded.value, { mode: 0o600 });
   try {
+    validateSourceArchive(archive);
     command('tar', ['-xzf', archive, '-C', workDir, '--strip-components=1'], {
       timeout: 10 * 60 * 1000
     });
@@ -984,11 +1015,15 @@ async function run() {
     QQ_AGENT_DATA_DIR: testDataDir,
     TMPDIR: testTmpDir,
     TMP: testTmpDir,
-    TEMP: testTmpDir
+    TEMP: testTmpDir,
+    // 与 scripts/test-suite.mjs（CI/Release 走它）同口径：关掉启动期真实索引/网络探测，
+    // 并限制并发，避免更新器在离线/小机器上因端口和探测超时被误判为候选版本坏了。
+    QQ_AGENT_SKIP_INDEX_WARM: '1',
+    QQ_AGENT_SKIP_NETWORK_PROBES: '1'
   };
   // 强制 TAP：默认 reporter 在管道里可能是 spec（✔/✖），failureDetail 解析不到失败项，
   // 只能回退成输出尾部——#50 的日志就是这样把「install-oneclick 假红」显示成狼人杀用例。
-  command(process.execPath, ['--test', '--test-reporter=tap', ...tests], {
+  command(process.execPath, ['--test-concurrency=4', '--test', '--test-reporter=tap', ...tests], {
     cwd: workDir,
     timeout: 20 * 60 * 1000,
     env: testEnv

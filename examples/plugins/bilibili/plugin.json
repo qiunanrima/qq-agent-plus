@@ -2,7 +2,7 @@
   "id": "bilibili",
   "apiVersion": 2,
   "name": "B 站",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "搜索与查看 B 站视频、UP 主、热门、评论、字幕；把视频下载合流后发到群里；点赞/投币/收藏/关注/评论/发弹幕（写操作需管理员批准并按天限额）",
   "entry": "index.mjs",
   "capabilities": [
@@ -204,13 +204,14 @@
     },
     {
       "name": "video",
-      "description": "查看一个 B 站视频的详情：标题、UP 主、简介、播放/点赞/投币/收藏、分 P、以及前若干条评论。bvid 或 av 号都行。",
+      "description": "查看一个 B 站视频的详情：标题、UP 主、简介、播放/点赞/投币/收藏、分 P、以及前若干条评论。BV 号、av 号、B 站视频链接或 b23.tv 短链都行。",
+      "timeoutMs": 30000,
       "parameters": {
         "type": "object",
         "properties": {
           "bvid": {
             "type": "string",
-            "description": "BV 号（BV1xx…）或 av 号"
+            "description": "BV 号（BV1xx…）、av 号、B 站视频链接或 b23.tv 短链"
           },
           "withComments": {
             "type": "boolean",
@@ -311,7 +312,7 @@
     {
       "name": "login",
       "timeoutMs": 30000,
-      "description": "B 站扫码登录。action=start：请求一张登录二维码（channel=chat 发到当前会话；channel=console 返回给控制台网页显示）；action=poll：查扫码结果，成功把 Cookie 安全保存并立即生效；action=status / logout。控制台「扫码登录」按钮走的就是这条路。",
+      "description": "B 站扫码登录。action=start：请求一张登录二维码并发到当前会话；action=poll：查扫码结果，成功把 Cookie 安全保存并立即生效；action=status / logout。控制台「扫码登录」按钮走的是宿主的 console 通道，不需要模型传 channel；聊天内 start/logout 仅管理员可用。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -324,14 +325,6 @@
               "logout"
             ],
             "description": "start 发码 / poll 查结果 / status 看登录 / logout 退出"
-          },
-          "channel": {
-            "type": "string",
-            "enum": [
-              "chat",
-              "console"
-            ],
-            "description": "二维码去向：chat=发到当前会话（默认）；console=返回给控制台网页（不占发送队列）"
           }
         },
         "required": [
@@ -348,7 +341,7 @@
         "properties": {
           "bvid": {
             "type": "string",
-            "description": "视频 BV 号"
+            "description": "BV 号、av 号、B 站视频链接或 b23.tv 短链"
           },
           "frames": {
             "type": "array",
@@ -372,7 +365,7 @@
         "properties": {
           "bvid": {
             "type": "string",
-            "description": "BV 号或 av 号"
+            "description": "BV 号、av 号、B 站视频链接或 b23.tv 短链"
           },
           "page": {
             "type": "number",
@@ -481,20 +474,13 @@
     {
       "name": "danmaku",
       "description": "读取一个视频的弹幕，按出现时间排序取前若干条。只读；要发弹幕用 danmaku_send。",
+      "timeoutMs": 30000,
       "parameters": {
         "type": "object",
         "properties": {
           "bvid": {
             "type": "string",
-            "description": "视频 BV 号"
-          },
-          "text": {
-            "type": "string",
-            "description": "要发送的弹幕（不填=只读取）"
-          },
-          "progressMs": {
-            "type": "number",
-            "description": "弹幕出现的时间（毫秒），默认 5000"
+            "description": "BV 号、av 号、B 站视频链接或 b23.tv 短链"
           }
         },
         "required": [

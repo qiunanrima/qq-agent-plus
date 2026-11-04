@@ -48,6 +48,7 @@ import { loadLivingMemoryPage } from './pages/living-memory.js';
 import { loadPersonalityMemoryPage } from './pages/personality-memory.js';
 import { loadHippocampusPage } from './pages/hippocampus.js';
 import { loadPluginsPage } from './pages/plugins.js';
+import { stopQrPoll } from './pages/plugin-settings.js';
 import { refreshPendingBadge } from './pages/plugin-pending.js';
 import { loadSkillsPage } from './pages/skills.js';
 import { renderExperimentalSettingsSectionImpl } from './pages/moments.js';
@@ -272,6 +273,10 @@ function renderBanner() {
 }
 
 function switchTab(name) {
+  // 点击当前已激活的**设置**页签时不要 loadSettings()：那会重建表单，把用户刚改、
+  // 尚未保存的输入静默冲掉（2026-10-31 盲审 P2）。其它页签保持原有刷新语义，
+  // 首屏/测试也可能需要靠 switchTab 初始化侧栏滑块。
+  if (state.tab === name && name === 'settings' && state.settingsDirty) return;
   // 统一守卫：所有入口（页签点击、待批徽标、实验页跳转）都经过这里，
   // 不能只挂在 .tab 的 click 上，否则别的入口会静默丢掉未保存的设置。
   if (state.tab === 'settings' && name !== 'settings' && state.settingsDirty && !state.switchTabBypass) {
@@ -282,6 +287,9 @@ function switchTab(name) {
     });
     return;
   }
+  // 离开插件页时停掉扫码轮询：设置块会随着页面切换消失，但定时器原本会继续
+  // 每 3 秒打一次 /api/plugins/call，最长打到二维码过期。
+  if (state.tab === 'plugins' && name !== 'plugins') stopQrPoll();
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   state.tab = name;

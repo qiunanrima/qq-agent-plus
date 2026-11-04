@@ -48,9 +48,48 @@ OneBot 事件新鲜度不是巡检项，而是控制台侧的告警：连接显�
 
 ```bash
 node src/ops.js install-timers --print     # 预演，看将要写入的单元
-node src/ops.js install-timers --confirm   # 写入并启用 backup / process-guard / health / audit-prune 四个 timer
+node src/ops.js install-timers --confirm   # 写入并启用 backup / backup-drill / process-guard / health / audit-prune 五个 timer
 ```
 
+
+## doctor（一键诊断包）
+
+```bash
+node src/ops.js doctor                        # 巡检 + 诊断包，默认写到 ./qq-agent-diagnose-<时间戳>.tar.gz
+node src/ops.js doctor --out /tmp/diag.tar.gz # 指定输出路径
+node src/ops.js doctor --no-health            # 跳过巡检（更快、也不探测网络）
+```
+
+包内是排障需要的现场：`manifest.json`（版本/提交/Node/平台/内存）、`config.redacted.json`
+（字段名脱敏 + 按值再脱敏 + MCP env/args 与插件设置敏感键整段掩码）、
+`health-check.json`（与 health-check 同一套检查）、
+`storage.json`（data 目录一级占用排行 + 会话留档数量/压缩归档/最旧时间）、
+`plugins.json`（已装插件与 apiVersion；清单损坏的以 `broken:true` 列出）、
+`incidents.json`（异常台账计数与最近几条；读不到时明确写 `unavailable`）、
+`effects.json`（出站副作用账本的状态计数与近 24h unknown）、
+`logs.txt`（最近 3 小时 `journalctl --user`，取不到再试系统 journal，最后回退 `data/logs`
+最新文件尾部 256KB，已按现有规则过滤 Bearer/查询串/Cookie/x-api-key 等形态）。
+容器部署或 sudo 运行读不到 user journal 时，`logs.txt` 不会只写"没有日志"，而是写明
+该用 `docker compose logs` 或 `journalctl --user -u <service>` 怎么取）。
+
+文件名刻意不叫 `config.json` / `health.json`：包被误解到 data 目录时不会覆盖线上真实文件。
+只读、不改配置、不重启服务、不写 `data/health.json`；`tar` 不可用时自动退化为同名 `.d`
+目录（内容相同，绝不删除已存在的路径）。提 issue 时附上这个文件即可，不需要再贴配置或日志。
+注意：配置里的 Key/Token 会被剔除，但**第三方插件自己打印到日志的内容**无法保证已脱敏。
+
+## 发版前检查与覆盖率
+
+```bash
+node scripts/release-check.mjs                 # 版本/CHANGES/镜像 pin
+node scripts/release-check.mjs --tag v0.9.14   # 额外校验 tag 与 package.json、[skip ci]
+node scripts/release-check.mjs --allow-unreleased
+node scripts/release-check.mjs --run-gates     # 再跑 lint/scan/unit（较慢）
+npm run test:coverage                          # Node 内置覆盖率基线（零依赖）
+```
+
+`release-check` 检查：`package.json` 与 `docs/CHANGES.md` 最新版本章节一致、compose/README/
+`docs/DOCKER.md` 的镜像 tag 一致、tag 指向的提交不带 `[skip ci]`（否则 Release/Docker 都不触发）。
+`test:coverage` 只输出数字，不设硬门槛；后续里程碑按版本 ratchet。
 
 ## 子命令一览
 
@@ -60,9 +99,11 @@ node src/ops.js install-timers --confirm   # 写入并启用 backup / process-gu
 | `audit-host` | `ops/audit-host.sh` | 主机只读体检：失败单元、内存/磁盘/journald、Docker 容器与重启次数、监听端口、SSH 安全、防火墙、定时任务、可升级包、TLS 证书到期、备份现状 | 接手机器后的检查、例行巡检 |
 | `audit-prune` | —（改进方案 #5 新增） | 删除 `data/audit-log/` 下超过保留月数的 `audit-YYYYMM.jsonl`（控制台写操作的审计留痕）；默认保留 6 个月，先 `--dry-run` 预演 | 每月定时执行（`qq-agent-audit-prune.timer`）；磁盘吃紧时手动执行 |
 | `backup` | `ops/backup-qq-agent-data.sh` | 停止服务数秒 → AES-256-GCM 加密打包数据目录（`*.tar.gz.enc`）→ 启动服务 → 仅保留最近 N 份；任何失败路径都会重新启动服务 | 每周定时执行（配合 `.timer`）；重大变更前手动执行 |
-| `restore` | —（0.9.9 新增） | 解密 → 路径校验 → 停服务 → 旧数据移到 `data.pre-restore-*` → 解包 → 以 observe 模式启动 → 健康检查；失败自动回滚。先 `--dry-run` 看归档条目，再 `--confirm` | 迁移、灾难恢复、备份演练 |
+| `restore` | —（0.9.9 新增） | 解密 → 路径校验 → 停服务 → 检查实例锁（仍被占用则拒绝）→ 旧数据移到 `data.pre-restore-*` → 解包 → 启动并确认 `is-active`；失败自动回滚。先 `--dry-run` 看归档条目，再 `--confirm` | 迁移、灾难恢复、备份演练 |
 | `prune` | —（0.9.9 新增） | 只删除 `state='acked'` 且超过保留期的消息；`pending` / `held` 永远不删。`--days=N` 不传时读 `store.retentionDays`（0 = 不删） | 历史消息占用磁盘时；先 `--dry-run` |
 | `scan` | `ops/scan-undefined-calls.py` + `ops/check-undefined-calls.sh` | 将注释/字符串/正则/模板串抹白后，查找「已调用但本文件既未定义也未 import」的函数名；默认只记录、不阻断（退出码 0）；`--strict` 下有可疑调用**或目录不存在**则退出 1（2026-10-03：路径写错也要让 CI 变红） | 修改 `src/*.js` 后；也可挂载到服务 `ExecStartPost` |
+| `doctor` | —（2026-10-30 新增） | 生成诊断包：巡检 + 脱敏配置 + 存储占用 + 插件清单 + 异常台账 + 出站副作用账本状态（`effects.json`，含最近 unknown 的 id/动作/会话）+ 最近日志；只读 | 用户报 issue 时让对方先跑；自己排障时省去逐项收集 |
+| `effects` | —（2026-10-31 新增） | 出站副作用账本的人工核对：`list [--state unknown]` 列记录；`resolve <id> --sent\|--failed --confirm` 改判 unknown（写 resolvedBy=manual）。只改账本，不补发/撤回消息 | 总览出现「出站动作待核对」、或 `doctor` 报账本 unknown 时 |
 | `watch-send` | `ops/watch-send.py` | 监视 outbox 表的 rowid 水位线：基线之后新增 failed 行报 SEND_FAIL，新增成功行报 SEND_OK；同时检查是否再次出现未定义函数事故 | 修复发送链路后的线上验证 |
 | `watch-login` | `ops/watch-login.py` | 每 15 秒轮询协议端 HTTP 端口，直至 QQ 登录成功，随后打印登录信息 / 控制台状态 / 最近日志 | 重启协议端容器或掉线重登后确认恢复 |
 | `guard` | `ops/guard-process-explosion.sh` | 用户进程数超过阈值时清理失控的 bash/grep/tr/sh/sleep 进程树并记录现场（仅 Linux） | 配合 `process-guard.timer` 每 10 分钟执行 |
@@ -72,7 +113,7 @@ node src/ops.js install-timers --confirm   # 写入并启用 backup / process-gu
 | `deploy` | `ops/deploy_qq_agent.sh` | 非交互部署：设置模型凭据后调用源码目录的 `deploy-all.sh -y` | 新机器初始化、CI 或远程 SSH 环境中的部署 |
 | `console` | `ops/qq-console.bat` | 使用系统 `ssh` 建立控制台 / WebUI / 远程桌面三个端口的隧道，就绪后提示或打开控制台（Windows/macOS/Linux 通用） | 日常打开控制台 |
 | `plugins` | —（插件生态新增） | 插件管理：`list` 列出已装插件（版本/能力/来源）与已授权清单；`install <文件.tar.gz>` **从本地文件装**（别人发的包、自己打的包）——sha256 由它算给你核对，装完来源记录写「本地文件：<文件名>」；`uninstall <id> [--purge-data]` 卸载并可选删除插件数据 | 不打开控制台就能装/看；小白用户拿到包只会在控制台装，命令行这条给运维与作者自测 |
-| `install-timers` | `ops/systemd/` | 生成并安装四个 systemd user 定时器：备份（每周日 04:10）、进程看门狗（每 10 分钟）、健康巡检（每 5 分钟）、审计日志清理（每月 1 日 04:20） | 安装定时任务 |
+| `install-timers` | `ops/systemd/` | 生成并安装五个 systemd user 定时器：备份（每周日 04:10）、恢复演练、进程看门狗（每 10 分钟）、健康巡检（每 5 分钟）、审计日志清理（每月 1 日 04:20） | 安装定时任务 |
 
 ## 部署纪律：只改 `ui/` 就不要重启服务
 
@@ -92,6 +133,27 @@ node src/ops.js install-timers --confirm   # 写入并启用 backup / process-gu
 ```bash
 systemctl --user show -p MainPID --value qq-agent-linux.service   # 部署前后 PID 应相同
 ```
+
+## 备份/恢复与单实例锁
+
+- `backup` 需要停服时，`systemctl stop` 失败会**中止备份**（不再生成可能不一致的归档）。
+  归档生成后、加密前会按恢复侧同一套类型校验重读一遍：数据目录内若有符号链接/硬链接/
+  设备文件，本次备份直接失败并提示移除，避免留下"备份成功但 restore/drill 必拒绝"的包。
+- `restore` 停服后会再读一次 `<数据目录>/.server.lock`：仍被活实例占用（自定义服务名、
+  容器、WSL 等）就拒绝覆盖并尝试把服务拉回。确认旧进程已退出后再恢复。
+- 恢复会清掉归档里的旧 `.server.lock`（跨主机恢复不会被上一个 pid/hostname 挡住）。
+
+## 单实例锁
+
+控制台启动时会在 `<数据目录>/.server.lock` 写入 `{pid, hostname, startedAt}`：同一数据目录
+第二个实例会拒绝启动（`E_INSTANCE_LOCKED`），避免两个进程同时写 `messages.sqlite`、
+会话索引与插件目录。同机 pid 已不存在或锁文件损坏会自动接管；不同主机（共享盘）一律拒绝。
+确认旧进程已退出后也可手动删除锁文件。`server.singleInstanceLock: false` 可关闭（不建议）。
+
+边界：共享盘上"其它机器写的完整锁"一律拒绝；但**内容损坏且超过 5 秒**的锁会被当作
+崩溃残留接管（无法确认是别的机器正在写）。容器/K8s 重建后 hostname 会变，若上次是
+SIGKILL/OOM 留下的锁，新容器会因 hostname 不同被拒——确认旧容器已退出后删除
+`.server.lock`，或在该部署显式关闭单实例锁（自行保证只跑一个实例）。
 
 ## 常用示例
 
@@ -124,7 +186,7 @@ node src/ops.js backup --drill
 node src/ops.js restore --from ~/qq-agent/backups/qq-agent-data-xxxx.tar.gz.enc --dry-run
 node src/ops.js restore --from ~/qq-agent/backups/qq-agent-data-xxxx.tar.gz.enc --confirm
 
-# 历史消息清理（只删 state='acked' 且超期的；pending/held 永远不删）
+# 历史消息清理（只删 state='acked' 且超期的；pending/held 永远不删；按会话复合键定位，删除后重算 message_count）
 # 不传 --days 时读 config.json 的 store.retentionDays（0 = 不删）
 node src/ops.js prune --days=90 --dry-run
 node src/ops.js prune --days=90 --confirm
@@ -219,7 +281,7 @@ node src/ops.js install-timers --confirm
 | `SNOWLUMA_IMAGE` | `motricseven7/snowluma:v1.14.22` | 协议端镜像（`deploy`）；已部署的实例可在控制台「设置 → OneBot → 协议端」一键升级/回滚 |
 | `QQ_AGENT_SNOWLUMA_DIR` | `<root>/snowluma` | 协议端 compose 项目目录（一键更新与体检读它的 `.env`） |
 | `QQ_AGENT_IMAGE_MIRROR` | 空 | 追加自己的镜像站（逗号分隔多个；等价于 `deploy-all.sh --image-mirror`），排在**内置兜底列表之前**。留空时也会先用内置的公共加速站（`docker.1panel.live`、`docker.m.daocloud.io`），所以国内直连不上 Docker Hub 的开箱安装通常不用设它；用法见 `docs/LINUX.md` |
-| `QQ_AGENT_ONEBOT_WS_PORT` | `3391` | 协议端 WebSocket 端口（`deploy`） |
+| `QQ_AGENT_ONEBOT_WS_PORT` | `3001` | 协议端 WebSocket 端口（`deploy`；与 install.sh 全栈默认一致） |
 | `SSHHOST` / `QQ_AGENT_SSH` | **必填**（缺失直接报错退出） | 服务器地址；两种写法都支持：`SSHHOST=host` 或 `SSHHOST=user@host` / `QQ_AGENT_SSH=user@host` |
 | `SSHUSER` | `ubuntu` | SSH 登录用户 |
 | `SSHPORT` | `22` | SSH 端口 |
@@ -257,11 +319,13 @@ node src/ops.js install-timers --confirm
 
 ## 定时任务
 
-`install-timers` 生成四个 unit。`--print` 仅打印内容，`--confirm` 写入
+`install-timers` 生成五个 unit。`--print` 仅打印内容，`--confirm` 写入
 `~/.config/systemd/user/` 并执行 `systemctl --user daemon-reload && enable --now`：
 
 - `qq-agent-backup.timer`：`OnCalendar=Sun *-*-* 04:10:00`、`Persistent=true`，
   调用 `node src/ops.js backup --confirm`；
+- `qq-agent-backup-drill.timer`：每月执行一次 `ops backup --drill --confirm`，验证备份可解密、
+  tar 与 SQLite 完整性；
 - `process-guard.timer`：`OnBootSec=3min`、`OnUnitActiveSec=10min`，
   调用 `node src/ops.js guard --confirm`；
 - `qq-agent-health.timer`：`OnBootSec=5min`、`OnUnitActiveSec=5min`，

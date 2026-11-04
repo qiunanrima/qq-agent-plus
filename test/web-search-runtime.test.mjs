@@ -77,13 +77,13 @@ test('梗补搜被取消后不再启动 B 站、Bing 定向或 360 兜底', asyn
   const calls = [];
   globalThis.fetch = async (url, { signal }) => {
     calls.push(String(url));
-    if (calls.length === 1) return new Response('<li class="b_algo"><h2><a href="https://example.com/">测试词</a></h2><p>测试词含义</p></li>');
+    if (new URL(url).hostname.endsWith('bing.com')) return new Response('<li class="b_algo"><h2><a href="https://example.com/">测试词</a></h2><p>测试词含义</p></li>');
     assert.match(String(url), /sogou/);
     queueMicrotask(() => controller.abort(reason));
     return pending(signal);
   };
   await assert.rejects(webSearch('测试词', { meme: true, signal: controller.signal }), (error) => error === reason);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3); // RSS、HTML、搜狗；取消后不启动其他补搜。
 });
 
 test('读响应体期间取消也会终止请求', async (t) => {

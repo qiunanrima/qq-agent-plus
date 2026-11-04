@@ -362,7 +362,7 @@ test('人物印象与异常处理按功能块分卡', () => {
     features.indexOf('function renderFriendFeaturePageImpl')
   );
   assert.match(identity, /<section class="settings-card">\s*<h3>统一人物<\/h3>/);
-  assert.match(identity, /<section class="settings-card">\s*<h3>旧印象<\/h3>/);
+  assert.match(identity, /<section class="settings-card">\s*<h3>旧印象（历史 \/ 手工）<\/h3>/);
   const incident = features.slice(
     features.indexOf('function renderIncidentFeaturePageImpl'),
     features.indexOf('async function saveIncidentFeatureConfig')

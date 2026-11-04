@@ -541,7 +541,7 @@ rollback_deployment() {
   # 显式调用点（npm 缺失、健康检查失败）是在 printf 之后进来的，此时 $? 已经是 0；
   # 那种情况必须按失败退出，否则调用方（自动更新按退出码判定）会把回滚过的部署当成成功。
   ((status != 0)) || status=1
-  trap - ERR INT TERM
+  trap - ERR INT TERM HUP
   set +e
   ROLLBACK_FAILED=false
   # 注意：清标记必须放在**恢复动作之后**（原来放在这里）：
@@ -591,12 +591,22 @@ rollback_deployment() {
   fi
   systemctl --user daemon-reload
   if [[ "$WAS_UPDATE_TIMER_ENABLED" == true ]]; then
-    systemctl --user enable --now "$UPDATE_SERVICE.timer" >/dev/null 2>&1
-  elif [[ "$WAS_UPDATE_TIMER_ACTIVE" == true ]]; then
+    # 只恢复开机自启；原来 enabled 但被手动 stop 的，不要用 --now 擅自启动。
+    systemctl --user enable "$UPDATE_SERVICE.timer" >/dev/null 2>&1
+  fi
+  if [[ "$WAS_UPDATE_TIMER_ACTIVE" == true ]]; then
     systemctl --user start "$UPDATE_SERVICE.timer" >/dev/null 2>&1
   fi
   if [[ "$WAS_ACTIVE" == true ]]; then
-    systemctl --user start "$SERVICE.service"
+    if [[ "$ROLLBACK_FAILED" != true ]]; then
+      if ! systemctl --user start "$SERVICE.service"; then
+        ROLLBACK_FAILED=true
+      else
+        # Type=simple 的 start 只代表 fork/exec 成功；等两秒再确认进程没立刻退出。
+        sleep 2
+        systemctl --user is-active --quiet "$SERVICE.service" || ROLLBACK_FAILED=true
+      fi
+    fi
   elif [[ "$WAS_ENABLED" == true ]]; then
     # 原来是 enabled 但被手动 stop：回滚只恢复开机自启，不擅自启动。
     systemctl --user enable "$SERVICE.service" >/dev/null 2>&1
@@ -604,6 +614,16 @@ rollback_deployment() {
     systemctl --user disable --now "$SERVICE.service" >/dev/null 2>&1
   fi
   if [[ "$ROLLBACK_FAILED" == true ]]; then
+    # EXIT trap 会删掉整个 .deploy.lock（含 state/ 里的部署前 config/unit 备份）。
+    # 回滚失败时先把它们复制到数据目录外的恢复目录，否则提示里的“手动恢复”没有材料。
+    if [[ -d "$LOCK_DIR/state" ]]; then
+      RECOVERY_STATE_DIR="$DATA_DIR/deploy-recovery-$(date +%Y%m%dT%H%M%S)"
+      if mkdir -p "$RECOVERY_STATE_DIR" && cp -a "$LOCK_DIR/state/." "$RECOVERY_STATE_DIR/"; then
+        printf 'Pre-deploy config/unit backups kept at %s\n' "$RECOVERY_STATE_DIR" >&2
+      else
+        printf 'Could not copy pre-deploy state to %s; check disk/permissions.\n' "$RECOVERY_STATE_DIR" >&2
+      fi
+    fi
     printf 'Rollback incomplete: keeping %s for manual recovery. Do not start the old service blindly.\n' "$IN_PROGRESS_MARKER" >&2
     exit "$status"
   fi
@@ -611,11 +631,12 @@ rollback_deployment() {
   clear_deploy_marker
   exit "$status"
 }
-trap rollback_deployment ERR INT TERM
+trap rollback_deployment ERR INT TERM HUP
 
+# 从这里到健康检查通过是"服务可能停着、代码可能半拷贝"的窗口：先落标记。
+# 即使服务原本是 stopped，也必须标记：SIGKILL/掉电后下一次启动要能发现半更新。
+mark_deploy_in_progress
 if [[ "$WAS_ACTIVE" == true ]]; then
-  # 从这里到健康检查通过是"服务可能停着、代码可能半拷贝"的窗口：先落标记
-  mark_deploy_in_progress
   systemctl --user stop "$SERVICE.service"
 fi
 if [[ "$ROOT" != "$INSTALL_DIR" ]]; then
@@ -654,7 +675,7 @@ if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)" != y
   # 而为，失败只警告（2026-10-12 修正文案：原说法只提了"下次开机不会自启"）。
   if grep -q 'NoNewPrivs:[[:space:]]*1' /proc/self/status 2>/dev/null; then
     printf '警告：服务被 NoNewPrivileges 加固，无法代为开启 linger；本次部署不受影响，但当前登录会话一断开，systemd 就会连同用户管理器一起停掉服务（机器人掉线），服务下次开机也不会自启。\n请在服务账号的交互终端执行一次：sudo loginctl enable-linger %s（执行后立即生效，之后退出终端服务不受影响）\n' "$USER" >&2
-  elif ! sudo loginctl enable-linger "$USER" 2>/dev/null; then
+  elif ! sudo -n loginctl enable-linger "$USER" 2>/dev/null; then
     printf '警告：启用 linger 失败（sudo 不可用或被拒绝）；本次部署不受影响，但当前登录会话一断开，systemd 就会连同用户管理器一起停掉服务（机器人掉线），服务下次开机也不会自启。\n请在服务账号的交互终端执行一次：sudo loginctl enable-linger %s（执行后立即生效，之后退出终端服务不受影响）\n' "$USER" >&2
   fi
 fi
@@ -685,7 +706,7 @@ for _ in {1..90}; do
   sleep 1
 done
 [[ "$HEALTHY" == true ]] || { printf 'Service health check failed\n' >&2; rollback_deployment; exit 1; }
-trap - ERR INT TERM
+trap - ERR INT TERM HUP
 clear_deploy_marker
 # 每份快照是整个安装目录（含 node_modules），而自动更新会无人值守地反复部署：
 # 不清理会把数据盘慢慢填满。保留最近的 3 份。
@@ -745,14 +766,21 @@ if getent group docker >/dev/null 2>&1; then
   # 收尾段仍在 set -e 之下：每个可能失败的赋值都要自带保护，否则会把退出码弄坏
   DOCKER_GID="$(getent group docker 2>/dev/null | cut -d: -f3 || true)"
   if [[ -n "$DOCKER_GID" ]]; then
-    if ! id -nG "$(id -un)" | tr ' ' '\n' | grep -qx docker; then
+    DOCKER_MEMBER=false
+    if id -nG "$(id -un)" | tr ' ' '\n' | grep -qx docker; then
+      DOCKER_MEMBER=true
+    elif [[ "${QQ_AGENT_ALLOW_DOCKER_GROUP:-}" == "1" ]]; then
+      # 显式 opt-in：docker 组等于 root 等价权限，不能默认替用户加。
       if sudo -n usermod -aG docker "$(id -un)" >/dev/null 2>&1; then
-        printf '已把 %s 加入 docker 组（控制台「更新协议端」需要）\n' "$(id -un)"
+        DOCKER_MEMBER=true
+        printf '已把 %s 加入 docker 组（控制台「更新协议端」需要；可用 QQ_AGENT_ALLOW_DOCKER_GROUP=0 关闭）\n' "$(id -un)"
       else
         printf '警告：把自己加入 docker 组失败；控制台「更新协议端」会报权限不足（可手工执行：sudo usermod -aG docker %s）\n' "$(id -un)" >&2
       fi
+    else
+      printf '跳过 docker 组自动加入（需要显式设置 QQ_AGENT_ALLOW_DOCKER_GROUP=1；控制台「更新协议端」可能报权限不足）\n'
     fi
-    if [[ -z "${QQ_AGENT_SOURCE_REVISION:-}" ]]; then
+    if [[ "$DOCKER_MEMBER" == true && -z "${QQ_AGENT_SOURCE_REVISION:-}" ]]; then
       MANAGER_UNIT="user@$(id -u).service"
       SVC_PID="$(systemctl --user show "$SERVICE.service" -p MainPID --value 2>/dev/null || true)"
       SVC_GROUPS=""

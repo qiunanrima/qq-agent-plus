@@ -9,7 +9,8 @@
 "security": {
   "allowFakeIpDns": true,
   "fakeIpCidrs": ["198.18.0.0/15"],
-  "allowPrivateImageHosts": false
+  "allowPrivateImageHosts": false,
+  "allowPrivatePriceHosts": false
 }
 ```
 
@@ -24,6 +25,51 @@ Clash/mihomo 等代理的 fake-ip 模式会把任意域名解析到 `198.18.0.0/
 「重新加载磁盘配置 / 用当前页面覆盖」二选一。API 调用方确认覆盖时用
 `POST /api/config?force=1`，重新加载用 `POST /api/config/reload`。备份写不出来时保存直接失败，
 不会静默覆盖。
+
+## security.allowPrivatePriceHosts：价目类 URL 允许内网（默认关）
+
+价格探测、渠道价目表、远程价格表的目标地址都由用户填写，默认与插件索引同一道
+safe-fetch SSRF 防线：拒绝环回 / RFC1918 / 链路本地 / CGNAT，重定向逐跳复检。
+确实要拉**内网 one-api** 的部署才打开：
+
+```json
+"security": { "allowPrivatePriceHosts": true }
+```
+
+打开后这三类请求才能访问内网地址；图片下载开关 `allowPrivateImageHosts` 不联动，
+两者分开授权。注意它同样放行**重定向的每一跳**（公网价目跳到内网也会被允许）；
+URL 里不能内嵌 `user:pass@`（safe-fetch 一律拒绝凭据），需要鉴权的价目端点请改用
+无凭据的内网地址或反向代理层认证。
+
+**升级注意**：旧版本价目 URL 走裸 `fetch`，内网地址一直可用；升级到本版本后默认会
+报「禁止访问内网/本机地址」。若 `api.channelPriceFeeds[].url` 或 `api.priceRemoteUrl`
+指向局域网 one-api，请显式加 `"allowPrivatePriceHosts": true`，否则会停在旧缓存价目。
+
+## server.trustedProxies / server.singleInstanceLock
+
+```json
+"server": {
+  "host": "0.0.0.0",
+  "token": "<控制台令牌>",
+  "trustedProxies": ["127.0.0.1"],
+  "singleInstanceLock": true
+}
+```
+
+- `trustedProxies`：反向代理的地址白名单（IP 或 IPv4 CIDR）。只有 TCP 对端命中这里时，
+  才采信 `x-forwarded-for` 作为**登录限流键**（从右往左跳过命中 `trustedProxies`
+  的代理，取第一个非可信地址；多级代理时请把每一跳代理地址都列进来）。
+  `X-Real-IP` **不采信**（它常被代理原样透传，客户端可直接伪造）；代理没设置
+  `X-Forwarded-For` 时限流退化为按代理地址计数，不会绕过。
+  客户端自带的伪造段不会生效，代理应使用 `$proxy_add_x_forwarded_for` 追加真实对端。
+  多级代理时，`x-forwarded-proto` 也取最后一跳；若 CDN 终止 TLS、内层是 HTTP，需要让
+  最内层代理透传原始协议，否则登录 Cookie 不会加 `Secure`（不影响可用性）。并在
+  `x-forwarded-proto: https` 时给登录 Cookie 加 `Secure`。空数组（默认）= 不信任任何
+  转发头，伪造 XFF 不会绕过限流，但反代后所有客户端会共用代理地址计数。
+  **不要**在代理不受控时填写；转发头永远不参与鉴权判定。
+- `singleInstanceLock`：同一数据目录只允许一个实例（`<DATA_DIR>/.server.lock`）。
+  默认开；同机陈旧 pid 或损坏锁会自动接管，不同主机的锁一律拒绝。确认没有旧进程时
+  也可手动删除锁文件再启动。
 
 ## platform.privateFileSend：当前私聊的纯文本资料（默认关闭）
 
@@ -266,7 +312,7 @@ Clash/mihomo 等代理的 fake-ip 模式会把任意域名解析到 `198.18.0.0/
 }
 ```
 
-- `provider` 可选：`bing`（默认，抓 `cn.bing.com` 页面，不需要 Key）、`deepseek`、`zhipu`、`bocha`、
+- `provider` 可选：`bing`（默认，优先读 `cn.bing.com` RSS，失败时回退 HTML 页面，不需要 Key）、`deepseek`、`zhipu`、`bocha`、
   `baidu`、`metaso`、`doubao`、`tavily`、`aggregate`（控制台「设置 → 搜索」里选）。
 - 每家一套 `{ apiKey, baseUrl, count, timeoutMs }`（`zhipu` 另有 `engine`、`tavily` 另有 `searchDepth`）；
   `apiKey` 留空时回退各自的环境变量：`DEEPSEEK_API_KEY` / `ZHIPU_API_KEY` / `BOCHA_API_KEY` /
@@ -275,10 +321,10 @@ Clash/mihomo 等代理的 fake-ip 模式会把任意域名解析到 `198.18.0.0/
   （`count` 1–50，`needContent:true` 时额外取正文）；老配置里的 `/responses` 会被自动剥掉。
   只有新接口返回 404/405 或没有结果时，才回退到旧 Responses `web_search`（旧接口拿不到 URL，`model` 只给这个兜底用）。
 - `tavily`：tavily.com 的搜索 API（2026-09 时点的公开口径：免费档 1000 次/月，专为 LLM 设计），另有 `searchDepth`（默认 `basic`）。
-- `aggregate`（聚合搜索）：并发跑 `sources` 里的多个源，URL 去重、每条结果带 `source` 标注；
-  `sources` 顺序就是结果优先级，单个源失败不影响整体，全部失败才报错。
-  重复源只调用一次，最多使用前 4 个不同来源；去重只忽略 URL 片段及 `utm_*`、`fbclid`、
-  `gclid`、`msclkid` 追踪参数，保留文章/视频 ID 等内容参数，返回链接保持原样。
+- `aggregate`（聚合搜索）：并发跑 `sources` 里的多个源，规范化 URL 去重、每条结果带
+  `source` 标注；去重键保留可能决定页面身份的 query 参数，只忽略明确 tracking 参数与普通
+  锚点（`#/`、`#!`、`#?` 等 hash 路由保留），返回给模型的仍是各来源原始链接。`sources`
+  顺序就是结果优先级，单个源失败不影响整体，全部失败才报错。
 - 搜索继承本轮的取消信号与活跃时间控制；暂停、中止或进入非活跃时间会取消进行中的请求，
   不再启动后续补搜。每家服务自己的请求超时仍然生效。取消请求不能保证上游撤销已发生的计费。
 - 还能在控制台「搜索提供方」里自己加提供商（`type: 'openai'` 走 POST JSON 搜索接口、`type: 'bing'` 抓页面解析），
@@ -910,10 +956,17 @@ MiMo 的写法（想要语气、又不想上 GPU 时最省事）：
     "maxMessagesPerChat": 0,
     "keepSessionFiles": 2000,
     "sessionPersistMs": 10000,
-    "sqliteSynchronous": "FULL"
+    "sessionCompressAfterDays": 30,
+    "sessionMaxTotalMb": 1024,
+    "sqliteSynchronous": "FULL",
+    "contextLayering": { "enabled": true, "maxHistoryMessages": 24, "maxHistoryChars": 8000 }
   }
 }
 ```
+
+- `contextLayering`（Issue #86）：本分支默认关闭；显式启用后只带最近 24 条 / 8000 字历史，控制单轮输入；
+  设为 `{ "enabled": false }` 恢复旧口径（仍受 `atCount/allCount` 与 `pastStateMaxChars` 约束）。
+  建议先用默认值观察回复连贯性，再按群需要调大。
 
 - `blacklistKeywords`：消息关键词黑名单（每项一条，最多 100 条）。普通文字大小写不敏感
   包含匹配；以 `re:` 开头启用受限正则：最多一个 `*`/`+`/`{n,}`，所有变长量词（含 `?`、
@@ -925,6 +978,13 @@ MiMo 的写法（想要语气、又不想上 GPU 时最省事）：
 - `keepSessionFiles`：`data/sessions` 审计文件保留条数，`0` = 不限；重启后生效。
 - `sessionPersistMs`：运行中会话 JSON 的落盘间隔，默认 10 秒（2~60 秒）。会话文件包含完整
   提示词与记录，间隔越小崩溃时丢的进度越少，但磁盘写入越多。
+- `sessionCompressAfterDays`：多少天前**已结束**的留档压成 `<id>.json.gz`，默认 30，`0` = 不压缩。
+  压缩比通常 8~10 倍；读取方（控制台详情、用量、成本、价格缺口、健康检查）都透明支持压缩归档，
+  压缩后历史账目不会变少。只在每日保留期任务里跑，不占启动时间。运行中/等待中的会话不压。
+- `sessionMaxTotalMb`：`data/sessions` 总量上限（MB），默认 1024，`0` = 不限制。超出后按
+  **最旧优先**删除已结束的留档（运行中/等待中的永不删），并在控制台「总览 → 主机资源」展示
+  当前占用。多群或长提示词的部署建议保留默认值，避免悄悄吃满磁盘。下调后不是立刻删：
+  下一次每日保留期任务（或重启）时才真正压到上限内，控制台会显示当前占用与上限。
 - `sqliteSynchronous`：`messages.sqlite` 的同步级别。默认 `FULL`（每条提交等落盘）；
   小云盘 IOPS 紧张时可设 `NORMAL`——WAL 下仍保证崩溃一致性，但掉电可能丢最近几条提交。
 - 控制台默认只让用户选三个档位：均衡（10 秒 / FULL）、省 IO（30 秒 / NORMAL）、
@@ -943,7 +1003,7 @@ MiMo 的写法（想要语气、又不想上 GPU 时最省事）：
 - `mode`：`off`（默认）/ `balanced`（省）/ `aggressive`（很省）。控制台在「设置 -> Token 节省」，带"你的设置 / 当前生效"对照表。
 - 语义：**只夹上限，不改写** `store.atCount` / `api.maxRounds` 这些用户值；关掉立刻回到原设置（`off` 与升级前一致；手改成负数这类坏值时会按默认值处理，不再原样传下去）。
 - 被夹的项：上下文档位条数（被艾特/关键词/随机/全响应）、单次运行工具轮数与累计 Token、
-  会话交接与全局印象注入的字符上限、系统提示里的表情清单条数。
+  会话交接与全局印象注入的字符上限、动态提示里的表情清单条数。
 - 有一处例外：每日动态（说说）另有一条提示词组装路径，它自己取交接与印象，不吃上面那两个字符上限
   （那条路径有自己的 `maxPromptChars` 预算兜底）。
 - 改不动的部分：每次模型调用的固定底（系统提示 + 工具定义）约 1.2 万-1.5 万 token。
@@ -1011,11 +1071,20 @@ MiMo 的写法（想要语气、又不想上 GPU 时最省事）：
 
 ```json
 {
-  "messageTypes": { "expandForward": false, "videoFrames": true, "images": true, "stickers": false }
+  "messageTypes": {
+    "expandForward": false,
+    "videoFrames": true,
+    "images": true,
+    "stickers": false,
+    "enrichTimeoutMs": 5000
+  }
 }
 ```
 
 - 控制台在「设置 -> 消息类型」。四个开关都**默认开**（即升级前的老行为，不会因为升级改变现有实例的表现）。
+- `enrichTimeoutMs`（默认 5000，范围 200–15000）：入站富化的总预算。解析引用、@昵称、
+  合并转发都在后台进行；到点还没完成就按占位符落库/放行，不再让一个慢下载卡住同群后续消息。
+  弱网/Termux 可适当调大；`0`/非法值回落默认，不能表示无限等待。
 - 语义：只是决定这类内容**进不进提示词/进不进模型**；消息本身照常进聊天记录。
   注意合并转发那条：**展开后的文本就是存档里的那一行**，关掉后存档（以及控制台里的显示与搜索）
   留下的是占位符，内容要等模型按需 `read_forward` 之后才补进去。

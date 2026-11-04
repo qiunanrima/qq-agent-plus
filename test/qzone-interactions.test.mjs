@@ -9,7 +9,7 @@ process.env.QQ_AGENT_DATA_DIR = root;
 const nowMs = Date.parse('2026-09-12T06:00:00Z');
 const nowSec = Math.floor(nowMs / 1000);
 
-const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js');
+const { DEFAULT_CONFIG, setRuntimeConfig, getConfig } = await import('../src/core/config.js');
 const {
   parseQzoneFeed,
   parseQzoneRawComments,
@@ -121,6 +121,29 @@ function fixture(patch = {}) {
   });
   return { cfg, manager, onebot, qzoneWeb, writes, suppression, sleeps, stateFile };
 }
+
+test('observe/暂停模式：runNow 不拉动态、不调模型、不写 Qzone', async () => {
+  let modelCalls = 0;
+  let feedCalls = 0;
+  const f = fixture({
+    feedCall: async () => { feedCalls += 1; return { feeds: [], has_more: false }; },
+    complete: async () => { modelCalls += 1; return response({ feedActions: [], replyActions: [] }); }
+  });
+  const cfgNow = structuredClone(getConfig());
+  cfgNow.runtime = { ...cfgNow.runtime, mode: 'observe', paused: false };
+  setRuntimeConfig(cfgNow);
+  try {
+    const result = await f.manager.runNow('feed');
+    assert.equal(result.skipped, 'runtime-mode');
+    assert.equal(modelCalls, 0);
+    assert.equal(feedCalls, 0);
+    assert.equal(f.writes.length, 0);
+  } finally {
+    const back = structuredClone(getConfig());
+    back.runtime = { ...back.runtime, mode: 'active', paused: false };
+    setRuntimeConfig(back);
+  }
+});
 
 test('parses structured friend feed text, images, likes, roots, and nested replies', () => {
   const child = commentHtml({ tid: 2, uin: 222, nick: 'B', content: 'nested reply' });
@@ -700,6 +723,48 @@ test('like_comment：评论已成功后点赞阶段被中止 → reviewed（退�
   assert.deepEqual(f.writes.map((w) => w.action), ['comment_qzone'], '只该发出评论，点赞不该发出去');
   assert.equal(item.commentStatus, 'done', '前提：评论确实成功了');
   assert.equal(item.status, 'reviewed', '评论已发出 → 必须 reviewed（退回 unread 下轮会重复评论）');
+});
+
+// ── 2026-11-04 全项目审查：写入前有延迟时，不能在延迟期间就把状态落成 acting ──
+test('动作间隔等待期间仍是 unread：硬杀不会被误判成 unknown', { timeout: 15000 }, async () => {
+  const posts = [
+    { uin: 111, nickname: 'Older', time: nowSec - 60, appid: 311, key: 'old', html: htmlPost('older') },
+    { uin: 222, nickname: 'Newer', time: nowSec, appid: 311, key: 'new', html: htmlPost('newer') }
+  ];
+  let releasePause = null;
+  let pauseStarted = false;
+  const f = fixture({
+    feed: posts,
+    complete: async ({ messages }) => response({
+      feedActions: idsFromMessages(messages, 'feed').map((id) => ({
+        id, action: 'comment', content: '具体回应', reason: '有话可接'
+      })),
+      replyActions: []
+    }),
+    sleep: () => new Promise((resolve) => {
+      pauseStarted = true;
+      releasePause = resolve;
+    })
+  });
+  f.cfg.qzoneInteractions.actionDelayMinMs = 500;
+  f.cfg.qzoneInteractions.actionDelayMaxMs = 500;
+  setRuntimeConfig(f.cfg);
+
+  const run = f.manager.runNow('feed');
+  for (let i = 0; i < 200 && !pauseStarted; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(pauseStarted, true, '应停在动作间隔');
+  const during = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
+  assert.ok((during.feeds || []).some((x) => x.status === 'unread'), '第二条还没发请求');
+  assert.equal((during.feeds || []).some((x) => x.status === 'acting'), false,
+    '动作间隔期间不能有 acting（否则硬杀会在重启时变 unknown）');
+
+  releasePause();
+  await run;
+  const after = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
+  assert.equal((after.feeds || []).every((x) => x.status === 'reviewed'), true);
+  assert.deepEqual(f.writes.map((w) => w.action), ['comment_qzone', 'comment_qzone']);
 });
 
 // ── 2026-10-06 复审 P2：持久化状态绑定账号（与 daily-moments 的 MOMENT_ACCOUNT_CHANGED 同款防线）──

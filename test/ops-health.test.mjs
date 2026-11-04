@@ -151,6 +151,32 @@ test('docker-socket：主进程未加固且 sudo -n docker 可用 → 报"走回
   }
 });
 
+test('send-review：同一次运行的 unknown 按 run 计数，历史遗留不永久报红', async () => {
+  const dir = makeDataDir({ inboundAgoMs: null, outboundAgoMs: 0 });
+  const db = openDatabase(path.join(dir, 'messages.sqlite'));
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS outbox (
+      id TEXT PRIMARY KEY, run_id TEXT, chat_key TEXT NOT NULL,
+      state TEXT NOT NULL, payload TEXT NOT NULL, message_id TEXT, error TEXT,
+      created_at INTEGER NOT NULL DEFAULT 0
+    )`);
+    const now = Date.now();
+    for (let i = 0; i < 3; i += 1) {
+      db.prepare('INSERT INTO outbox(id,run_id,chat_key,state,payload,created_at) VALUES (?,?,?,?,?,?)')
+        .run(`op-${i}`, 'run-1', 'group:1', 'unknown', '{}', now);
+    }
+  } finally { db.close(); }
+  const fresh = await runHealthCheck({ dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null });
+  const item = fresh.checks.find((c) => c.name === 'send-review');
+  assert.equal(item.ok, false);
+  assert.match(item.detail, /1 条发送结果未知/, '三条同 run 的 unknown 只算 1 个批次');
+
+  const db2 = openDatabase(path.join(dir, 'messages.sqlite'));
+  try { db2.prepare('UPDATE outbox SET created_at=?').run(Date.now() - 30 * 86400000); } finally { db2.close(); }
+  const old = await runHealthCheck({ dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null });
+  assert.equal(old.checks.find((c) => c.name === 'send-review').ok, true, '30 天前的遗留不报红');
+});
+
 test('全绿：控件/OneBot/水位/磁盘/完整性都过 → healthy，退出码 0', async () => {
   const dir = makeDataDir();
   const r = await runHealthCheck({ dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null });
@@ -554,6 +580,45 @@ test('插件：总开关关着跳过；开着且 manifest 合法为绿；manifes
   assert.equal(bad.ok, false, 'manifest 不合法必须报出来（宿主会拒载，巡检不能装作没事）');
   assert.match(bad.detail, /apiVersion 不匹配/);
   assert.match(bad.detail, /demo/);
+});
+
+test('巡检：requireNetworkIsolation 在本机做不到时报红（即使 networkIsolation=false）', async () => {
+  const dir = makeDataDir({ withDb: false });
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
+    plugins: {
+      enabled: true,
+      enabledIds: [],
+      requireIsolation: false,
+      networkIsolation: false,
+      requireNetworkIsolation: true
+    }
+  }));
+  const r = await runHealthCheck({
+    dataDir: dir,
+    fetchImpl: okFetch,
+    statfs: okStatfs,
+    notify: null,
+    isolationProbe: () => ({ net: false })
+  });
+  const item = r.checks.find((c) => c.name === 'plugins');
+  assert.ok(item, '巡检必须包含 plugins 项');
+  assert.equal(item.ok, false, '要求网络隔离但做不到 = 插件不会加载，巡检不能报绿');
+  assert.match(String(item.detail), /要求网络隔离/);
+});
+
+test('巡检：明确移出 allow 清单的会话，pending 堆积不算收发停滞', async () => {
+  const dir = makeDataDir({ withDb: true });
+  const old = Date.now() - 2 * 60 * 60 * 1000;
+  const db = openDatabase(path.join(dir, 'messages.sqlite'));
+  db.prepare("UPDATE messages SET ts=?, available_at=0 WHERE self=0").run(old);
+  db.close();
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
+    allow: { groups: ['999'], private: [] }
+  }));
+  const r = await runHealthCheck({ dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null });
+  const item = r.checks.find((c) => c.name === 'outbound-freshness');
+  assert.ok(item, '巡检必须包含 outbound-freshness 项');
+  assert.equal(item.ok, true, `被移出 allow 的会话不应触发停滞告警：${item.detail}`);
 });
 
 test('控制台交互体检：persist=false 不写 health.json，integrityCheck=false 跳过全库扫描', async () => {

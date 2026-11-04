@@ -451,6 +451,62 @@ test('人满/开局后还有人报名：给一句"来晚了"的提示（同一�
   assert.equal(w2.sent.filter((x) => /来晚/.test(x.msgs[0])).length, 1, '在册玩家不该被当成迟到的');
 });
 
+test('报名扫描不因 deferred 行错过 45 秒窗口：占位正文里的报名仍然生效', async () => {
+  const w = makeWorld({ players: 6 });
+  updateConfig({ groupGame: {
+    enabled: true, chats: ['group:1'], allowPrivateInvite: true, allowGamePrivateDm: false,
+    dailyLimitPerChat: 6, recruitSeconds: 30, games: ['werewolf'], maxPlayers: 10
+  } });
+  const started = await w.mgr.start({ chatKey: 'group:1', gameId: 'werewolf' });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const game = w.mgr.games.get('group:1');
+  assert.equal(game.state.phase, 'recruiting');
+  const before = Number(game.lastSeenId) || 0;
+  const deferred = w.store.appendIncoming('group:1', {
+    mid: 'deferred-join', ts: Date.now(), senderId: 'u1', senderName: '群友1', text: '报名', media: []
+  }, { deferred: true });
+
+  await w.mgr.tick();
+  assert.ok(w.mgr.games.get('group:1').state.joiners.some((j) => j.userId === 'u1'),
+    '占位正文里的报名信号也要生效，不能等富化');
+  assert.ok((Number(w.mgr.games.get('group:1').lastSeenId) || 0) > before);
+
+  w.store.finalizeDeferred('group:1', deferred.id);
+  await w.mgr.tick();
+  assert.equal(w.mgr.games.get('group:1').state.joiners.filter((j) => j.userId === 'u1').length, 1,
+    '放行后不应重复报名');
+});
+
+test('引用回复里的“猜 42”不能盖过玩家真正说的“猜 10”', async () => {
+  const w = makeWorld({ players: 6, rng: () => 0.42 });
+  const started = await w.mgr.start({ chatKey: 'group:1', gameId: 'number-bomb' });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  assert.equal(w.mgr.games.get('group:1').state.secret, 43);
+  say(w.store, 'u1', '群友1', '[引用#9·我：猜 42]猜 10');
+  await w.mgr.handleNewMessages('group:1');
+  const state = w.mgr.games.get('group:1').state;
+  assert.equal(state.low, 10, '必须按真实正文猜 10，而不是引用块里的 42');
+  assert.equal(state.high, 101);
+});
+
+test('handleNewMessages 遇到 deferred 行先停住，放行后再计猜测', async () => {
+  const w = makeWorld({ players: 6, rng: () => 0.42 });
+  const started = await w.mgr.start({ chatKey: 'group:1', gameId: 'number-bomb' });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const before = Number(w.mgr.games.get('group:1').lastSeenId) || 0;
+  const deferred = w.store.appendIncoming('group:1', {
+    mid: 'deferred-guess', ts: Date.now(), senderId: 'u1', senderName: '群友1', text: '猜 10', media: []
+  }, { deferred: true });
+
+  await w.mgr.handleNewMessages('group:1');
+  assert.equal(w.mgr.games.get('group:1').state.low, 0, 'deferred 正文不能被当成猜测');
+  assert.equal(Number(w.mgr.games.get('group:1').lastSeenId) || 0, before, '水位不能越过 deferred');
+
+  w.store.finalizeDeferred('group:1', deferred.id);
+  await w.mgr.handleNewMessages('group:1');
+  assert.equal(w.mgr.games.get('group:1').state.low, 10, '放行后要补上这次猜测');
+});
+
 test('审查回归：报名消息还是 pending（模型那边在飞）也必须能报上名', async () => {
   // 以前报名扫描带 readOnly（== 只看 acked），同一群里正好有一次模型运行在飞时，
   // 这批「我玩」对引擎不可见 → 45 秒到点直接"人数不够"（2026-09-29 审查 P2）
@@ -909,4 +965,95 @@ test('别名撞车（某人的备注 = 另一个人的群名片）时宁缺勿�
   updateConfig({ memberNotes: { __replace__: {} } });
   const back = await w3.mgr.start({ chatKey: 'group:1', gameId: 'number-bomb', players: ['群友1', '群友2'] });
   assert.equal(back.ok, true, `没有备注时名片应可解析：${back.error || ''}`);
+});
+
+const { EffectLedger } = await import('../src/core/effects.js');
+
+test('终局播报接入账本：送达记 sent，同一局再次 begin 直接 done', async () => {
+  const w = makeWorld({ players: 6 });
+  const effects = new EffectLedger(w.store.db);
+  w.mgr.effects = effects;
+  updateConfig({ groupGame: { enabled: true, chats: ['group:1'], allowPrivateInvite: true, allowGamePrivateDm: false, dailyLimitPerChat: 6, recruitSeconds: 0, games: ['werewolf'] } });
+  const r = await w.mgr.start({ chatKey: 'group:1', gameId: 'werewolf' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const st = w.mgr.games.get('group:1').state;
+  const wolves = st.roles.filter((x) => x.role === 'wolf');
+  const other = st.roles.find((x) => x.role !== 'wolf');
+  for (const uid of [wolves[0].userId, wolves[1].userId, other.userId]) {
+    w.store.appendIncoming(`private:${uid}`, { mid: `q-${uid}`, ts: Date.now(), senderId: uid, senderName: uid, text: '不玩了', reply: null, media: [] }, { recordOnly: true });
+  }
+  await w.mgr.tick();
+  const ends = w.sent.filter((x) => x.chatKey === 'group:1' && /狼人杀结束：/.test(x.msgs[0]));
+  assert.equal(ends.length, 1);
+  const row = w.store.db.prepare("SELECT id, state, detail FROM effects WHERE kind='game-final'").get();
+  assert.ok(row, '终局播报要进账本');
+  assert.equal(row.state, 'sent');
+  const instanceId = JSON.parse(row.detail).instanceId;
+  assert.ok(instanceId, '每局必须有唯一 instanceId（不能用游戏类型做幂等键）');
+  const again = effects.begin({ kind: 'game-final', chatKey: 'group:1', idemKey: `game:group:1:${instanceId}` });
+  assert.equal(again.action, 'done', '同一局的终局播报不能再发一次');
+});
+
+test('终局播报结果未知：账本 unknown，下个 tick 停止重试而不是重发', async () => {
+  const w = makeWorld({ players: 6 });
+  const effects = new EffectLedger(w.store.db);
+  w.mgr.effects = effects;
+  w.store.hasUncertainEffects = () => true;   // 模拟 outbox 里有本次未知行
+  let finalCalls = 0;
+  w.mgr.sender = {
+    sendTextBatch: async (_chatKey, msgs) => {
+      if (/结束：/.test(String(msgs?.[0] || ''))) {
+        finalCalls += 1;
+        throw Object.assign(new Error('socket timeout'), { outcome: 'unknown' });
+      }
+      return { message_id: 1 };
+    }
+  };
+  updateConfig({ groupGame: { enabled: true, chats: ['group:1'], allowPrivateInvite: true, allowGamePrivateDm: false, dailyLimitPerChat: 6, recruitSeconds: 0, games: ['werewolf'] } });
+  const r = await w.mgr.start({ chatKey: 'group:1', gameId: 'werewolf' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const st = w.mgr.games.get('group:1').state;
+  const wolves = st.roles.filter((x) => x.role === 'wolf');
+  const other = st.roles.find((x) => x.role !== 'wolf');
+  for (const uid of [wolves[0].userId, wolves[1].userId, other.userId]) {
+    w.store.appendIncoming(`private:${uid}`, { mid: `q-${uid}`, ts: Date.now(), senderId: uid, senderName: uid, text: '不玩了', reply: null, media: [] }, { recordOnly: true });
+  }
+  await w.mgr.tick();
+  assert.equal(finalCalls, 1);
+  const row = w.store.db.prepare("SELECT state FROM effects WHERE kind='game-final'").get();
+  assert.equal(row.state, 'unknown');
+  assert.ok(w.mgr.games.get('group:1')?.pendingEnd, '未知时要挂起 pendingEnd 等下个 tick 收尾');
+
+  // 下个 tick（越过退避时间）：账本 review → 不再发，直接收尾
+  w.setClock(w.getClock() + 30 * 60 * 1000);
+  await w.mgr.tick();
+  assert.equal(finalCalls, 1, '结果未知绝不重发');
+  assert.equal(w.mgr.games.has('group:1'), false, '收尾要清掉挂起的局');
+});
+
+test('同一群同一种游戏开第二局：终局播报照常发（幂等键按局而不是游戏类型）', async () => {
+  const w = makeWorld({ players: 6 });
+  const effects = new EffectLedger(w.store.db);
+  w.mgr.effects = effects;
+  updateConfig({ groupGame: { enabled: true, chats: ['group:1'], allowPrivateInvite: true, allowGamePrivateDm: false, dailyLimitPerChat: 6, recruitSeconds: 0, games: ['werewolf'] } });
+
+  const playOne = async (tag) => {
+    const r = await w.mgr.start({ chatKey: 'group:1', gameId: 'werewolf' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const st = w.mgr.games.get('group:1').state;
+    const wolves = st.roles.filter((x) => x.role === 'wolf');
+    const other = st.roles.find((x) => x.role !== 'wolf');
+    for (const uid of [wolves[0].userId, wolves[1].userId, other.userId]) {
+      w.store.appendIncoming(`private:${uid}`, { mid: `q-${tag}-${uid}`, ts: Date.now(), senderId: uid, senderName: uid, text: '不玩了', reply: null, media: [] }, { recordOnly: true });
+    }
+    await w.mgr.tick();
+  };
+
+  await playOne('a');
+  await playOne('b');
+  const ends = w.sent.filter((x) => x.chatKey === 'group:1' && /狼人杀结束：/.test(x.msgs[0]));
+  assert.equal(ends.length, 2, '两局都要有终局播报：' + JSON.stringify(w.sent.map((x) => x.msgs[0])));
+  const rows = w.store.db.prepare("SELECT state FROM effects WHERE kind='game-final'").all();
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => r.state === 'sent'));
 });

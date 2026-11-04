@@ -121,17 +121,84 @@ test('DeepSeek：Search API → 结构化 results；404 时回退旧 Responses �
   assert.equal(alt.results[0].snippet, '分块文本', 'output[].content[].text 拼接');
 });
 
-test('Bing：HTML 解析出 b_algo 块；命中验证页（0 块）要抛错而不是给空列表', async () => {
+test('Bing：优先解析 RSS，保留 CDATA、实体和 maxResults', async () => {
+  setWebSearch({ provider: 'bing', searchUrl: 'https://cn.bing.com/search', maxResults: 2 });
+  const rss = '<?xml version="1.0"?><rss><channel>'
+    + '<item><title>标题 A &amp; 说明</title><link>https://a.example/?x=1&amp;y=2</link>'
+    + '<description><![CDATA[<b>摘要 A</b> &amp; 内容]]></description></item>'
+    + '<item><title>无链接</title><description>应跳过</description></item>'
+    + '<item><title>标题 B</title><link>https://b.example/</link><description>摘要 B</description></item>'
+    + '<item><title>标题 C</title><link>https://c.example/</link><description>摘要 C</description></item>'
+    + '</channel></rss>';
+  const calls = stub(() => ({ ok: true, text: async () => rss }));
+  const r = await bingSearch('测试');
+  assert.equal(calls.length, 1, 'RSS 有结果时不应再请求 HTML');
+  const requested = new URL(calls[0].url);
+  assert.equal(requested.searchParams.get('q'), '测试');
+  assert.equal(requested.searchParams.get('format'), 'rss');
+  assert.deepEqual(r.results, [
+    { title: '标题 A & 说明', url: 'https://a.example/?x=1&y=2', snippet: '摘要 A & 内容' },
+    { title: '标题 B', url: 'https://b.example/', snippet: '摘要 B' }
+  ]);
+});
+
+test('Bing：RSS 为空或请求失败时回退原 HTML 解析', async () => {
   setWebSearch({ provider: 'bing', searchUrl: 'https://cn.bing.com/search', maxResults: 3 });
   const html = '<ol><li class="b_algo"><h2><a href="https://a.example/">标题 A</a></h2><p>摘要 A</p></li>'
     + '<li class="b_algo"><h2><a href="https://b.example/">标题 B</a></h2><p>摘要 B</p></li>'
     + '<li class="b_algo"><h2><a href="https://c.example/">标题 C</a></h2><p>摘要 C</p></li>'
     + '<li class="b_algo"><h2><a href="https://d.example/">标题 D</a></h2><p>摘要 D</p></li></ol>';
+
+  const emptyCalls = [];
+  globalThis.fetch = async (url) => {
+    emptyCalls.push(String(url));
+    return { ok: true, text: async () => (new URL(url).searchParams.get('format') === 'rss'
+      ? '<rss><channel></channel></rss>' : html) };
+  };
+  const emptyRss = await bingSearch('测试');
+  assert.equal(emptyCalls.length, 2, 'RSS 空结果后要再请求 HTML');
+  assert.equal(new URL(emptyCalls[0]).searchParams.get('format'), 'rss');
+  assert.equal(new URL(emptyCalls[1]).searchParams.get('format'), null);
+  assert.deepEqual(emptyRss.results.map((x) => x.url), ['https://a.example/', 'https://b.example/', 'https://c.example/']);
+
+  const failedCalls = [];
+  globalThis.fetch = async (url) => {
+    failedCalls.push(String(url));
+    if (new URL(url).searchParams.get('format') === 'rss') return { ok: false, status: 503 };
+    return { ok: true, text: async () => html };
+  };
+  const failedRss = await bingSearch('测试');
+  assert.equal(failedCalls.length, 2, 'RSS HTTP 失败后要再请求 HTML');
+  assert.equal(failedRss.results.length, 3);
+
+  const brokenCalls = [];
+  globalThis.fetch = async (url) => {
+    brokenCalls.push(String(url));
+    return { ok: true, text: async () => (new URL(url).searchParams.get('format') === 'rss'
+      ? '<rss><channel><item><title>未闭合' : html) };
+  };
+  const brokenRss = await bingSearch('测试');
+  assert.equal(brokenCalls.length, 2, 'RSS 格式损坏后要再请求 HTML');
+  assert.equal(brokenRss.results.length, 3);
+});
+
+test('Bing：RSS 与 HTML 均命中验证页时仍明确报错', async () => {
+  setWebSearch({ provider: 'bing', searchUrl: 'https://cn.bing.com/search', maxResults: 3 });
+  const calls = stub(() => ({ ok: true, text: async () => '<html><body>请完成验证</body></html>' }));
+  await assert.rejects(() => bingSearch('x'), /没有返回可解析的结果/);
+  assert.equal(calls.length, 2);
+});
+
+test('Bing：非 Bing 自定义 searchUrl 不改请求，继续只走 HTML', async () => {
+  setWebSearch({ provider: 'bing', searchUrl: 'https://search.example.test/search', maxResults: 2 });
+  const html = '<ol><li class="b_algo"><h2><a href="https://a.example/">标题 A</a></h2><p>摘要 A</p></li></ol>';
   const calls = stub(() => ({ ok: true, text: async () => html }));
   const r = await bingSearch('测试');
-  assert.match(calls[0].url, /^https:\/\/cn\.bing\.com\/search\?q=/);
-  assert.equal(r.results.length, 3, 'maxResults 截断');
-  assert.deepEqual(r.results.map((x) => x.url), ['https://a.example/', 'https://b.example/', 'https://c.example/']);
+  assert.equal(calls.length, 1);
+  const requested = new URL(calls[0].url);
+  assert.equal(requested.searchParams.get('q'), '测试');
+  assert.equal(requested.searchParams.get('format'), null);
+  assert.equal(r.results[0].url, 'https://a.example/');
 
   stub(() => ({ ok: true, text: async () => '<html><body>请完成验证</body></html>' }));
   await assert.rejects(() => bingSearch('x'), /没有返回可解析的结果/);
@@ -325,10 +392,50 @@ test('Bing 对梗查询结果太差时自动补搜狗，并把抖音结果排在
   };
   const { webSearch } = await import('../src/llm/web-search.js');
   const result = await webSearch('奶绿波 什么意思');
-  assert.equal(calls.length, 2, 'Bing + 搜狗各一次');
+  assert.equal(calls.length, 3, 'Bing RSS + Bing HTML + 搜狗各一次');
+  assert.equal(new URL(calls[0]).searchParams.get('format'), 'rss');
+  assert.equal(new URL(calls[1]).searchParams.get('format'), null);
   assert.equal(result.results[0].url, 'https://www.douyin.com/video/7619643383979831013', '抖音结果前置');
   assert.deepEqual(result.sources, ['sogou'], 'Bing 只返回抖音首页壳子时不应算进来源');
   assert.ok(!result.results.some((x) => x.url === 'https://www.douyin.com/'), '字面/壳子结果要被过滤');
+});
+test('梗补充合并：保留身份 query 与 SPA route，只合并 tracking 和普通锚点差异', async () => {
+  setWebSearch({ provider: 'bing', searchUrl: 'https://cn.bing.com/search', maxResults: 6 });
+  const rss = '<?xml version="1.0"?><rss><channel>'
+    + '<item><title>测试 ID two Bing</title><link>https://x.example/article?id=two&amp;utm_source=bing</link><description>测试 Bing two</description></item>'
+    + '<item><title>测试 ID three Bing</title><link>https://x.example/article?id=three</link><description>测试 Bing three</description></item>'
+    + '<item><title>测试 SPA four Bing</title><link>https://x.example/spa#/four</link><description>测试 Bing SPA four</description></item>'
+    + '<item><title>测试 普通锚点 Bing</title><link>https://x.example/plain#first</link><description>测试 Bing plain</description></item>'
+    + '</channel></rss>';
+  const sogou = '<html><body>'
+    + '<div class="vrwrap"><h3 class="vr-title"><a href="/link?x=1">测试 ID one</a></h3>'
+    + '<div class="fz-mid">这是测试结果一的摘要内容</div>'
+    + '<div class="r-sech" data-url="https://x.example/article?id=one"></div></div>'
+    + '<div class="vrwrap"><h3 class="vr-title"><a href="/link?x=2">测试 ID two Sogou</a></h3>'
+    + '<div class="fz-mid">这是测试结果二的摘要内容</div>'
+    + '<div class="r-sech" data-url="https://x.example/article?id=two&amp;fbclid=tracking"></div></div>'
+    + '<div class="vrwrap"><h3 class="vr-title"><a href="/link?x=3">测试 SPA three Sogou</a></h3>'
+    + '<div class="fz-mid">这是测试结果三的摘要内容</div>'
+    + '<div class="r-sech" data-url="https://x.example/spa#/three"></div></div>'
+    + '<div class="vrwrap"><h3 class="vr-title"><a href="/link?x=4">测试 普通锚点 Sogou</a></h3>'
+    + '<div class="fz-mid">这是测试结果四的摘要内容</div>'
+    + '<div class="r-sech" data-url="https://x.example/plain#second"></div></div>'
+    + '</body></html>';
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    return { ok: true, text: async () => (u.includes('sogou.com') ? sogou : rss) };
+  };
+  const { webSearch } = await import('../src/llm/web-search.js');
+  const result = await webSearch('测试 梗', { count: 6 });
+  assert.deepEqual(result.results.map((x) => x.url), [
+    'https://x.example/article?id=one',
+    'https://x.example/article?id=two&fbclid=tracking',
+    'https://x.example/spa#/three',
+    'https://x.example/plain#second',
+    'https://x.example/article?id=three',
+    'https://x.example/spa#/four'
+  ], '补充源优先；身份 query 与 SPA route 不合并，tracking 与普通锚点不影响去重');
+  assert.ok(result.sources.includes('sogou') && result.sources.includes('bing'));
 });
 
 test('搜狗/360 都被风控时，用 Bing 站内限定核心词兜底', async () => {

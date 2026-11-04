@@ -157,9 +157,9 @@ HTTP/1.1；SSRF/DNS 固定、逐跳重定向、凭据剥离、响应体与超时
 
 ```bash
 # 海外 / GitHub 可达
-docker pull ghcr.io/sakurawwwxh/qq-agent-plus:0.9.13
+docker pull ghcr.io/sakurawwwxh/qq-agent-plus:0.9.14
 # 国内（阿里云 ACR，公开，amd64/arm64）
-docker pull crpi-xejkraqtqkngfp11.cn-guangzhou.personal.cr.aliyuncs.com/wangxinhong/qq-agent-plus:0.9.13
+docker pull crpi-xejkraqtqkngfp11.cn-guangzhou.personal.cr.aliyuncs.com/wangxinhong/qq-agent-plus:0.9.14
 
 git clone https://github.com/sakurawwwxh/qq-agent-plus.git
 cd qq-agent-plus
@@ -186,12 +186,14 @@ SnowLuma 已包含 OneBot，无需另行安装 NapCat 或 Lagrange。
 
 **root 可以直接执行**。安装器会把机器人降权到一个普通服务用户（默认 `qqagent`），
 不会让机器人进程以 root 运行；如果是从普通用户 `sudo` 执行，则沿用该用户。root 只负责
-装 Docker、把服务用户加入 `docker` 组、开启 linger 和准备目录。装完后 root 用
-`sudo qq-agent-manage logs` 看日志，普通用户仍可直接用 `manage.sh`。
+装 Docker、开启 linger 和准备目录。装完后 root 用 `sudo qq-agent-manage logs` 看日志，
+普通用户仍可直接用 `manage.sh`。
 
-注意：服务用户会被加入 `docker` 组，这是控制台“更新协议端”的前提；`docker` 组在 Linux 上
-等价于宿主 root（可挂载宿主文件系统）。这里降的是应用进程身份，不是完整沙箱。如果你不需要
-控制台更新协议端，可以在部署后把该用户移出 `docker` 组并手工管理 SnowLuma。
+注意：默认**不会**把服务用户加入 `docker` 组。安装器只在本次安装子进程里临时使用
+`docker` 补充组（拉镜像、起 SnowLuma），安装完成后不保留；控制台“更新协议端”需要该权限时，
+请显式设置 `QQ_AGENT_ALLOW_DOCKER_GROUP=1` 重跑部署；`docker` 组在 Linux 上等价于宿主 root
+（可挂载宿主文件系统）。这里降的是应用进程身份，不是完整沙箱。不需要控制台更新协议端时，
+保持默认不加组、手工管理 SnowLuma 即可。
 
 开始前建议先确认机器规格：
 
@@ -425,7 +427,7 @@ node src/ops.js scan                     # 未定义调用扫描
 node src/ops.js backup --confirm         # 停/起服务 + 加密打包数据目录，只留最近 4 份
 node src/ops.js restore --from ~/qq-agent/backups/qq-agent-data-XXXX.tar.gz.enc --dry-run
 node src/ops.js prune --days=90 --dry-run # 只删已确认送达的消息，先预演
-node src/ops.js install-timers --print   # 查看四个 systemd user 定时器（backup / process-guard / health / audit-prune）
+node src/ops.js install-timers --print   # 查看五个 systemd user 定时器（backup / backup-drill / process-guard / health / audit-prune）
 node src/ops.js console --open           # 建 SSH 隧道并打开控制台
 ```
 
@@ -501,7 +503,9 @@ Token 可在「设置 -> 系统 -> 控制台安全」中轮换。控制台一旦
 
 - `config.json`：配置与凭据，权限 `0600`；
 - `messages.sqlite`：消息、租约与出站状态；
-- `sessions/`：每次 Agent 运行记录（默认保留最近 2000 份，且 90 天前的留档由每日保留期清理删除）；
+- `sessions/`：每次 Agent 运行记录；已结束的留档 30 天后压成 `.json.gz`，总量默认上限
+  1024MB（超出按最旧优先删除已结束留档，可能早于 2000 份/90 天限制），索引在
+  `sessions/.sessions-index.jsonl`；
 - `memory/`：群友长期印象与跨 Session 会话交接状态；
 - `identity-pilot.sqlite`：统一 QQ 身份索引与好友请求审批台账；
 - `slang-pilot.sqlite`：黑话试点已退役，不会再创建；

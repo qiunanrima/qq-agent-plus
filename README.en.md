@@ -208,9 +208,9 @@ For container-only deployments:
 
 ```bash
 # GHCR
-docker pull ghcr.io/sakurawwwxh/qq-agent-plus:0.9.13
+docker pull ghcr.io/sakurawwwxh/qq-agent-plus:0.9.14
 # China (Aliyun ACR, public, amd64/arm64)
-docker pull crpi-xejkraqtqkngfp11.cn-guangzhou.personal.cr.aliyuncs.com/wangxinhong/qq-agent-plus:0.9.13
+docker pull crpi-xejkraqtqkngfp11.cn-guangzhou.personal.cr.aliyuncs.com/wangxinhong/qq-agent-plus:0.9.14
 
 git clone https://github.com/sakurawwwxh/qq-agent-plus.git
 cd qq-agent-plus
@@ -233,14 +233,17 @@ model key and group IDs are filled in later in the web console. SnowLuma already
 NapCat and Lagrange must not be installed on top of it.
 
 The installer may be started as root. It creates or reuses a dedicated non-root service account
-(default `qqagent`, or `SUDO_USER`), installs Docker, adds that account to the `docker` group,
-enables linger, and then re-runs the installer as that user. The bot process itself never runs as
-root. `deploy-all.sh` still requires a regular user.
+(default `qqagent`, or `SUDO_USER`), installs Docker, enables linger, and then re-runs the installer
+as that user. The bot process itself never runs as root. `deploy-all.sh` still requires a regular
+user.
 
-The service account is added to the `docker` group, which is required by the console protocol-update
-button. On Linux the `docker` group is equivalent to host root (members can mount host paths); this
-drops the application process identity, not the Docker privilege. Remove the account from that group
-and manage SnowLuma manually if you do not need the update button.
+The service account is **not** added to the `docker` group by default. The installer uses that
+group only as a temporary supplementary group for the installation subprocess (pulling images and
+starting SnowLuma), then drops it. The console protocol-update button needs permanent membership, so
+opt in explicitly by re-running the deployment with `QQ_AGENT_ALLOW_DOCKER_GROUP=1`. On Linux the
+`docker` group is equivalent to host root (members can mount host paths); this drops the application
+process identity, not the Docker privilege. Keep the default (no group) and manage SnowLuma manually
+if you do not need the update button.
 
 ```bash
 git clone https://github.com/sakurawwwxh/qq-agent-plus.git
@@ -481,7 +484,7 @@ node src/ops.js scan                     # undefined-call scan
 node src/ops.js backup --confirm         # stop/start the service, encrypt the archive, keep the last 4
 node src/ops.js restore --from ~/qq-agent/backups/qq-agent-data-XXXX.tar.gz.enc --dry-run
 node src/ops.js prune --days=90 --dry-run # only acked messages; preview first
-node src/ops.js install-timers --print   # show the four systemd user timers (backup / process-guard / health / audit-prune)
+node src/ops.js install-timers --print   # show the five systemd user timers (backup / backup-drill / process-guard / health / audit-prune)
 node src/ops.js console --open           # open an SSH tunnel and the console
 ```
 
@@ -652,8 +655,10 @@ Data is stored in the `data` directory passed to the deploy scripts:
 
 - `config.json` — configuration and credentials, mode `0600`;
 - `messages.sqlite` — messages, leases and outbound state;
-- `sessions/` — one record per Agent run (default keep-2000 cap, plus a daily sweep that prunes
-  archives older than 90 days);
+- `sessions/` — one record per Agent run; finished archives are gzip-compressed after 30 days,
+  total size is capped at 1024MB by default (oldest finished archives are pruned earlier if the
+  budget is hit, possibly before the keep-2000/90-day limits), and the index lives at
+  `sessions/.sessions-index.jsonl`;
 - `memory/` — long-term impressions and cross-session handoff state;
 - `identity-pilot.sqlite` — unified QQ identity index and friend-request approval ledger;
 - `slang-pilot.sqlite` — the slang pilot is retired and will never be created;
@@ -676,9 +681,7 @@ bash -n deploy.sh && bash -n deploy-all.sh && bash -n manage.sh
 ```
 
 CI (GitHub Actions) runs the syntax check, the strict undefined-call scan, unit tests, the local
-regression, and the prompt / render / scroll / usage end-to-end suites on pushes to main and all pull requests. Two small confirmed issues are open on this baseline,
-neither on the main path; see [KNOWN-ISSUES](docs/KNOWN-ISSUES.md) for the current list and the
-history. The [Chinese README](README.md) carries the complete option lists and the per-page
+regression, and the prompt / render / scroll / usage end-to-end suites on pushes to main and all pull requests. The number and status of known issues are governed by [KNOWN-ISSUES](docs/KNOWN-ISSUES.md); do not hardcode a count here. The [Chinese README](README.md) carries the complete option lists and the per-page
 description of the console; the [documentation index](docs/README.md) lists all documents.
 
 ## License

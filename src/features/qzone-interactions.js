@@ -37,6 +37,12 @@ const FEED_RETRY_DELAY_MS = 45000;
 // 连续失败到第 3 次才上报异常通知：一次限流不值得顶一条"错误"给管理员。
 const FAILURE_NOTIFY_STREAK = 3;
 
+/** observe/暂停模式不自动调模型，也不做 Qzone 写操作（看别人动态另说，这里连发现都不跑）。 */
+function automationAllowed() {
+  const cfg = getConfig();
+  return cfg.runtime?.mode === 'active' && !cfg.runtime?.paused;
+}
+
 function cleanText(value, max = 1000) {
   // 双保险：数据源头（qzone-feed.js 的 compact）已过 sanitizeUserText，
   // 拼进互动决策提示词前再过一次 —— 昵称等字段可能绕过 compact 直达这里。
@@ -472,6 +478,11 @@ export class QzoneInteractionManager {
 
   async #tick() {
     if (this.stopped) return;
+    // observe/暂停是全局闸门：不能只靠聊天发送的 assertCanSend，Qzone 写操作不经过它。
+    if (!automationAllowed()) {
+      this.#schedule(60000);
+      return;
+    }
     const cfg = normalizedConfig();
     const now = this.now();
     const time = timeControlState(getConfig().timeControl, '', now);
@@ -626,7 +637,8 @@ export class QzoneInteractionManager {
         },
         comment: { ...comment },
         rootComment: root ? { ...root } : (!comment.parentTid ? { ...comment } : null),
-        context: (post.comments || []).map((item) => ({
+        // 每条待回复评论都复制整份线程会让状态按 C×K 膨胀；模型/回复只需要最近几条上下文。
+        context: (post.comments || []).slice(-10).map((item) => ({
           ...item,
           self: String(item.uin) === selfId
         }))
@@ -731,6 +743,10 @@ export class QzoneInteractionManager {
           commentCount: Number(item.comment_num) || 0
         };
         if (!post.tid) continue;
+        // 自己的动态也必须受 maxAgeHours 约束：列表里可能还有几周前的旧动态，
+        // 评论数一变就回复会让"只处理最近 N 小时"失效。
+        const ageMs = this.now() - Number(post.time) * 1000;
+        if (!post.time || ageMs > cfg.maxAgeHours * HOUR_MS) continue;
         const previous = this.state.watchedPosts.find((watch) => watch.key === qzonePostKey(post));
         this.#watchPost(post, { own: true });
         if (post.commentCount > 0
@@ -1108,25 +1124,23 @@ export class QzoneInteractionManager {
       }
       const wantsComment = action.action === 'comment' || action.action === 'like_comment';
       const wantsLike = action.action === 'like' || action.action === 'like_comment';
-      item.status = 'acting';
-      item.commentContent = action.content;
-      this.#save();
       if (wantsComment) {
         await this.#pauseBetweenActions(cfg, writes++);
         // 同 reply 循环：间隔等待不感知 abort，这里必须再查一次，否则"根本没发出去"
         // 的评论会被下面的 catch 记成 unknown（2026-10-04 全面复审 P2）。
         if (signal?.aborted) {
-          // ⚠️ 本循环把 status 置 'acting' 在**等待之前**（reply 循环是在之后），
-          // 所以中止早退时条目会卡在 acting —— 而 acting → unknown 的回收只发生在
-          // **构造时**的恢复里（load 之后那段），运行期没人回收它：既不重试也不上报。
-          // 2026-10-04 全面复审 P3 实测：111:k1:acting / run=done，两条路径语义不一致。
-          // 这里退回 unread：本次根本没发出去，留给下个活跃窗口，与 reply 路径同口径。
+          // 等待期间中止：还没到 acting，条目保持 unread，下个活跃窗口可以重试。
           item.status = 'unread';
           item.commentContent = '';
           item.updatedAt = this.now();
           this.#save();
           break;
         }
+        // 过了等待与中止检查才落 acting：硬杀/掉电发生在等待中时，磁盘上仍是 unread，
+        // 不会在下次启动时被误判成“可能已经发出”的 unknown（回复循环同口径）。
+        item.status = 'acting';
+        item.commentContent = action.content;
+        this.#save();
         try {
           const result = await this.onebot.call('comment_qzone', {
             tid: item.post.tid,
@@ -1161,15 +1175,8 @@ export class QzoneInteractionManager {
         await this.#pauseBetweenActions(cfg, writes++);
         // 同上：间隔等待不感知 abort，这里必须再查一次（2026-10-04 全面复审 P2）
         if (signal?.aborted) {
-          // ⚠️ 本循环把 status 置 'acting' 在**等待之前**（reply 循环是在之后），
-          // 所以中止早退时条目会卡在 acting —— 而 acting → unknown 的回收只发生在
-          // **构造时**的恢复里（load 之后那段），运行期没人回收它：既不重试也不上报。
-          // 2026-10-04 全面复审 P3 实测：111:k1:acting / run=done，两条路径语义不一致。
-          //
-          // ⚠️⚠️ 但只有「评论还没发过」才允许退回 unread：like_comment 组合动作里评论阶段
-          // 可能**已经成功**（commentStatus='done'，评论真实发出去了），这时退回 unread 会让
-          // 下轮按 unread 重新决策 —— 模型看不到自己已评论过（commentContent 还被抹了），
-          // 大概率再评一次，正是下面 1122 行注释自己划的红线（2026-10-04 复审 P1）。
+          // 等待期间中止：评论阶段可能已经成功（like_comment），只有“评论没发过”才回 unread；
+          // 否则回 unread 会让下一轮重复评论（模型看不到自己已评论过）。
           if (item.commentStatus === 'done') {
             item.status = 'reviewed';   // 保住评论成果；点赞这一下丢了就算了（低价值、不会重复）
           } else {
@@ -1180,6 +1187,10 @@ export class QzoneInteractionManager {
           this.#save();
           break;
         }
+        // 同评论分支：过了等待与中止检查才落 acting，硬杀时不会把没尝试的点赞误标 unknown。
+        item.status = 'acting';
+        item.commentContent = action.content;
+        this.#save();
         try {
           await this.onebot.call('like_qzone', {
             tid: item.post.tid,
@@ -1229,6 +1240,11 @@ export class QzoneInteractionManager {
   }
 
   async #run({ kind, source, includeExisting }) {
+    // 双保险：#tick 已经挡住自动轮询，但 runNow 是另一条入口。
+    if (!automationAllowed()) {
+      this.log(`[qzone-interactions] 当前是 observe/暂停模式，跳过${source === 'manual' ? '手动' : '自动'}运行`);
+      return { skipped: 'runtime-mode', reason: 'observe/paused' };
+    }
     // 2026-10-06 复审 P2：持久化状态必须绑定账号。协议端（NapCat）换号登录后 selfId 变了，
     // 旧账号积压的动态/评论队列若照常出批，会以新账号身份对旧账号好友的动态点赞/评论、
     // 把回复发给旧账号的评论 —— daily-moments 对同一场景专门设了 MOMENT_ACCOUNT_CHANGED 闸，

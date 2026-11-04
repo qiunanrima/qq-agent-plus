@@ -98,6 +98,7 @@ export class ChatStore {
         event_kind TEXT NOT NULL DEFAULT 'message',
         state TEXT NOT NULL DEFAULT 'pending', lease_id TEXT, attempts INTEGER NOT NULL DEFAULT 0,
         available_at INTEGER NOT NULL DEFAULT 0, error TEXT,
+        deferred_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (chat_key, id), UNIQUE (chat_key, mid)
       );
       CREATE INDEX IF NOT EXISTS messages_pending ON messages(chat_key, state, available_at, id);
@@ -123,10 +124,13 @@ export class ChatStore {
       CREATE INDEX IF NOT EXISTS runs_leased_expiry ON runs(state, expires_at);
       CREATE TABLE IF NOT EXISTS outbox (
         id TEXT PRIMARY KEY, run_id TEXT, chat_key TEXT NOT NULL,
-        state TEXT NOT NULL, payload TEXT NOT NULL, message_id TEXT, error TEXT
+        state TEXT NOT NULL, payload TEXT NOT NULL, message_id TEXT, error TEXT,
+        created_at INTEGER NOT NULL DEFAULT 0
       );
       -- getChatMeta 每 5 秒扫 outbox(chat_key,state)；没有索引会随历史行线性变慢。
       CREATE INDEX IF NOT EXISTS outbox_chat_state ON outbox(chat_key, state);
+      -- held 自动释放按 run_id 查这批外发是否已终结；没有它每个 held 批次都扫全表。
+      CREATE INDEX IF NOT EXISTS outbox_run_state ON outbox(run_id, state);
       CREATE TABLE IF NOT EXISTS conversation_threads (
         chat_key TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
         mode TEXT NOT NULL DEFAULT 'threaded', state TEXT NOT NULL,
@@ -161,6 +165,22 @@ export class ChatStore {
       CREATE INDEX IF NOT EXISTS thread_turns_lookup
         ON thread_turns(thread_id, sequence);
       CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
+      -- 出站副作用账本（docs/EFFECT-LEDGER.md）：所有"对外做了一件事"的操作
+      -- 在执行前 planned、结果确定后结算；unknown 是终态，绝不自动重试。
+      -- 与 outbox 的区别：outbox 只覆盖走发送队列的消息，账本覆盖日报/提醒/游戏终局等
+      -- 业务动作，幂等键由业务给（如 digest:<群>:<日期>）。
+      CREATE TABLE IF NOT EXISTS effects (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        chat_key TEXT NOT NULL DEFAULT '',
+        idem_key TEXT NOT NULL,
+        state TEXT NOT NULL,
+        detail TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        settled_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS effects_kind_idem ON effects(kind, idem_key);
+      CREATE INDEX IF NOT EXISTS effects_state_created ON effects(state, created_at);
     `);
     ensureColumn(this.db, 'conversation_threads', 'mode', "TEXT NOT NULL DEFAULT 'threaded'");
     ensureColumn(this.db, 'conversation_threads', 'disposition', "TEXT NOT NULL DEFAULT 'active'");
@@ -173,6 +193,19 @@ export class ChatStore {
     ensureColumn(this.db, 'messages', 'mentions_self', 'INTEGER NOT NULL DEFAULT 0');
     ensureColumn(this.db, 'messages', 'target_user_id', "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, 'messages', 'event_kind', "TEXT NOT NULL DEFAULT 'message'");
+    // 延迟富化（Issue #85）：入站先落占位、后台展开/解析后再放行。
+    // release_state 记住放行时该回 pending 还是 acked（静默段/补历史只存档，不触发唤醒）。
+    // deferred_at 用于长跑进程的兜底清扫：富化任务异常/停机竞态留下的行，不能被永久藏起来。
+    ensureColumn(this.db, 'messages', 'release_state', "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, 'messages', 'deferred_at', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(this.db, 'outbox', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
+    this.db.exec(`CREATE INDEX IF NOT EXISTS messages_deferred
+      ON messages(deferred_at) WHERE state='deferred'`);
+    // /api/metrics 的 queueStats 按 state 聚合、取 MIN(ts/deferred_at)；默认保留期 0 时
+    // 消息表无界，不能每次抓指标都线性扫全历史（2026-11-02 全项目审查 P2）。
+    this.db.exec(`CREATE INDEX IF NOT EXISTS messages_queue_stats
+      ON messages(state, ts, deferred_at)
+      WHERE state IN ('pending','leased','held','deferred')`);
     // getChatMeta 的 total 不能再用 COUNT(*) 扫全历史（每条入站消息 + 5 秒 tick 都调），
     // 但也不能用 next_id-1：保留期清理会删掉旧行，那样会虚报"还有 N 条没加载"。
     // 维护一个随插入/清理增减的计数，老库首次启动按现有行数回填一次。
@@ -290,16 +323,113 @@ export class ChatStore {
     return entry(this.db.prepare('SELECT * FROM messages WHERE chat_key=? AND id=?').get(chatKey, id));
   }
 
-  appendIncoming(chatKey, message, { recordOnly = false } = {}) {
-    return this.#transaction(() => this.#append(
-      chatKey, { ...message, self: false }, recordOnly ? 'acked' : 'pending'
-    ));
+  appendIncoming(chatKey, message, { recordOnly = false, deferred = false } = {}) {
+    return this.#transaction(() => {
+      const recorded = this.#append(
+        chatKey,
+        { ...message, self: false },
+        deferred ? 'deferred' : (recordOnly ? 'acked' : 'pending')
+      );
+      if (deferred && !recorded.duplicate) {
+        const releaseState = recordOnly ? 'acked' : 'pending';
+        this.db.prepare('UPDATE messages SET release_state=?, deferred_at=? WHERE chat_key=? AND id=?')
+          .run(releaseState, Date.now(), chatKey, recorded.id);
+        recorded.releaseState = releaseState;
+      }
+      return recorded;
+    });
   }
 
   appendSelf(chatKey, message) {
     return this.#transaction(() => this.#append(chatKey, {
       ...message, self: true, senderId: 'self', senderName: '我'
     }, 'acked'));
+  }
+
+  /**
+   * 入站延迟富化的收尾（Issue #85）。
+   * 消息先以 state='deferred' 落库：不进 unread、不会被唤醒；后台解析引用/@昵称/合并转发，
+   * 过完黑名单后 updateDeferredMessage() 再 finalizeDeferred() 放行。
+   * release_state 区分"放行后要等模型处理（pending）"还是"只存档（acked）"。
+   */
+  getMessage(chatKey, id) {
+    const row = this.db.prepare('SELECT * FROM messages WHERE chat_key=? AND id=?').get(chatKey, id);
+    return row ? entry(row) : null;
+  }
+
+  updateDeferredMessage(chatKey, id, { text, reply = null, media = [] } = {}) {
+    return this.db.prepare(`UPDATE messages SET text=?, reply=?, media=?
+      WHERE chat_key=? AND id=? AND state='deferred'`).run(
+      String(text ?? ''),
+      reply ? JSON.stringify(reply) : null,
+      JSON.stringify(Array.isArray(media) ? media : []),
+      chatKey,
+      id
+    ).changes;
+  }
+
+  /** 富化任务真正开始/继续排队时刷新年龄：兜底清扫只该收"开始后卡住"的行。 */
+  touchDeferred(chatKey, id) {
+    return this.db.prepare(`UPDATE messages SET deferred_at=?
+      WHERE chat_key=? AND id=? AND state='deferred'`).run(Date.now(), chatKey, id).changes;
+  }
+
+  /** 把 deferred 放行为 pending/acked；state 不传时按落库时的 release_state。 */
+  finalizeDeferred(chatKey, id, { state = '' } = {}) {
+    return this.#transaction(() => {
+      const row = this.db.prepare(
+        "SELECT release_state FROM messages WHERE chat_key=? AND id=? AND state='deferred'"
+      ).get(chatKey, id);
+      if (!row) return '';
+      const target = state === 'acked' || state === 'pending'
+        ? state
+        : (row.release_state === 'acked' ? 'acked' : 'pending');
+      this.db.prepare("UPDATE messages SET state=?, release_state='', deferred_at=0 WHERE chat_key=? AND id=? AND state='deferred'")
+        .run(target, chatKey, id);
+      return target;
+    });
+  }
+
+  /** 富化后命中黑名单：这条还没被模型看到，按"从未落库"处理，并同步总数。 */
+  dropDeferredMessage(chatKey, id) {
+    // 先把正文改成拦截占位并标记 acked，再删行：万一 DELETE 失败/进程正好退出，
+    // 留下的行也不会把黑名单正文带进后续提示词（启动清扫只会按 acked 放行）。
+    const marked = this.db.prepare(`UPDATE messages
+      SET release_state='acked', text='[内容已拦截]', reply=NULL, media='[]'
+      WHERE chat_key=? AND id=? AND state='deferred'`).run(chatKey, id).changes;
+    if (!marked) return false;
+    return this.#transaction(() => {
+      const removed = this.db.prepare("DELETE FROM messages WHERE chat_key=? AND id=? AND state='deferred'")
+        .run(chatKey, id).changes;
+      if (removed) {
+        this.db.prepare('UPDATE chats SET message_count=MAX(0, message_count-1) WHERE chat_key=?').run(chatKey);
+      }
+      return Boolean(removed);
+    });
+  }
+
+  /**
+   * 把未完成的 deferred 按占位符放行。
+   * @param {{olderThanMs?: number}} [options] 0 = 全部（启动）；大于 0 时只处理卡了这么久的行，
+   *   供长跑进程的回收循环兜底（富化任务异常、停服竞态留下的残行）。
+   */
+  releaseStaleDeferred({ olderThanMs = 0 } = {}) {
+    const age = Math.max(0, Number(olderThanMs) || 0);
+    const where = age > 0
+      ? "state='deferred' AND (deferred_at=0 OR deferred_at<=?)"
+      : "state='deferred'";
+    const params = age > 0 ? [Date.now() - age] : [];
+    if (!this.db.prepare(`SELECT 1 FROM messages WHERE ${where} LIMIT 1`).get(...params)) return [];
+    return this.#transaction(() => {
+      const chats = this.db.prepare(`SELECT DISTINCT chat_key FROM messages WHERE ${where}`)
+        .all(...params).map((row) => row.chat_key);
+      if (!chats.length) return [];
+      this.db.prepare(`UPDATE messages
+        SET state=CASE WHEN release_state='acked' THEN 'acked' ELSE 'pending' END,
+            release_state='', deferred_at=0
+        WHERE ${where}`).run(...params);
+      return chats;
+    });
   }
 
   setMaxPerChat(cap) { this.maxPerChat = Math.max(0, Number(cap) || 0); }
@@ -326,9 +456,10 @@ export class ChatStore {
 
   /** 入站处理队列的低基数计数与最老一条的年龄（控制台 /api/metrics 用）。 */
   queueStats() {
-    const rows = this.db.prepare(`SELECT state, COUNT(*) AS n, MIN(ts) AS oldest
-      FROM messages WHERE state IN ('pending','leased','held') GROUP BY state`).all();
-    const byState = { pending: 0, leased: 0, held: 0 };
+    const rows = this.db.prepare(`SELECT state, COUNT(*) AS n,
+      MIN(CASE WHEN state='deferred' AND deferred_at>0 THEN deferred_at ELSE ts END) AS oldest
+      FROM messages WHERE state IN ('pending','leased','held','deferred') GROUP BY state`).all();
+    const byState = { pending: 0, leased: 0, held: 0, deferred: 0 };
     let oldestAt = 0;
     for (const row of rows) {
       const state = String(row?.state || '');
@@ -568,6 +699,20 @@ export class ChatStore {
   }
 
   /**
+   * 启动时收口上一条命留下的所有 leased run。
+   * 实例锁保证此刻没有另一个进程持有这些租约；它们的 expires_at 可能还没到
+   * （默认 4 分钟），不能等 recoverExpired 的过期条件，否则该会话在重启后
+   * 会短暂卡在"有租约但没人跑"：新消息 claim 不到、提醒也被推迟。
+   */
+  failLeasedRunsAtStartup() {
+    const runs = this.db.prepare("SELECT id FROM runs WHERE state='leased'").all();
+    for (const run of runs) {
+      this.failLease(run.id, 'Process restarted while run was leased', { delayMs: 0 });
+    }
+    return runs.length;
+  }
+
+  /**
    * 清掉终态且早已过期的运行行（expires_at 当创建时间的近似；leased 行不归保留期管）。
    * 启动时清一次，之后由每日保留期调度复用（console/app.js 的 retentionPruneTargets）——
    * 只清一次等于永不清理（2026-10-09 审查，与三个台账同一教训）。
@@ -646,10 +791,105 @@ export class ChatStore {
     });
   }
 
-  listUnknownOperations(chatKey, limit = 100) {
+  /**
+   * 自动释放"未知已消解"的 held 批次（Issue #84）。
+   *
+   * held 的语义是"这批外发结果未知"。未知的唯一依据是该 run 的 outbox 仍有非终态行
+   * （sending/unknown，或脏数据里的其它状态）；一旦这些行全部终结（sent/failed/
+   * reconciled_*）或已被清空，未知就消解了，此时把该 run 的 held 消息置 acked 不会重跑，
+   * 会话可以从"发送结果待确认"里恢复。
+   *
+   * 安全边界：
+   *   - 严格按 messages.lease_id + outbox.run_id 的 run 粒度处理，绝不按 chat 无差别删；
+   *   - 有 sending/unknown 的一律保留，继续等人工核对；
+   *   - lease_id 为空的历史 held 按会话级 outbox 判断：仍有 sending/unknown 才保留人工；
+   *   - 释放语义与手动 resolveHeld 一致：ack 丢弃（不自动重发），但记录日志/计数便于审计。
+   *     过期十几小时的批次如果自动重发，反而会在群里突然冒出旧消息。
+   *
+   * @returns {{released: Array<{chatKey:string,runId:string,messages:number,reason:string,outbox:object}>, kept: Array<{chatKey:string,runId:string,messages:number,reason:string,outbox:object}>}}
+   */
+  autoReleaseResolvedHeld() {
+    const terminal = new Set(['sent', 'failed', 'reconciled_sent', 'reconciled_failed']);
+    // 空转时不进写事务：回收循环 5 秒一次，不能为了一个空查询每 tick 抢 SQLite 写锁。
+    if (!this.db.prepare("SELECT 1 FROM messages WHERE state='held' LIMIT 1").get()) {
+      return { released: [], kept: [] };
+    }
+    return this.#transaction(() => {
+      const candidates = this.db.prepare(`SELECT chat_key AS chatKey, lease_id AS runId, COUNT(*) AS messages
+        FROM messages WHERE state='held'
+        GROUP BY chat_key, lease_id
+        ORDER BY chat_key, lease_id`).all();
+      const released = [];
+      const kept = [];
+      for (const candidate of candidates) {
+        const chatKey = String(candidate.chatKey || '');
+        const runId = String(candidate.runId || '');
+        const messages = Number(candidate.messages) || 0;
+        if (!runId) {
+          // 老版本留下的 held 没记 lease_id。无法按 run 对应，但可以按会话级证据判断：
+          // 该会话只要还有 sending/unknown，就仍可能有外发在途 → 保留；
+          // 全部终结/根本没有 outbox → 未知已消解，ack 旧消息不会重发。
+          const rows = this.db.prepare('SELECT state, COUNT(*) AS n FROM outbox WHERE chat_key=? GROUP BY state')
+            .all(chatKey);
+          const outbox = {};
+          for (const row of rows) outbox[String(row.state || 'unknown')] = Number(row.n) || 0;
+          if (Object.keys(outbox).some((state) => !terminal.has(state))) {
+            kept.push({ chatKey, runId: '', messages, reason: 'missing-lease-unresolved', outbox });
+            continue;
+          }
+          const changed = Number(this.db.prepare(`UPDATE messages SET state='acked', lease_id=NULL
+            WHERE chat_key=? AND state='held' AND (lease_id IS NULL OR lease_id='')`)
+            .run(chatKey).changes) || 0;
+          if (changed) {
+            released.push({
+              chatKey,
+              runId: '',
+              messages: changed,
+              reason: Object.keys(outbox).length ? 'missing-lease-resolved' : 'missing-lease-no-outbox',
+              outbox
+            });
+          }
+          continue;
+        }
+        const rows = this.db.prepare('SELECT state, COUNT(*) AS n FROM outbox WHERE run_id=? GROUP BY state')
+          .all(runId);
+        const outbox = {};
+        for (const row of rows) outbox[String(row.state || 'unknown')] = Number(row.n) || 0;
+        const unresolved = Object.entries(outbox).filter(([state]) => !terminal.has(state));
+        if (unresolved.length) {
+          kept.push({ chatKey, runId, messages, reason: 'outbox-unresolved', outbox });
+          continue;
+        }
+        const changed = Number(this.db.prepare(`UPDATE messages SET state='acked', lease_id=NULL
+          WHERE chat_key=? AND state='held' AND lease_id=?`).run(chatKey, runId).changes) || 0;
+        if (!changed) continue;   // 另一轮已经处理过这批
+        this.db.prepare(`UPDATE runs SET state='acked',
+          error=CASE WHEN error IS NULL OR error='' THEN ?
+            ELSE error || '；外发结果已确认，自动释放 held' END
+          WHERE id=? AND state='held'`)
+          .run('外发结果已确认，自动释放 held', runId);
+        // 与 ackLease 的正常收尾一致：终态 outbox 行在这里清掉；unknown/sending 已在上面排除。
+        this.db.prepare(`DELETE FROM outbox WHERE run_id=?
+          AND state IN ('sent','failed','reconciled_sent','reconciled_failed')`).run(runId);
+        released.push({
+          chatKey,
+          runId,
+          messages: changed,
+          reason: Object.keys(outbox).length ? 'outbox-terminal' : 'no-outbox',
+          outbox
+        });
+      }
+      return { released, kept };
+    });
+  }
+
+  listUnknownOperations(chatKey, limit = 100, { includeSending = false } = {}) {
+    // 默认只列真正的 unknown：sending 仍在发送队列里，核对接口会拒绝它，
+    // 列给控制台只会得到一排必然 404 的按钮。内部需要"在途证据"时显式 includeSending。
+    const states = includeSending ? "IN ('sending','unknown')" : "= 'unknown'";
     return this.db.prepare(`SELECT id, run_id AS runId, chat_key AS chatKey,
       state, payload, message_id AS messageId, error
-      FROM outbox WHERE chat_key=? AND state IN ('sending','unknown')
+      FROM outbox WHERE chat_key=? AND state ${states}
       ORDER BY rowid DESC LIMIT ?`).all(
       String(chatKey || ''),
       Math.min(500, Math.max(1, Number(limit) || 100))
@@ -665,8 +905,10 @@ export class ChatStore {
       throw new Error('未知写入核对结果必须是 sent 或 failed');
     }
     return this.#transaction(() => {
+      // 只允许核对真正的 unknown：sending 仍在本进程发送队列里，提前改终态会让
+      // finishSend 找不到行、hasUncertainEffects 失去证据，最终可能重复发送。
       const row = this.db.prepare(`SELECT id, run_id AS runId, chat_key AS chatKey
-        FROM outbox WHERE id=? AND state IN ('sending','unknown')`).get(String(operationId || ''));
+        FROM outbox WHERE id=? AND state='unknown'`).get(String(operationId || ''));
       if (!row) return null;
       this.db.prepare(`UPDATE outbox SET state=?, error=? WHERE id=?`).run(
         result === 'sent' ? 'reconciled_sent' : 'reconciled_failed',
@@ -700,8 +942,8 @@ export class ChatStore {
 
   beginSend(chatKey, runId, payload) {
     const id = crypto.randomUUID();
-    this.db.prepare("INSERT INTO outbox(id,run_id,chat_key,state,payload) VALUES (?,?,?,'sending',?)")
-      .run(id, runId || null, chatKey, JSON.stringify(payload));
+    this.db.prepare("INSERT INTO outbox(id,run_id,chat_key,state,payload,created_at) VALUES (?,?,?,'sending',?,?)")
+      .run(id, runId || null, chatKey, JSON.stringify(payload), Date.now());
     return id;
   }
 
@@ -710,6 +952,17 @@ export class ChatStore {
     this.db.prepare('UPDATE outbox SET state=?,message_id=?,error=? WHERE id=?')
       .run(state, messageId == null ? null : String(messageId),
         error ? String(error).slice(0, 1000) : null, id);
+  }
+
+  /**
+   * 启动时把上一条命留下的 sending 行收口成 unknown：写入方进程已不存在，
+   * "仍在发送"不再成立。否则这些行既没有终态出口，也永远不会进入人工核对清单，
+   * 会让 getChatMeta().held 永久挡住整个会话（2026-11-03 复核 P1）。
+   */
+  markStaleSendingUnknown() {
+    return this.db.prepare(`UPDATE outbox SET state='unknown',
+      error=COALESCE(NULLIF(error,''), '进程重启，发送结果未知')
+      WHERE state='sending'`).run().changes;
   }
 
   expireConversationThreads(now = Date.now(), chatKey = '') {
@@ -1167,11 +1420,19 @@ export class ChatStore {
     };
   }
 
-  recent(chatKey, { limit = 80, offset = 0, includeSelf = true, readOnly = false, afterId = 0, beforeId = 0, scope = 'chat' } = {}) {
+  /** 最近一条机器人自己发言的时间；不要从 recent(limit:100) 里过滤（活跃群会误判成没说过）。 */
+  lastSelfMessageAt(chatKey) {
+    const row = this.db.prepare(`SELECT ts FROM messages
+      WHERE chat_key=? AND self=1 ORDER BY ts DESC, id DESC LIMIT 1`).get(String(chatKey || ''));
+    return Number(row?.ts) || 0;
+  }
+
+  recent(chatKey, { limit = 80, offset = 0, includeSelf = true, readOnly = false, afterId = 0, beforeId = 0, fromId = null, scope = 'chat' } = {}) {
     // afterId：增量消费按 id **升序**取"游标之后最早的一批"；积压超过 limit 时下一轮继续，
     // 不能按 DESC 取最新 N 条再 reverse —— 那会把落在窗口外的最老消息静默跳过（游戏丢票）。
     // beforeId：控制台向上翻页，取"比这个 id 更老的最新 N 条"，仍按时间正序返回。
     // 非增量调用仍保持"最新 N 条、按时间正序返回"的既有语义。
+    // fromId：显式从"最老一条"开始正向取（全量导出用）；与 afterId 不同，0 也有意义。
     // scope='private'：只给"私聊共享上下文"用，读所有 private:*，按 ts 排序（跨会话没有可比 id）。
     // scope='all'：群聊与私聊共用上下文（issue #14 第二项），读所有会话，同样按 ts 排序。
     const after = Number(afterId) > 0 ? Number(afterId) : 0;
@@ -1189,6 +1450,12 @@ export class ChatStore {
         .all(Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
       return rows.reverse().map(entry);
     }
+    if (fromId !== null && fromId !== undefined) {
+      const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key=? ${filters}
+        AND id >= ? ORDER BY id ASC LIMIT ?`)
+        .all(chatKey, Math.max(0, Number(fromId) || 0), Math.max(1, Number(limit) || 1));
+      return rows.map(entry);
+    }
     if (after) {
       const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key=? ${filters}
         AND id > ? ORDER BY id ASC LIMIT ?`)
@@ -1205,6 +1472,20 @@ export class ChatStore {
       ORDER BY id DESC LIMIT ? OFFSET ?`)
       .all(chatKey, Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
     return rows.reverse().map(entry);
+  }
+
+  /** 某成员最近 N 条发言（时间正序；只读、不含自己）。记忆整理用来补充新证据。 */
+  recentBySender(chatKey, userId, limit = 30) {
+    const rows = this.db.prepare(`SELECT * FROM messages
+      WHERE chat_key=? AND self=0 AND sender_id=? ORDER BY id DESC LIMIT ?`)
+      .all(String(chatKey), String(userId), Math.max(1, Math.min(200, Number(limit) || 30)));
+    return rows.reverse().map(entry);
+  }
+
+  /** 该会话最老一条消息的 id（没有返回 0）。全量导出从这里正向分页。 */
+  firstMessageId(chatKey) {
+    const row = this.db.prepare('SELECT MIN(id) AS id FROM messages WHERE chat_key=?').get(String(chatKey));
+    return Number(row?.id) || 0;
   }
 
   /**
@@ -1262,6 +1543,27 @@ export class ChatStore {
       ORDER BY length(m.sender_name) DESC, m.ts DESC LIMIT ?`)
       .all(chatKey, Math.max(1, Math.min(10000, Number(limit) || 5000)))
       .map((row) => ({ userId: String(row.userId || ''), name: String(row.name || ''), lastTs: Number(row.lastTs) || 0, count: Number(row.count) || 0 }));
+  }
+
+  /**
+   * 本会话出现过的全部 (QQ, 群名片) 组合，包括改名前的历史名字。
+   * 只给低频的按名字反查用；limit 截断时调用方必须 fail closed（宁可报错也不猜人）。
+   */
+  memberNameHistory(chatKey, { limit = 20000 } = {}) {
+    const cap = Math.max(1, Math.min(50000, Number(limit) || 20000));
+    return this.db.prepare(`SELECT sender_id AS userId, sender_name AS name,
+      MAX(ts) AS lastTs, COUNT(*) AS count
+      FROM messages
+      WHERE chat_key=? AND self=0 AND sender_id<>'' AND sender_name<>''
+      GROUP BY sender_id, sender_name
+      ORDER BY lastTs DESC LIMIT ?`)
+      .all(chatKey, cap)
+      .map((row) => ({
+        userId: String(row.userId || ''),
+        name: String(row.name || ''),
+        lastTs: Number(row.lastTs) || 0,
+        count: Number(row.count) || 0
+      }));
   }
 
   /**

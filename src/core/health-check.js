@@ -22,6 +22,8 @@ const STUCK_INBOUND_MS = 60 * 60 * 1000;        // 入站到期未处理的宽�
                                                 // 按设计可等 maxSilence（默认上限 45 分钟）才统一处理，
                                                 // 60 分钟覆盖它之后仍停在 pending 才是管道死了
 const DISK_MIN_BYTES = 1024 * 1024 * 1024;       // 磁盘余量：< 1GB 报警
+// 待核对发送只看最近 7 天：更早的 held/unknown 属于历史遗留，不能让巡检永久按红。
+const SEND_REVIEW_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const NOTIFY_AFTER_STREAK = 3;                   // 连续失败到第 3 次才通知
 // 两个本机探测必须带超时（2026-10-01 审查）：原来一次 fetch 用 undici 的默认上限（约 5 分钟），
 // 控制台半死不活（接受连接但不响应）时，一轮巡检会被它拖住整个超时窗口 ——
@@ -114,6 +116,40 @@ function readPluginConfig(dataDir) {
  * degrade：只回 @，其余保留未读；block：整批不跑，消息留到明天 —— 两种都会让消息堆着，
  * 只豁免 degrade 的话 block 用户每天都会收到一条"收发链路可能停滞"的误报（2026-10-08 审查）。
  */
+/** 读“按设计不会处理”的会话：incident block / deny.private|group / 明确不在 allow 清单里。 */
+function readIntentionalChatState(dataDir) {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8')); } catch { /* 无配置 */ }
+  const blocked = new Set();
+  try {
+    const db = openDatabase(path.join(dataDir, 'incident-pilot.sqlite'), { readOnly: true });
+    try {
+      for (const row of db.prepare("SELECT chat_key AS chatKey FROM chat_runtime_controls WHERE mode='blocked'").all()) {
+        blocked.add(String(row.chatKey || ''));
+      }
+    } finally { db.close(); }
+  } catch { /* 实验功能未启用/旧库没有表 */ }
+  const list = (value) => (Array.isArray(value) ? value : []).map(String);
+  return {
+    blocked,
+    allowGroups: list(cfg?.allow?.groups),
+    allowPrivate: list(cfg?.allow?.private),
+    denyGroups: list(cfg?.deny?.groups),
+    denyPrivate: list(cfg?.deny?.private)
+  };
+}
+
+function intentionallyNotProcessed(chatKey, state) {
+  const key = String(chatKey || '');
+  if (state.blocked.has(key)) return true;
+  const [kind, id] = key.split(':');
+  const deny = kind === 'private' ? state.denyPrivate : state.denyGroups;
+  if (deny.includes(id)) return true;
+  const allow = kind === 'private' ? state.allowPrivate : state.allowGroups;
+  // allow 为空时语义是“未配置”，不在这里替管理员下结论；非空时明确不在清单里 = 设计上不处理。
+  return allow.length > 0 && !allow.includes(id);
+}
+
 function readBudgetKeepPending(dataDir) {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'));
@@ -149,6 +185,7 @@ export async function runHealthCheck(opts = {}) {
     containerRuntime = null,   // 可注入（测试）：null＝按运行环境判断
     noNewPrivsStatus = null,   // 可注入（测试）：null＝自动探测主服务进程
     sudoDockerProbe = null,    // 可注入（测试）：null＝走真实 probeSudoDocker()
+    isolationProbe = isolationSummary, // 可注入（测试）：返回 isolationSummary() 的形状
     outboundStaleMs = OUTBOUND_STALE_MS,
     notify = null,
     fetchImpl = globalThis.fetch,
@@ -323,15 +360,23 @@ export async function runHealthCheck(opts = {}) {
           // ② failed（重试耗尽）且发生在最后一次成功出站之后（见上方注释的取舍）。
           // 两类都限定在观察窗口内：窗口外的历史遗留不追打。
           const lastOutTs = outAge === null ? 0 : now - outAge;
-          const stuck = db.prepare(
-            "SELECT" +
+          const rows = db.prepare(
+            "SELECT chat_key AS chatKey," +
             " COALESCE(SUM(state='pending'),0) AS pendingCount," +
             " COALESCE(SUM(state='failed' AND ts > ?),0) AS failedCount," +
             " min(ts) AS oldest" +
             " FROM messages" +
             " WHERE self=0 AND ts > ? AND max(ts, available_at) <= ?" +
-            "   AND (state='pending' OR (state='failed' AND ts > ?))"
-          ).get(lastOutTs, now - outboundStaleMs, now - STUCK_INBOUND_MS, lastOutTs);
+            "   AND (state='pending' OR (state='failed' AND ts > ?))" +
+            " GROUP BY chat_key"
+          ).all(lastOutTs, now - outboundStaleMs, now - STUCK_INBOUND_MS, lastOutTs);
+          const intentional = readIntentionalChatState(dataDir);
+          const active = rows.filter((row) => !intentionallyNotProcessed(row.chatKey, intentional));
+          const stuck = {
+            pendingCount: active.reduce((sum, row) => sum + Number(row.pendingCount || 0), 0),
+            failedCount: active.reduce((sum, row) => sum + Number(row.failedCount || 0), 0),
+            oldest: active.length ? Math.min(...active.map((row) => Number(row.oldest) || now)) : now
+          };
           const stuckCount = Number(stuck.pendingCount || 0) + Number(stuck.failedCount || 0);
           const outDetail = outAge === null ? '；还没有出站记录' : `；出站距今 ${Math.round(outAge / 60000)} 分钟`;
           if (stuckCount > 0) {
@@ -353,7 +398,33 @@ export async function runHealthCheck(opts = {}) {
     }
   }
 
-  // ⑤ 磁盘余量
+  // ⑤ 待核对发送：held 消息 / outbox sending|unknown 会挡住整会话（legacy 闸门）。
+  // 不自动释放 unknown（可能已发出），但必须让运维看见，不能只藏在聊天页里。
+  try {
+    const db = openDatabase(path.join(dataDir, 'messages.sqlite'), { readOnly: true });
+    try {
+      const cutoff = Date.now() - SEND_REVIEW_STALE_MS;
+      const held = Number(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE state='held' AND ts>=?").get(cutoff)?.n) || 0;
+      // 与 getChatMeta 同口径：一次 run 发 3 条只算 1 个待核对批次。
+      // 老库 created_at=0 的行没有可靠时间，按历史遗留处理，不纳入巡检红线。
+      const uncertain = Number(db.prepare(`SELECT COUNT(DISTINCT COALESCE(run_id,id)) AS n
+        FROM outbox WHERE state IN ('sending','unknown') AND created_at>=?`).get(cutoff)?.n) || 0;
+      if (held || uncertain) {
+        add('send-review', false, `有 ${held} 条 held 消息、${uncertain} 条发送结果未知（会影响对应会话回复），请在控制台核对`);
+      } else {
+        add('send-review', true, '没有待核对的发送');
+      }
+    } finally { db.close(); }
+  } catch (error) {
+    const message = String(error?.message ?? error);
+    if (/no such (?:table: (?:outbox|messages)|column: created_at)/i.test(message)) {
+      add('send-review', true, '旧库还没有发送核对表/字段（跳过）');
+    } else {
+      add('send-review', false, `发送核对清单读不了: ${message}`);
+    }
+  }
+
+  // ⑥ 磁盘余量
   try {
     const st = typeof statfs === 'function' ? statfs(dataDir) : fs.statfsSync(dataDir);
     const avail = Number(st.bavail) * Number(st.bsize);
@@ -428,8 +499,10 @@ export async function runHealthCheck(opts = {}) {
       const cannotRun = !permissionFlagSupported() && pluginCfg.requireIsolation !== false;
       // 网络隔离：本机做不到时——要求了就报红（fail-closed 说好的不许装），没要求就如实说明（不报红，
       // 否则 Windows/macOS 上每次巡检都红，等于把红变成噪音）
-      const netOk = isolationSummary().net;
-      const netBlocked = pluginCfg.networkIsolation !== false && pluginCfg.requireNetworkIsolation === true && !netOk;
+      const netOk = (isolationProbe ?? isolationSummary)().net;
+      // requireNetworkIsolation 会强制启隔离（host.js），与 networkIsolation 是否勾选无关；
+      // 只看要求位，否则"要求了但又取消勾选"时插件全被拒载、巡检却报绿。
+      const netBlocked = pluginCfg.requireNetworkIsolation === true && !netOk;
       const revoked = pluginCfg.revoked.length
         ? `撤回名单 ${pluginCfg.revoked.length} 条（${pluginCfg.revoked.slice(0, 3).join(', ')}${pluginCfg.revoked.length > 3 ? ' …' : ''}）`
         : '';

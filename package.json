@@ -1,6 +1,6 @@
 {
   "name": "qq-agent-plus",
-  "version": "0.9.13",
+  "version": "0.9.14",
   "private": false,
   "description": "Linux QQ group agent (OneBot v11)：分条发言、贴纸系统、主动发言与内置运维命令。",
   "type": "module",
@@ -17,6 +17,8 @@
     "test:local": "node scripts/test-suite.mjs local",
     "test:regression": "node scripts/test-suite.mjs regression",
     "test:browser": "playwright test",
+    "test:coverage": "node scripts/coverage.mjs",
+    "release:check": "node scripts/release-check.mjs",
     "test:prompt": "node test/test-prompt.mjs",
     "test:render": "node test/render-test.mjs",
     "test:scroll": "node test/scroll-test.mjs",

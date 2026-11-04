@@ -88,7 +88,7 @@ test('tavilySearch：未配置 Key 明确报错；HTTP 错误带状态码与响�
   await assert.rejects(() => tavilySearch('q'), /HTTP 429/);
 });
 
-test('aggregateSearch：单源失败不影响整体；去除追踪参数后去重；每源条数截断', async () => {
+test('aggregateSearch：单源失败不影响整体；URL 去重保留优先级高的源；每源条数截断', async () => {
   setWebSearch({
     provider: 'aggregate',
     aggregate: { sources: ['tavily', 'doubao', 'bing'], count: 2 },
@@ -117,9 +117,125 @@ test('aggregateSearch：单源失败不影响整体；去除追踪参数后去�
     'tavily:https://x.example/1',
     'tavily:https://x.example/2',
     'doubao:https://x.example/3'
-  ], 'count=2 每源截 2 条；去追踪参数后同 URL 去重保留前面的源');
+  ], 'count=2 每源截 2 条；tracking 参数不影响同一 URL 去重并保留前面的源');
   assert.equal(r.results[0].snippet, 'tavily版', '重复 URL 保留优先级高的源的内容');
   assert.equal(r.results[0].source, 'tavily', '结果带 source 标注');
+});
+
+test('aggregateSearch：保留页面身份 query，只忽略 tracking 参数与普通锚点', async () => {
+  setWebSearch({
+    provider: 'aggregate',
+    aggregate: { sources: ['tavily', 'doubao'], count: 6 },
+    tavily: { apiKey: 'tvly-id' },
+    doubao: { apiKey: 'db-id' }
+  });
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('tavily')) return { ok: true, json: async () => ({ results: [
+      { title: 'ID one', url: 'https://x.example/article?id=one&utm_source=a', content: 'a' },
+      { title: 'ID two', url: 'https://x.example/article?id=two', content: 'b' },
+      { title: '已排序', url: 'https://x.example/article?a=1&b=2', content: 'ab1' },
+      { title: 'SPA one', url: 'https://x.example/spa#/one', content: 's1' },
+      { title: 'SPA two', url: 'https://x.example/spa#/two', content: 's2' },
+      { title: '普通锚点', url: 'https://x.example/plain#first', content: 'plain' }
+    ] }) };
+    return { ok: true, json: async () => ({ Result: { WebResults: [
+      { Title: 'ID one dup', Url: 'https://x.example/article?utm_source=b&id=one', Summary: 'a2' },
+      { Title: '顺序不同', Url: 'https://x.example/article?b=2&a=1', Summary: 'ab2' },
+      { Title: 'ID two dup', Url: 'https://x.example/article?id=two&fbclid=tracking', Summary: 'b2' },
+      { Title: '普通锚点 dup', Url: 'https://x.example/plain#second', Summary: 'plain2' },
+      { Title: 'ID three', Url: 'https://x.example/article?id=three', Summary: 'c' }
+    ] } }) };
+  };
+  const { aggregateSearch } = await import('../src/llm/web-search.js');
+  const r = await aggregateSearch('测试');
+  assert.deepEqual(r.results.map((x) => `${x.source}:${x.url}`), [
+    'tavily:https://x.example/article?id=one&utm_source=a',
+    'tavily:https://x.example/article?id=two',
+    'tavily:https://x.example/article?a=1&b=2',
+    'tavily:https://x.example/spa#/one',
+    'tavily:https://x.example/spa#/two',
+    'tavily:https://x.example/plain#first',
+    'doubao:https://x.example/article?id=three'
+  ], '身份 query 与 SPA route 必须保留；tracking、参数顺序与普通锚点只影响去重键');
+  assert.equal(r.results[0].title, 'ID one', '返回原 URL、标题与靠前来源');
+});
+
+test('aggregateSearch：非法或相对 URL 不抛错，仍按原字符串保守去重', async () => {
+  setWebSearch({
+    provider: 'aggregate',
+    aggregate: { sources: ['tavily'], count: 4 },
+    tavily: { apiKey: 'tvly-invalid' }
+  });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ results: [
+    { title: '相对地址', url: 'relative/path', content: 'a' },
+    { title: '相对地址重复', url: 'relative/path', content: 'b' },
+    { title: '普通文本', url: 'not a url', content: 'c' }
+  ] }) });
+  const { aggregateSearch } = await import('../src/llm/web-search.js');
+  const r = await aggregateSearch('测试');
+  assert.deepEqual(r.results.map((x) => x.url), ['relative/path', 'not a url']);
+});
+
+test('aggregateSearch：同名参数顺序可能表示有序列表，不能交换后误合并', async () => {
+  setWebSearch({
+    provider: 'aggregate',
+    aggregate: { sources: ['tavily'], count: 4 },
+    tavily: { apiKey: 'tvly-repeat' }
+  });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ results: [
+    { title: '重复参数一', url: 'https://x.example/list?tag=one&tag=two', content: 'a' },
+    { title: '重复参数二', url: 'https://x.example/list?tag=two&tag=one', content: 'b' },
+    { title: '不同参数一', url: 'https://x.example/dict?a=1&b=2', content: 'c' },
+    { title: '不同参数二', url: 'https://x.example/dict?b=2&a=1', content: 'd' }
+  ] }) });
+  const { aggregateSearch } = await import('../src/llm/web-search.js');
+  const r = await aggregateSearch('测试');
+  assert.deepEqual(r.results.map((x) => x.url), [
+    'https://x.example/list?tag=one&tag=two',
+    'https://x.example/list?tag=two&tag=one',
+    'https://x.example/dict?a=1&b=2'
+  ]);
+});
+
+test('searchResultDedupeKey：tracking、hash 路由、参数顺序与坏 URL 的完整口径', async () => {
+  const { searchResultDedupeKey: key } = await import('../src/llm/web-search.js');
+  const same = [
+    ['https://x.example/a?id=1&utm_source=1', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&UTM_SOURCE=1', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&fbclid=x', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&gclid=x', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&dclid=x', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&mkt_tok=x', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&_ga=x', 'https://x.example/a?id=1'],
+    ['https://x.example/a?id=1&share_source=x', 'https://x.example/a?id=1'],
+    ['https://x.example/a?b=2&a=1', 'https://x.example/a?a=1&b=2'],
+    ['https://x.example/a?q=a+b', 'https://x.example/a?q=a%20b'],
+    ['https://x.example/a#section', 'https://x.example/a'],
+    ['https://x.example/a?utm_source=x#/route', 'https://x.example/a#/route']
+  ];
+  for (const [left, right] of same) {
+    assert.equal(key(left), key(right), `${left} 应与 ${right} 去重`);
+  }
+
+  const different = [
+    ['https://x.example/a?id=one', 'https://x.example/a?id=two'],
+    ['https://x.example/a#/one', 'https://x.example/a#/two'],
+    ['https://x.example/a#!/one', 'https://x.example/a#!/two'],
+    ['https://x.example/a#!app=1', 'https://x.example/a#!app=2'],
+    ['https://x.example/a#?page=1', 'https://x.example/a#?page=2'],
+    ['https://x.example/a?tag=one&tag=two', 'https://x.example/a?tag=two&tag=one'],
+    ['https://x.example/a?q=a%2Bb', 'https://x.example/a?q=a+b'],
+    ['https://x.example/a', 'http://x.example/a'],
+    ['https://x.example/a', 'https://x.example/a/'],
+    ['relative/path', 'relative/other'],
+    ['ftp://x.example/a?utm_source=1', 'ftp://x.example/a?utm_source=2']
+  ];
+  for (const [left, right] of different) {
+    assert.notEqual(key(left), key(right), `${left} 不能与 ${right} 合并`);
+  }
+  assert.equal(key(''), '');
+  assert.equal(key('relative/path'), 'relative/path');
 });
 
 test('aggregateSearch：全部源失败才报错，错误信息带各源原因', async () => {

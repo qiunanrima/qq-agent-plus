@@ -24,12 +24,21 @@ import { pipeline } from 'node:stream/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from './core/sqlite.js';
+import { verifyBackupDatabases } from './core/backup-verify.js';
 import { runHealthCheck } from './core/health-check.js';
 import { readTextBounded } from './core/http-body.js';
 import { SNOWLUMA_BASELINE_IMAGE, createSnowlumaUpdater } from './core/snowluma-update.js';
 import { readOwnerUin, sendOwnerText } from './core/notify-owner.js';
 import { isContainerRuntime, containerUpdateHint } from './core/runtime.js';
 import { idList } from './core/list.js';
+import { listSessionFiles, readSessionFile } from './core/session-files.js';
+import { EffectLedger } from './core/effects.js';
+import { inspectInstanceLock } from './core/instance-lock.js';
+import { backupKeyFile, loadBackupKey } from './core/backup-key.js';
+import {
+  storageBreakdown, sessionStorage, redactedConfig, pluginSummary, incidentSummary,
+  effectSummary, logTail, buildDiagnoseEntries, writeDiagnoseArchive
+} from './core/diagnose.js';
 import { pruneAudit } from './core/audit-log.js';
 import { installPlugin, uninstallPlugin, readPluginInstallInfo, sha256Of } from './plugins/install.js';
 import { resolveModelPrice, modelLabel, setRemotePrices, setChannelPrices } from './pricing/model-prices.js';
@@ -92,7 +101,7 @@ function config(overrides = {}) {
     appDir: overrides.app || envStr('QQ_AGENT_APP_DIR', path.join(rootDir, 'app')),
     dataDir: overrides.data || envStr('QQ_AGENT_DATA_DIR', path.join(rootDir, 'data')),
     backupDir: overrides.backupDir || envStr('QQ_AGENT_BACKUP_DIR', path.join(os.homedir(), 'qq-agent', 'backups')),
-    service: envStr('QQ_AGENT_SERVICE', 'qq-agent-linux.service'),
+    service: overrides.service || envStr('QQ_AGENT_SERVICE', 'qq-agent-linux.service'),
     updateTimer: envStr('QQ_AGENT_UPDATE_TIMER', 'qq-agent-linux-update.timer'),
     guardTimer: envStr('QQ_AGENT_GUARD_TIMER', 'process-guard.timer'),
     consolePort: envStr('QQ_AGENT_CONSOLE_PORT', '3210'),
@@ -322,12 +331,20 @@ function priceGapReport(cfg) {
   try { priceCfg = JSON.parse(fs.readFileSync(path.join(cfg.dataDir, 'config.json'), 'utf8')); } catch { priceCfg = {}; }
   injectCachedPriceTables(cfg.dataDir, priceCfg);
   const dir = path.join(cfg.dataDir, 'sessions');
-  let files = [];
-  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return null; }
+  const byId = new Map();
+  try {
+    for (const entry of listSessionFiles(dir)) {
+      const cur = byId.get(entry.id);
+      if (!cur || (cur.compressed && !entry.compressed)) byId.set(entry.id, entry);
+    }
+  } catch {
+    return null;   // 读不了就报"没有留档"，由调用方说无法判定（不中断体检）
+  }
+  if (!byId.size) return null;
   const counts = new Map();
-  for (const name of files) {
-    let session;
-    try { session = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); } catch { continue; }
+  for (const entry of byId.values()) {
+    const session = readSessionFile(entry.file);
+    if (!session) continue;
     const vendor = String(session?.vendor || '').trim();
     for (const message of (session?.messages || [])) {
       const raw = message?.raw;
@@ -357,6 +374,7 @@ process setTimeout clearTimeout setInterval clearInterval setImmediate queueMicr
 parseInt parseFloat isNaN isFinite encodeURIComponent decodeURIComponent fetch URL URLSearchParams
 structuredClone BigInt RegExp Error TypeError RangeError SyntaxError Symbol AbortController AbortSignal
 TextEncoder TextDecoder atob btoa globalThis performance crypto
+Int32Array Uint8Array SharedArrayBuffer ArrayBuffer
 FormData Blob Headers Response Request
 if for while switch catch return typeof function await new delete void in of do else try throw case instanceof
 yield super this null true false async static get set import export default class const let var new`.split(/\s+/).filter(Boolean));
@@ -749,14 +767,14 @@ function auditHost(args) {
 const AUDIT_MARKERS = [
   // `export` 前缀可省：这条从 CJS 时代留下，文件改成 ESM 后 `^function` 永远匹配不上，
   // 体检就会常驻一条假 NG（2026-10-01 在服务器上实测到）。锚点保留，仍只认定义那一行。
-  ['normalizeMid 定义', 1, 'src/tools/tools-core.js', '^(?:export )?function normalizeMid\\(value\\)'],
+  ['normalizeMid 定义', 1, 'src/tools/result-sanitize.js', '^(?:export )?function normalizeMid\\(value\\)'],
   ['normalizeMid 调用点', 3, 'src/tools/tools-core.js', 'replyToMessageId: normalizeMid\\('],
   ['store.findByMid 归一化', 1, 'src/core/store.js', 'normalizeMid\\(mid\\)'],
   ['贴纸同步防清空守卫', 1, 'src/onebot/stickers.js', 'if \\(!fetchedIds\\.size\\) return out'],
   ['主动间隔守卫', 1, 'src/core/orchestrator.js', 'minGapMs'],
   ['主动判定落盘', 2, 'src/core/orchestrator.js', 'writeProactiveAttempt\\(PROACTIVE_STATE_FILE, scope, nowTick\\)'],
   ['主动判定原子写', 1, 'src/core/proactive-state.js', 'renameSync\\(tmp, file\\)'],
-  ['多窗口工具函数', 1, 'src/core/orchestrator.js', 'function proactiveWindowState'],
+  ['多窗口工具函数', 1, 'src/core/orchestrator-helpers.js', 'function proactiveWindowState'],
   ['补话安排', 1, 'src/core/orchestrator.js', 'maybeScheduleFollowUp\\(chatKey'],
   ['重连补课', 2, 'src/console/app.js', 'catchUpMissedMessages|scheduleCatchUp'],
   ['空间互动失败退避', 2, 'src/features/qzone-interactions.js', 'failStreak|backoff'],
@@ -764,20 +782,20 @@ const AUDIT_MARKERS = [
   // 标记要跟着指向现在的实现，否则每次体检都误报一项。
   ['发送网络级重试', 1, 'src/onebot/sender.js', '能证明请求没被对方收到|1.5 秒后重试一次'],
   ['QQ表情标签', 1, 'src/onebot/onebot.js', 'QQ表情'],
-  ['看图先读情绪', 1, 'src/llm/prompt.js', '看图先读情绪'],
-  ['表情编号≠stickerId 提醒', 1, 'src/llm/prompt.js', '别拿这个编号去 .*send_sticker'],
+  ['看图先读情绪', 1, 'src/llm/prompt.js', '表情图先理解语气再接话'],
+  ['表情编号≠stickerId 提醒', 1, 'src/llm/prompt.js', 'QQ系统表情编号与图库stickerId不同'],
   ['发言唯一通道提示', 1, 'src/llm/prompt.js', '发言的唯一通道'],
-  ['收尾自检段', 2, 'src/llm/prompt.js', '沉默就是零输出|每次结束前必读'],
+  ['收尾自检段', 1, 'src/llm/prompt.js', '沉默就是零输出|每次结束前必读'],
   ['多气泡鼓励', 1, 'src/llm/prompt.js', '别把一轮压成一句点评'],
-  ['一轮说完', 1, 'src/llm/prompt.js', '有想法就一轮里说完'],
+  ['一轮说完', 1, 'src/llm/prompt.js', '先说关键判断'],
   ['贴纸选图提示', 1, 'src/onebot/stickers.js', '选图很简单'],
   ['审核拦截重试', 1, 'src/llm/llm.js', '审核拦截整次请求'],
   ['兜底模型接入', 1, 'src/llm/llm.js', '改用兜底模型'],
   // 这条以前查 config.json（实例当前人设）：管理员改过人设就不含这句话，于是永远误报。
   // 改查随版本发布的内置卡，才对应"这个补丁在不在"的本意。
   ['人设·别当评委', 1, 'roles/xiaojingyu.md', '不要总结、不要升华'],
-  ['闲聊带自己', 1, 'src/llm/prompt.js', '把自己的那半句补上'],
-  ['表情清单常驻', 1, 'src/llm/prompt.js', '表情清单常驻系统提示']
+  ['闲聊带自己', 1, 'src/llm/prompt.js', '再补自己的半句'],
+  ['表情清单动态段', 1, 'src/llm/prompt.js', 'function stickerPromptBlock']
 ];
 
 function loadConfigJson(dataDir) {
@@ -993,11 +1011,11 @@ async function auditServer(args) {
     noteLine(`${name.padEnd(34)} integrity=${sqliteIntegrity(file)}`);
   }
   const sessionsDir = path.join(cfg.dataDir, 'sessions');
-  let sessionCount = 0;
-  if (exists(sessionsDir)) {
-    try { sessionCount = fs.readdirSync(sessionsDir).length; } catch { sessionCount = 0; }
-  }
-  noteLine(`会话文件: ${sessionCount} 个`);
+  let sessionFiles = [];
+  try { sessionFiles = listSessionFiles(sessionsDir); } catch { sessionFiles = []; }
+  const sessionCount = new Set(sessionFiles.map((f) => f.id)).size;
+  const compressedCount = sessionFiles.filter((f) => f.compressed).length;
+  noteLine(`会话文件: ${sessionCount} 个（压缩归档 ${compressedCount} 个）`);
 
   // 价格缺口（只读）：出现过的模型里，哪些没有价格。
   // 判价逻辑与用量页一致（含账户口径与"按当前模型估算"），所以这里报出来的
@@ -1173,11 +1191,17 @@ function cmdScan(args) {
 // GNU tar 会把 "C:/..." 当成远程主机（Windows 盘符），失败时退回不带 --force-local 的形式
 // （bsdtar 不认该选项，但它本身不解析远程归档，可以直接处理盘符路径）。
 function runTarCreate(outFile, dataDir, extra = null) {
-  const parent = path.dirname(dataDir);
-  const base = path.basename(dataDir);
+  // 数据目录可能是软链（数据盘单独挂载的受支持布局）。tar 默认不跟随软链，
+  // 直接归档链接本身会生成恢复侧明确拒绝的 symlink 条目，备份看似成功却不可恢复。
+  const sourceDir = fs.realpathSync(dataDir);
+  const parent = path.dirname(sourceDir);
+  const base = path.basename(sourceDir);
   // 部署快照 / 更新缓存都是可重建的大目录；与 scripts/manage.mjs backup 的排除清单保持一致，
   // 否则每周定时备份会把它们整套再打包一份（2026-10 审查 P3）。
-  const excludes = ['--exclude=deploy-backups', '--exclude=update-work', '--exclude=update-repository.git'];
+  const excludes = ['--exclude=deploy-backups', '--exclude=update-work', '--exclude=update-repository.git',
+    // 运行态锁/标记：备份/恢复跨主机时 pid/hostname 都是旧的，恢复后可能挡住新实例或永久误报
+    '--exclude=.server.lock', '--exclude=.auto-update.lock', '--exclude=.auto-update.lock.takeover',
+    '--exclude=.deploy.lock', '--exclude=.deploy.lock.takeover', '--exclude=.deploy-in-progress'];
   const baseArgs = [...excludes, '-czf', outFile, '-C', parent, base];
   // 可选：把部署凭据放在归档顶层 stack-credentials/ 下（恢复时不会自动写回，需人工取用）
   if (extra?.dir && extra?.name) baseArgs.push('-C', extra.dir, extra.name);
@@ -1201,7 +1225,8 @@ async function cmdBackup(args) {
   if (wantsHelp(args)) { say(HELP.backup); return 0; }
   const cfg = config({
     data: optValue(args, '--data', null),
-    backupDir: optValue(args, '--backup-dir', null)
+    backupDir: optValue(args, '--backup-dir', null),
+    service: optValue(args, '--service', null)
   });
   const keep = Math.max(1, intOpt(args, '--keep', cfg.keep));
   const dryRun = hasFlag(args, '--dry-run');
@@ -1241,6 +1266,19 @@ async function cmdBackup(args) {
   // 包里是 config.json（含密钥）/console-access.txt/messages.sqlite，权限必须收紧；
   // 默认再加密一层 —— 备份一旦离开主机，明文 tar.gz 就是一份完整凭据。
   fs.mkdirSync(cfg.backupDir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(cfg.backupDir, 0o700); } catch { /* Windows/不支持时忽略 */ }
+  // 上一次加密备份如果被 SIGKILL/掉电打断，可能留下未加密的 .plain；
+  // 只清超过 1 小时的，避免误删另一个正在跑的备份。
+  try {
+    const now = Date.now();
+    for (const name of fs.readdirSync(cfg.backupDir)) {
+      if (!/^\.qq-agent-data-.*\.tar\.gz\.plain$/.test(name)) continue;
+      const file = path.join(cfg.backupDir, name);
+      try {
+        if (now - fs.statSync(file).mtimeMs >= 60 * 60 * 1000) fs.rmSync(file, { force: true });
+      } catch { /* 单个残留不影响本次备份 */ }
+    }
+  } catch { /* 目录读不了交由后面的 tar 报错 */ }
   const stamp = formatStamp();
   const outFile = path.join(cfg.backupDir, `qq-agent-data-${stamp}.tar.gz${noEncrypt ? '' : '.enc'}`);
   const plainFile = noEncrypt ? outFile : path.join(cfg.backupDir, `.qq-agent-data-${stamp}.tar.gz.plain`);
@@ -1256,10 +1294,14 @@ async function cmdBackup(args) {
     const stackDir = path.join(credsTemp, 'stack-credentials');
     fs.mkdirSync(stackDir, { recursive: true, mode: 0o700 });
     const candidates = [
-      { src: path.join(REPO_DIR, '.env'), name: 'app.env' },
-      { src: path.join(path.dirname(REPO_DIR), '.env'), name: 'deployment.env' },
-      { src: path.join(REPO_DIR, '.deployment.json'), name: 'deployment.json' },
-      { src: path.join(path.dirname(REPO_DIR), 'deployment-access.txt'), name: 'deployment-access.txt' }
+      // 按部署记录里的真实路径取，不能按源码 checkout 的父目录猜：标准全栈的 .env
+      // 在 <root>/snowluma/.env，旧实现只看 <app>/.env 与 <root>/.env，实际什么都取不到；
+      // 从源码目录跑时还可能把无关父项目的 .env 打进来。
+      { src: path.join(cfg.appDir, '.env'), name: 'app.env' },
+      { src: path.join(cfg.rootDir, '.env'), name: 'deployment.env' },
+      { src: path.join(cfg.snowlumaDir, '.env'), name: 'snowluma.env' },
+      { src: path.join(cfg.appDir, '.deployment.json'), name: 'deployment.json' },
+      { src: path.join(cfg.rootDir, 'deployment-access.txt'), name: 'deployment-access.txt' }
     ];
     let copied = 0;
     for (const item of candidates) {
@@ -1278,16 +1320,43 @@ async function cmdBackup(args) {
   }
 
   let serviceManaged = false;
+  let serviceWasActive = false;
+  let restartFailed = false;
   let tarOk = false;
   try {
     serviceManaged = serviceLoaded(cfg.service);
     if (!serviceManaged) {
       skipLine(`服务 ${cfg.service} 不存在或不可用：跳过停服务（直接打包）`);
     } else {
+      // 原本停着的服务，备份完不能被顺手拉起来；原本在跑的才恢复。
+      const activeProbe = systemctlUser(['is-active', cfg.service]);
+      serviceWasActive = String(activeProbe.stdout || '').trim() === 'active';
       const stop = systemctlUser(['stop', cfg.service], { timeout: 60000 });
-      if (!stop.ok) noteLine(`停止服务返回码 ${stop.code}，仍继续备份`);
+      if (!stop.ok) {
+        // 备份要打的是"停服后的一致性快照"：停不下来就宁可不打，也不生成可能损坏的归档。
+        ngLine(`停止服务失败（返回码 ${stop.code}），已中止备份；请手动停止 ${cfg.service} 后重试`);
+        return 1;
+      }
     }
     await sleep(2000);
+    // 停服后仍被锁住 = 还有别的进程在写这个数据目录（自定义 service 名/容器/WSL 等）。
+    // 此时打出来的是跨时刻的 SQLite 副本，宁可中止也不生成不可信的归档。
+    const lock = inspectInstanceLock(cfg.dataDir);
+    if (['live', 'foreign', 'transient'].includes(lock.state)) {
+      const who = lock.holder
+        ? `pid ${lock.holder.pid}${lock.holder.hostname ? ` @ ${lock.holder.hostname}` : ''}`
+        : lock.state;
+      ngLine(`数据目录仍被实例占用（${who}），已中止备份；请先停止该实例`);
+      return 1;
+    }
+    // 先以 0600 预创建明文包：tar 覆盖已有文件时保留权限，中断也不会留下 umask 决定的 0644。
+    try {
+      fs.closeSync(fs.openSync(plainFile, 'w', 0o600));
+      try { fs.chmodSync(plainFile, 0o600); } catch { /* Windows 忽略 */ }
+    } catch (error) {
+      ngLine(`无法创建临时备份文件：${error?.message || error}，本次备份作废`);
+      return 1;
+    }
     const tar = runTarCreate(plainFile, cfg.dataDir, credsExtra);
     tarOk = tar.ok;
     if (!tarOk) ngLine(`tar 打包失败（返回码 ${tar.code}${tar.stderr ? `：${tar.stderr.trim().split('\n')[0]}` : ''}）`);
@@ -1295,13 +1364,19 @@ async function cmdBackup(args) {
     if (credsTemp) {
       try { fs.rmSync(credsTemp, { recursive: true, force: true }); } catch { /* 忽略 */ }
     }
-    // 无论 tar 成败都要把服务拉起来——备份失败可以下次再试，机器人停着才是事故。
-    if (serviceManaged) {
+    // 只恢复原本在跑的服务；备份前就停着的保持停止，不能被一次备份顺手拉起。
+    if (serviceManaged && serviceWasActive) {
       const start = systemctlUser(['start', cfg.service], { timeout: 60000 });
       await sleep(3000);
       const state = systemctlUser(['is-active', cfg.service]);
+      const active = String(state.stdout || '').trim() === 'active';
       noteLine(`服务: ${state.stdout.trim() || text(state) || '未知'}`);
-      if (!start.ok) ngLine(`服务重启失败（返回码 ${start.code}）：请手动检查 systemctl --user status ${cfg.service}`);
+      if (!start.ok || !active) {
+        restartFailed = true;
+        ngLine(`服务重启失败（返回码 ${start.code}）：请手动检查 systemctl --user status ${cfg.service}`);
+      }
+    } else if (serviceManaged) {
+      noteLine(`服务 ${cfg.service} 备份前未运行，保持停止状态`);
     }
   }
   if (!tarOk) {
@@ -1309,10 +1384,29 @@ async function cmdBackup(args) {
     ngLine('tar 失败，本次备份作废（服务已恢复）');
     return 1;
   }
+  // 备份一侧也要过恢复侧的两道闸门（条目类型 + 路径）：数据目录里若有符号链接/硬链接，
+  // tar 只存链接本身；若条目名带 Windows 非法字符/尾随点空格，restore/drill 也会拒绝。
+  // 宁可现在报“备份作废”，也不要留下一个看似成功、真出事时却恢复不了的 .enc。
+  const archiveCheck = runTarVerboseList(plainFile);
+  if (!archiveCheck.ok) {
+    try { fs.rmSync(plainFile, { force: true }); } catch { /* 忽略 */ }
+    ngLine(`备份归档读取失败（返回码 ${archiveCheck.code}）：本次备份作废`);
+    return 1;
+  }
+  try {
+    validateTarTypes(archiveCheck.stdout);
+    const archiveNames = runTarList(plainFile);
+    if (!archiveNames.ok) throw new Error(`归档路径读取失败（返回码 ${archiveNames.code}）`);
+    validateTarEntries(archiveNames.stdout);
+  } catch (error) {
+    try { fs.rmSync(plainFile, { force: true }); } catch { /* 忽略 */ }
+    ngLine(`${error?.message || error}；本次备份作废（请移除数据目录内的链接/设备文件或非法文件名后重试）`);
+    return 1;
+  }
   // 服务已经恢复，加密放在这里做：不占停机时间。
   if (!noEncrypt) {
     try {
-      await encryptBackupFile(plainFile, outFile, loadBackupKey({ create: true, keyFile }));
+      await encryptBackupFile(plainFile, outFile, loadBackupKey({ create: true, keyFile, note: noteLine }));
       try { fs.rmSync(plainFile, { force: true }); } catch { /* 忽略 */ }
     } catch (error) {
       try { fs.rmSync(plainFile, { force: true }); } catch { /* 忽略 */ }
@@ -1332,44 +1426,16 @@ async function cmdBackup(args) {
   okLine(`备份完成: ${size} MB ${outFile}`);
   if (!noEncrypt) noteLine(`加密: AES-256-GCM；密钥 ${String(process.env.QQ_AGENT_BACKUP_KEY || '').trim() ? '来自环境变量' : keyFile || keyPath}`);
   for (const item of backups.slice(0, keep)) noteLine(`  ${item.name}`);
+  if (restartFailed) {
+    ngLine('备份文件已生成，但服务未能恢复运行：本次命令按失败返回，请检查服务状态');
+    return 1;
+  }
   return 0;
 }
 
 // ─────────────────────────── 备份加密 / 恢复 ───────────────────────────
 
 const BACKUP_MAGIC = Buffer.from('QQAGENT1');
-
-function backupKeyFile(explicit = '') {
-  return explicit || envStr('QQ_AGENT_BACKUP_KEY_FILE', path.join(os.homedir(), '.config', 'qq-agent', 'backup.key'));
-}
-
-/** 密钥来源：QQ_AGENT_BACKUP_KEY（64 位 hex 或口令）优先，其次密钥文件；备份时缺文件会自动生成。 */
-function loadBackupKey({ create = false, keyFile = '' } = {}) {
-  const envKey = String(process.env.QQ_AGENT_BACKUP_KEY || '').trim();
-  if (envKey) {
-    if (/^[0-9a-fA-F]{64}$/.test(envKey)) return Buffer.from(envKey, 'hex');
-    // 口令：固定 salt 是为了同一口令在不同机器上能解开同一份备份（备份恢复不依赖本机状态）。
-    return crypto.scryptSync(envKey, 'qq-agent-backup-v1', 32);
-  }
-  const file = backupKeyFile(keyFile);
-  try {
-    const raw = fs.readFileSync(file);
-    const textValue = raw.toString('utf8').trim();
-    if (/^[0-9a-fA-F]{64}$/.test(textValue)) return Buffer.from(textValue, 'hex');
-    if (raw.length === 32) return raw;
-    throw new Error('密钥文件格式不对（需要 64 位十六进制或 32 字节）');
-  } catch (error) {
-    if (!create) {
-      throw new Error(`找不到可用的备份密钥：${file}（${error?.message || error}）。`
-        + '请设置 QQ_AGENT_BACKUP_KEY 或用 --key-file 指定');
-    }
-    const key = crypto.randomBytes(32);
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, `${key.toString('hex')}\n`, { mode: 0o600 });
-    noteLine(`已生成备份密钥: ${file}（请与备份分开保管；丢了备份无法恢复）`);
-    return key;
-  }
-}
 
 async function encryptBackupFile(inFile, outFile, key) {
   const iv = crypto.randomBytes(12);
@@ -1436,18 +1502,46 @@ function runTarList(file) {
   return runTarWithFallback(['-tzf', file], { timeout: 120000 });
 }
 
+/** 详细列表（首列是条目类型）：-tzf 只给名字，识别不了符号链接/硬链接/设备节点。 */
+function runTarVerboseList(file) {
+  return runTarWithFallback(['-tvzf', file], { timeout: 120000 });
+}
+
 function runTarExtract(file, destDir) {
   fs.mkdirSync(destDir, { recursive: true, mode: 0o700 });
   return runTarWithFallback(['-xzf', file, '-C', destDir], { timeout: 30 * 60 * 1000 });
 }
 
+function unsafeArchiveName(raw) {
+  let name = String(raw || '').replace(/\\/g, '/');
+  while (name.startsWith('./')) name = name.slice(2);
+  name = name.replace(/\/+$/, '');
+  if (!name || name === '.') return false;
+  if (name.startsWith('/') || /^[A-Za-z]:/.test(name)) return true;
+  return name.split('/').some((segment) => {
+    if (!segment || segment === '.' || segment === '..') return true;
+    if (/[<>:"|?*\x00-\x1f]/.test(segment)) return true;
+    // Windows 会剥掉段末尾的点和空格（restore 也在 Windows 上跑）
+    if (segment.replace(/[. ]+$/g, '') !== segment) return true;
+    return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(segment);
+  });
+}
+
 function validateTarEntries(stdout) {
   const entries = String(stdout || '').split('\n').map((line) => line.trim()).filter(Boolean);
-  const unsafe = entries.filter((entry) => entry.startsWith('/')
-    || /^[A-Za-z]:/.test(entry)
-    || entry.split('/').includes('..'));
+  const unsafe = entries.filter((entry) => unsafeArchiveName(entry));
   if (unsafe.length) throw new Error(`归档包含不安全路径：${unsafe.slice(0, 3).join('、')}`);
   return entries;
+}
+
+/** 拒绝符号链接/硬链接/设备/FIFO：恢复时 cpSync 会把链接原样带进数据目录。 */
+function validateTarTypes(stdout) {
+  const lines = String(stdout || '').split('\n').filter((line) => line.trim());
+  const bad = lines.filter((line) => !['-', 'd'].includes(line[0]));
+  if (bad.length) {
+    throw new Error(`归档包含不允许的条目类型（只允许普通文件/目录）：${bad.slice(0, 3).join('、')}`);
+  }
+  return lines;
 }
 
 /** 归档里数据目录可能在顶层，也可能套了一层（`data/config.json`）。 */
@@ -1461,26 +1555,6 @@ function locateDataRoot(dir) {
     if (exists(path.join(candidate, 'config.json'))) return candidate;
   }
   return null;
-}
-
-/** 数据目录里的 SQLite 不只在顶层：人物记忆索引、长期语义记忆都在子目录。 */
-function listSqliteFiles(root, maxDepth = 3) {
-  const found = [];
-  const walk = (dir, depth) => {
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name.endsWith('-wal') || entry.name.endsWith('-shm')) continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (depth < maxDepth) walk(full, depth + 1);
-      } else if (entry.isFile() && entry.name.endsWith('.sqlite')) {
-        found.push(full);
-      }
-    }
-  };
-  walk(root, 0);
-  return found;
 }
 
 /** 恢复演练：解密 -> 校验路径 -> 解到临时目录 -> SQLite integrity_check。不碰生产数据。 */
@@ -1503,28 +1577,21 @@ async function runBackupDrill({ cfg, from = null, keyFile = '', noEncrypt = fals
     const listed = runTarList(tarFile);
     if (listed.missing) { ngLine('本机缺少 tar，无法演练'); return 1; }
     if (!listed.ok) { ngLine(`归档读取失败：${(listed.stderr || '').trim().split('\n')[0] || listed.code}`); return 1; }
+    const verbose = runTarVerboseList(tarFile);
+    if (!verbose.ok) { ngLine(`归档类型读取失败：${(verbose.stderr || '').trim().split('\n')[0] || verbose.code}`); return 1; }
     const entries = validateTarEntries(listed.stdout);
+    validateTarTypes(verbose.stdout);
     const extractDir = path.join(temp, 'extract');
     const extracted = runTarExtract(tarFile, extractDir);
     if (!extracted.ok) { ngLine(`解包失败：${(extracted.stderr || '').trim().split('\n')[0] || extracted.code}`); return 1; }
     const dataRoot = locateDataRoot(extractDir);
     if (!dataRoot) { ngLine('归档里没有 config.json，不像 QQ Agent 数据目录'); return 1; }
-    const databases = listSqliteFiles(dataRoot);
-    for (const file of databases) {
-      const name = path.relative(dataRoot, file);
-      let db = null;
-      try {
-        db = openDatabase(file, { readOnly: true });
-        const row = db.prepare('PRAGMA integrity_check').get();
-        const verdict = row ? Object.values(row)[0] : '';
-        if (verdict !== 'ok') { ngLine(`${name}: integrity_check=${verdict || '未知'}`); return 1; }
-      } catch (error) {
-        noteLine(`${name}: 跳过 integrity_check（${error?.message || error}）`);
-      } finally {
-        try { db?.close(); } catch { /* 忽略 */ }
-      }
+    const verification = verifyBackupDatabases(dataRoot);
+    if (!verification.ok) {
+      ngLine(verification.message);
+      return 1;
     }
-    okLine(`演练通过: ${source.name}（${entries.length} 个条目，${databases.length} 个 SQLite）`);
+    okLine(`演练通过: ${source.name}（${entries.length} 个条目，${verification.count} 个 SQLite）`);
     return 0;
   } catch (error) {
     ngLine(`演练失败：${error?.message || error}`);
@@ -1539,7 +1606,10 @@ async function cmdRestore(args) {
   const from = String(optValue(args, '--from', '') || '').trim();
   if (!from) { ngLine('缺少 --from <备份文件>'); return 2; }
   if (!exists(from)) { ngLine(`备份文件不存在: ${from}`); return 2; }
-  const cfg = config({ data: optValue(args, '--data', null) });
+  const cfg = config({
+    data: optValue(args, '--data', null),
+    service: optValue(args, '--service', null)
+  });
   const keyFile = optValue(args, '--key-file', '');
   const noEncrypt = hasFlag(args, '--no-encrypt');
   const dryRun = hasFlag(args, '--dry-run');
@@ -1554,7 +1624,10 @@ async function cmdRestore(args) {
     const listed = runTarList(tarFile);
     if (listed.missing) { ngLine('本机缺少 tar，无法恢复'); return 1; }
     if (!listed.ok) { ngLine(`归档读取失败：${(listed.stderr || '').trim().split('\n')[0] || listed.code}`); return 1; }
+    const verbose = runTarVerboseList(tarFile);
+    if (!verbose.ok) { ngLine(`归档类型读取失败：${(verbose.stderr || '').trim().split('\n')[0] || verbose.code}`); return 1; }
     const entries = validateTarEntries(listed.stdout);
+    validateTarTypes(verbose.stdout);
     noteLine(`归档条目: ${entries.length}`);
     if (dryRun) {
       for (const entry of entries.slice(0, 20)) noteLine(`  ${entry}`);
@@ -1573,44 +1646,94 @@ async function cmdRestore(args) {
     if (!dataRoot) { ngLine('归档里没有 config.json，不像 QQ Agent 数据目录'); return 1; }
 
     const stamp = formatStamp();
-    const pre = `${cfg.dataDir}.pre-restore-${stamp}`;
+    // 数据目录可能是软链：恢复要替换链接指向的真实目录，保留软链布局，
+    // 否则 rename 会把链接本身挪走、cpSync 在原路径建一个真实目录，数据落到错误磁盘。
+    let targetDir = cfg.dataDir;
+    try { targetDir = fs.realpathSync(cfg.dataDir); } catch { /* 目录不存在/断链：按原路径处理 */ }
+    const pre = `${targetDir}.pre-restore-${stamp}`;
     const serviceManaged = serviceLoaded(cfg.service);
     if (!serviceManaged) {
       skipLine(`服务 ${cfg.service} 不存在或不可用：跳过停服务（只恢复数据）`);
     } else {
       const stop = systemctlUser(['stop', cfg.service], { timeout: 60000 });
-      if (!stop.ok) noteLine(`停止服务返回码 ${stop.code}，仍继续恢复`);
+      if (!stop.ok) {
+        ngLine(`停止服务失败（返回码 ${stop.code}），已中止恢复；请手动停止 ${cfg.service} 后重试`);
+        systemctlUser(['start', cfg.service], { timeout: 60000 });
+        return 1;
+      }
     }
     await sleep(2000);
+    // 停服后仍被锁住 = 还有进程在写这个数据目录（自定义 service 名/容器/WSL 等）。
+    // 此时 rename+覆盖会让在线进程与磁盘分叉，必须拒绝。
+    const lock = inspectInstanceLock(cfg.dataDir);
+    if (['live', 'foreign', 'transient'].includes(lock.state)) {
+      const who = lock.holder
+        ? `pid ${lock.holder.pid}${lock.holder.hostname ? ` @ ${lock.holder.hostname}` : ''}`
+        : lock.state;
+      ngLine(`数据目录仍被实例占用（${who}）：${lock.file}`);
+      ngLine('请先停止该实例；确认进程已退出后删除锁文件再重试');
+      if (serviceManaged) systemctlUser(['start', cfg.service], { timeout: 60000 });
+      return 1;
+    }
 
     let committed = false;
+    let rolledBackPrevious = false;
+    let previousMoved = false;
+    const hadPrevious = exists(targetDir);
     try {
-      if (exists(cfg.dataDir)) fs.renameSync(cfg.dataDir, pre);
-      fs.mkdirSync(path.dirname(cfg.dataDir), { recursive: true });
-      fs.cpSync(dataRoot, cfg.dataDir, { recursive: true, force: true });
-      try { fs.chmodSync(cfg.dataDir, 0o700); } catch { /* 忽略 */ }
+      if (hadPrevious) { fs.renameSync(targetDir, pre); previousMoved = true; }
+      fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+      fs.cpSync(dataRoot, targetDir, { recursive: true, force: true });
+      // 旧归档可能带着源主机的锁/中断标记（pid/hostname 都不属于本机）：恢复后必须清掉。
+      for (const runtimeFile of ['.server.lock', '.auto-update.lock', '.auto-update.lock.takeover',
+        '.deploy.lock', '.deploy.lock.takeover', '.deploy-in-progress']) {
+        try { fs.rmSync(path.join(targetDir, runtimeFile), { recursive: true, force: true }); } catch { /* 忽略 */ }
+      }
+      try { fs.chmodSync(targetDir, 0o700); } catch { /* 忽略 */ }
       committed = true;
     } catch (error) {
       ngLine(`恢复失败：${error?.message || error}`);
+      // cpSync 在创建目标目录之后失败会留下半套数据；旧逻辑只在"目标不存在"时才回滚，
+      // 结果服务会带着部分恢复的目录启动（2026-10-31 盲审 P1）。这里先挪走半成品再换回旧数据。
       try {
-        if (exists(pre) && !exists(cfg.dataDir)) fs.renameSync(pre, cfg.dataDir);
+        if (previousMoved && exists(targetDir)) {
+          if (hadPrevious) {
+            const partial = `${targetDir}.restore-partial-${stamp}`;
+            fs.renameSync(targetDir, partial);
+            ngLine(`部分恢复的数据留在 ${partial}`);
+          } else {
+            fs.rmSync(targetDir, { recursive: true, force: true });
+          }
+        }
+        if (previousMoved && hadPrevious && exists(pre)) {
+          fs.renameSync(pre, targetDir);
+          rolledBackPrevious = true;
+        } else if (!previousMoved && hadPrevious && exists(targetDir)) {
+          // 改名就没成功：旧目录还是完整的，可以直接启动。
+          rolledBackPrevious = true;
+        }
       } catch (rollbackError) {
         ngLine(`回滚失败，恢复前的数据仍在 ${pre}：${rollbackError?.message || rollbackError}`);
       }
       return 1;
     } finally {
-      if (serviceManaged) {
+      const canStart = committed || rolledBackPrevious;
+      if (serviceManaged && !canStart) {
+        ngLine('恢复未完成且旧数据未能自动换回：服务保持停止，请人工检查后再启动');
+      } else if (serviceManaged) {
         const start = systemctlUser(['start', cfg.service], { timeout: 60000 });
         await sleep(3000);
         const state = systemctlUser(['is-active', cfg.service]);
+        const active = String(state.stdout || '').trim() === 'active';
         noteLine(`服务: ${state.stdout.trim() || text(state) || '未知'}`);
-        if (committed && !start.ok) {
+        // Type=simple 的 start 返回 0 不代表进程没在几秒内崩掉：必须看 is-active。
+        if (committed && (!start.ok || !active)) {
           ngLine('恢复后服务起不来：正在回滚到恢复前的数据');
           systemctlUser(['stop', cfg.service], { timeout: 60000 });
           try {
-            const failed = `${cfg.dataDir}.restore-failed-${stamp}`;
-            if (exists(cfg.dataDir)) fs.renameSync(cfg.dataDir, failed);
-            if (exists(pre)) fs.renameSync(pre, cfg.dataDir);
+            const failed = `${targetDir}.restore-failed-${stamp}`;
+            if (exists(targetDir)) fs.renameSync(targetDir, failed);
+            if (exists(pre)) fs.renameSync(pre, targetDir);
             systemctlUser(['start', cfg.service], { timeout: 60000 });
             ngLine(`已回滚；恢复失败的数据留在 ${failed}`);
           } catch (rollbackError) {
@@ -1663,13 +1786,22 @@ function cmdPrune(args) {
     }
     let removed = 0;
     while (true) {
-      const result = db.prepare(`DELETE FROM messages WHERE id IN (
-        SELECT id FROM messages WHERE state='acked' AND ts < ? LIMIT 1000
+      // 按 rowid 删除：messages 的主键是 (chat_key, id)，id 只是**会话内**自增。
+      // 只按 id 匹配会跨会话误删同号行（pending/held 也一起没），2026-10-31 全量审查 P1。
+      const result = db.prepare(`DELETE FROM messages WHERE rowid IN (
+        SELECT rowid FROM messages WHERE state='acked' AND ts < ? ORDER BY ts LIMIT 1000
       )`).run(cutoff);
       const changes = Number(result?.changes) || 0;
       removed += changes;
       if (!changes) break;
     }
+    // message_count 是 chats 上的缓存（getChatMeta/分页 total 读它），删除后必须重算，
+    // 否则列表里的"共 N 条"会长期虚高。
+    try {
+      db.exec(`UPDATE chats SET message_count=(
+        SELECT COUNT(*) FROM messages WHERE messages.chat_key=chats.chat_key
+      )`);
+    } catch { /* 老库/空库没有 chats 表时不阻断清理 */ }
     okLine(`已删除 ${removed} 条（保留最近 ${days} 天；未处理/held 未动）`);
     return 0;
   } finally {
@@ -2377,16 +2509,13 @@ async function cmdSnowlumaUpdate(args) {
 }
 
 // ─────────────────────────── health-check 子命令（改进方案 C8/#7） ───────────────────────────
-async function cmdHealthCheck(args) {
-  if (wantsHelp(args)) { say(HELP['health-check']); return 0; }
-  // 路径口径必须与 backup / install-timers 一致（走 config()）：手写 os.homedir() 回退在
-  // systemd 定时器里会落到 ~/qq-agent/data，读不到部署的 messages.sqlite —— 2026-09-30
-  // 实机复现过（unit 首次运行即 FAILURE），已改回 config({})。
-  const cfgBase = config({});
-  const dataDir = cfgBase.dataDir;
-  const cfgFile = path.join(dataDir, 'config.json');
-  let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); } catch { /* 没有配置＝按默认端口探测 */ }
+/**
+ * 巡检 / 诊断共用的现场解析：从 data/config.json + 环境变量拼出 runHealthCheck 参数。
+ * 抽出来是因为 doctor 也要跑同一套巡检 —— 两处各抄一份迟早会漂移。
+ */
+function healthCheckContext(cfgBase, dataDir) {
+  // 没有配置＝按默认端口探测
+  const cfg = loadConfigJson(dataDir) || {};
   const onebotToken = String(cfg.onebot?.httpAccessToken || cfg.onebot?.accessToken || '');
   const onebotHttpPort = Number(intEnv('QQ_AGENT_ONEBOT_HTTP_PORT', Number(cfg.onebot?.httpPort) || Number(cfgBase.onebotPort) || 3390));
   // 容器/声明式部署里配置写的是完整 URL（snowluma:3000）；只传端口会去探 127.0.0.1。
@@ -2397,25 +2526,231 @@ async function cmdHealthCheck(args) {
       onebotHttpUrl = parsed.href.replace(/\/+$/, '');
     } catch { onebotHttpUrl = ''; }
   }
-  const ownerUin = readOwnerUin(cfg);
-  const result = await runHealthCheck({
-    dataDir,
-    mode: String(cfg.runtime?.mode || 'active'),
-    consolePort: Number(cfg.server?.port) || Number(cfgBase.consolePort) || 3210,
+  return {
+    cfg,
+    onebotToken,
     onebotHttpPort,
     onebotHttpUrl,
-    onebotToken,
-    containerRuntime: isContainerRuntime(),
-    snowlumaDir: cfgBase.snowlumaDir,
-    // NNP 探测用（2026-10-09 审查）：主进程被加固时 sudo 回退必失败，巡检不能拿它当"能用"
-    service: cfgBase.service,
+    ownerUin: readOwnerUin(cfg),
+    options: {
+      dataDir,
+      mode: String(cfg.runtime?.mode || 'active'),
+      consolePort: Number(cfg.server?.port) || Number(cfgBase.consolePort) || 3210,
+      onebotHttpPort,
+      onebotHttpUrl,
+      onebotToken,
+      containerRuntime: isContainerRuntime(),
+      snowlumaDir: cfgBase.snowlumaDir,
+      // NNP 探测用（2026-10-09 审查）：主进程被加固时 sudo 回退必失败，巡检不能拿它当"能用"
+      service: cfgBase.service
+    }
+  };
+}
+
+async function cmdHealthCheck(args) {
+  if (wantsHelp(args)) { say(HELP['health-check']); return 0; }
+  // 路径口径必须与 backup / install-timers 一致（走 config()）：手写 os.homedir() 回退在
+  // systemd 定时器里会落到 ~/qq-agent/data，读不到部署的 messages.sqlite —— 2026-09-30
+  // 实机复现过（unit 首次运行即 FAILURE），已改回 config({})。
+  const cfgBase = config({});
+  const dataDir = cfgBase.dataDir;
+  const ctx = healthCheckContext(cfgBase, dataDir);
+  const result = await runHealthCheck({
+    ...ctx.options,
     // 破坏性操作显式确认的同一口径：--confirm 才允许真的发 QQ 通知，--print/无参只巡检
-    notify: hasFlag(args, '--confirm') && ownerUin
-      ? (text) => sendOwnerText({ httpPort: onebotHttpPort, httpUrl: onebotHttpUrl, token: onebotToken, ownerUin, text })
+    notify: hasFlag(args, '--confirm') && ctx.ownerUin
+      ? (text) => sendOwnerText({ httpPort: ctx.onebotHttpPort, httpUrl: ctx.onebotHttpUrl, token: ctx.onebotToken, ownerUin: ctx.ownerUin, text })
       : null
   });
   say(JSON.stringify({ healthy: result.healthy, notified: result.notified, checks: result.checks }, null, 2));
   return result.code;
+}
+
+/**
+ * 一键诊断包：巡检结果 + 脱敏配置 + 存储占用 + 插件清单 + 异常台账 + 最近日志。
+ * 只读；不写业务数据、不重启服务。退出码沿用巡检结果（0=健康 / 1=有失败项）。
+ */
+async function cmdDoctor(args) {
+  if (wantsHelp(args)) { say(HELP.doctor); return 0; }
+  const cfgBase = config({});
+  const dataDir = cfgBase.dataDir;
+  const ctx = healthCheckContext(cfgBase, dataDir);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  // 容器里 /app 是只读的：默认写到数据目录（/data 可写），避免 doctor 在 Docker 部署上
+  // 打印“生成失败”。显式 --out 仍优先。
+  const defaultDir = (() => {
+    try { fs.accessSync(process.cwd(), fs.constants.W_OK); return process.cwd(); }
+    catch { return dataDir; }
+  })();
+  const outFile = String(optValue(args, '--out', '') || path.join(defaultDir, `qq-agent-diagnose-${stamp}.tar.gz`));
+
+  let health = null;
+  if (!hasFlag(args, '--no-health')) {
+    // persist:false：doctor 是只读命令，不能顺手把 data/health.json 的"最近一次巡检"改掉
+    health = await runHealthCheck({ ...ctx.options, notify: null, persist: false });
+  }
+
+  let version = '';
+  try { version = JSON.parse(fs.readFileSync(path.join(REPO_DIR, 'package.json'), 'utf8')).version || ''; } catch { /* ignore */ }
+  let revision = '';
+  try { revision = fs.readFileSync(path.join(dataDir, 'deployed-revision'), 'utf8').trim(); } catch { /* ignore */ }
+
+  const data = {
+    manifest: {
+      generatedAt: new Date().toISOString(),
+      version,
+      revision,
+      node: process.version,
+      platform: `${process.platform} ${os.release()} ${os.arch()}`,
+      cpus: os.cpus().length,
+      totalMemMb: Math.round(os.totalmem() / 1048576),
+      uptimeSec: Math.round(os.uptime()),
+      dataDir
+    },
+    config: redactedConfig(dataDir),
+    health: health ? { healthy: health.healthy, checks: health.checks } : { skipped: true },
+    storage: { breakdown: storageBreakdown(dataDir), sessions: sessionStorage(dataDir) },
+    plugins: pluginSummary(dataDir),
+    incidents: incidentSummary(dataDir),
+    effects: effectSummary(dataDir),
+    logs: logTail({ dataDir, service: ctx.options.service, lines: 300 })
+  };
+  const written = writeDiagnoseArchive(outFile, buildDiagnoseEntries(data));
+
+  if (!written.ok) {
+    say('诊断包生成失败：没有可写的输出位置。');
+    say(`  原因  ${written.error || '未知'}`);
+    say(`  兜底  ${written.path || '（无）'}`);
+    return 1;
+  }
+
+  const mb = (bytes) => `${(Number(bytes) / 1048576).toFixed(1)}MB`;
+  say('诊断包已生成（配置已脱敏、日志按现有规则过滤令牌）：');
+  say(`  路径  ${written.path}${written.method === 'dir' ? '（目录形态：本机没有可用 tar）' : ''}`);
+  say(`  版本  ${version || '未知'}${revision ? ` · ${String(revision).slice(0, 12)}` : ''} · Node ${process.version}`);
+  if (health) {
+    const failed = (health.checks || []).filter((item) => item?.ok === false);
+    say(`  巡检  ${failed.length
+      ? `${failed.length} 项失败：${failed.map((item) => item.name || item.id || '未命名').slice(0, 5).join('、')}`
+      : '全部通过'}`);
+  } else {
+    say('  巡检  已跳过（--no-health）');
+  }
+  const sessions = data.storage.sessions;
+  if (sessions) say(`  留档  ${sessions.files} 个 / ${mb(sessions.bytes)}（已压缩 ${sessions.compressed} 个）`);
+  else say('  留档  （目录读不到，已跳过）');
+  const installed = (data.plugins || []).filter((item) => !item.broken).length;
+  const broken = (data.plugins || []).filter((item) => item.broken).length;
+  const incidentText = !data.incidents
+    ? '无'
+    : (data.incidents.unavailable ? '读取失败（包内已记录原因）' : '已包含');
+  say(`  插件  ${installed} 个${broken ? `（${broken} 个清单损坏）` : ''} · 异常台账 ${incidentText}`);
+  const effects = data.effects;
+  if (effects?.unavailable) {
+    say(`  账本  读取失败：${effects.reason || '未知原因'}（包内 effects.json 有记录）`);
+  } else if (effects) {
+    say(`  账本  ${effects.total} 条（unknown ${effects.counts?.unknown || 0}，近 24h ${effects.unknownRecent}）`);
+  } else {
+    say('  账本  （旧数据目录没有 effects 表，跳过）');
+  }
+  say('');
+  say('把这个文件附到 issue 里即可；里面不含配置里的 Key/Token（第三方插件自己打印的内容除外）。');
+  return health ? (health.healthy ? 0 : 1) : 0;
+}
+
+/**
+ * 账本改判后同步 outbox：日报/游戏终局的发送把 run_id 记成 effect id，
+ * 只改 effects 表会让会话一直处于 held（2026-10-31 审查 P2）。
+ * 语义与 console 的 unknown-operations/reconcile 保持一致。
+ * @returns {number} 同步的 outbox 行数
+ */
+function reconcileEffectOutbox(db, effectId, result) {
+  const rows = db.prepare(`SELECT id, run_id AS runId, chat_key AS chatKey FROM outbox
+    WHERE run_id=? AND state IN ('sending','unknown')`).all(String(effectId));
+  if (!rows.length) return 0;
+  const state = result === 'sent' ? 'reconciled_sent' : 'reconciled_failed';
+  const error = result === 'sent' ? '管理员确认已发送' : '管理员确认未发送';
+  let changed = 0;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const update = db.prepare('UPDATE outbox SET state=?, error=? WHERE id=?');
+    for (const row of rows) changed += Number(update.run(state, error, row.id).changes) || 0;
+    const groups = new Map();
+    for (const row of rows) groups.set(`${row.chatKey}
+${row.runId}`, row);
+    for (const row of groups.values()) {
+      const remaining = Number(db.prepare(`SELECT COUNT(*) AS count FROM outbox
+        WHERE run_id=? AND state IN ('sending','unknown')`).get(row.runId).count) || 0;
+      if (remaining !== 0) continue;
+      db.prepare(`UPDATE messages SET state='acked', lease_id=NULL
+        WHERE chat_key=? AND state='held' AND lease_id=?`).run(row.chatKey, row.runId);
+      db.prepare(`UPDATE runs SET state='acked', error=? WHERE id=? AND state='held'`)
+        .run('管理员已核对全部未知写入', row.runId);
+      db.prepare(`DELETE FROM outbox WHERE run_id=? AND state IN ('reconciled_sent','reconciled_failed')`)
+        .run(row.runId);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* 忽略 */ }
+    throw error;
+  }
+  return changed;
+}
+
+/**
+ * 出站副作用账本的人工核对入口（list / resolve）。
+ * 只读写 messages.sqlite 的 effects 表；不补发、不撤回任何消息。
+ */
+function cmdEffects(args) {
+  if (wantsHelp(args)) { say(HELP.effects); return 0; }
+  const sub = String(args[0] || 'list');
+  const cfg = config({ data: optValue(args, '--data', null) });
+  const file = path.join(cfg.dataDir, 'messages.sqlite');
+  if (!exists(file)) { say(`没有找到 ${file}`); return 1; }
+  const db = openDatabase(file);
+  try {
+    // sweep:false：list 是只读操作，不能顺手把 planned 扫成 unknown
+    const ledger = new EffectLedger(db, { sweep: false });
+    if (sub === 'list') {
+      const state = String(optValue(args, '--state', 'unknown') || 'unknown');
+      const limit = Math.min(200, Math.max(1, intOpt(args, '--limit', 30)));
+      const rows = ledger.list({ state, limit });
+      say(`副作用账本（state=${state}，最多 ${limit} 条）：`);
+      if (!rows.length) { say('（没有）'); return 0; }
+      for (const row of rows) {
+        const when = new Date(row.createdAt).toISOString().replace('T', ' ').slice(0, 19);
+        const note = String(row.detail?.error || row.detail?.reason || row.detail?.staleReason || '').slice(0, 80);
+        say(`  ${row.id}  ${row.kind}  ${row.chatKey || '-'}  ${when}  ${note}`);
+      }
+      say('');
+      say('改判：node src/ops.js effects resolve <id> --sent|--failed --confirm');
+      return 0;
+    }
+    if (sub === 'resolve') {
+      const id = String(args[1] || '');
+      const wantSent = hasFlag(args, '--sent');
+      const wantFailed = hasFlag(args, '--failed');
+      if (!id || wantSent === wantFailed) {
+        say('用法: node src/ops.js effects resolve <id> --sent|--failed --confirm');
+        return 2;
+      }
+      if (!hasFlag(args, '--confirm')) { say('改判需要显式 --confirm'); return 2; }
+      const ok = ledger.resolve(id, wantSent ? 'sent' : 'failed', { reason: 'ops-resolve' });
+      if (!ok) {
+        say('没有改动（id 不存在，或不是 unknown 状态）');
+        return 1;
+      }
+      const linked = reconcileEffectOutbox(db, id, wantSent ? 'sent' : 'failed');
+      say(`已改判为 ${wantSent ? 'sent' : 'failed'}：${id}`
+        + (linked ? `（已同步 ${linked} 条未知发送）` : ''));
+      return 0;
+    }
+    say(`未知子命令: ${sub}`);
+    say('用法: node src/ops.js effects list|resolve ...');
+    return 2;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
 }
 
 // ─────────────────────────── install-timers 子命令（原 ops/systemd/） ───────────────────────────
@@ -2432,14 +2767,14 @@ Description=QQ Agent data weekly backup
 [Service]
 Type=oneshot
 # 显式带路径：ops.js 的默认值可能与本机部署不一致（本单元要在无人值守下自足）。
-# 2026-10-01 审查：这五行原先是注释，于是自定义部署下备份会打包错误的目录、
-# 停错服务（QQ_AGENT_SERVICE 默认 qq-agent-linux.service）；备份会停服务再拉起，
-# 打错目录 / 停错服务都是数据安全事故，不是"参数没给全"。
+# 2026-10-01 审查：这几行原先是注释，于是自定义部署下备份会打包错误的目录、
+# 停错服务（QQ_AGENT_SERVICE 默认 qq-agent-linux.service）；停错服务/打包错目录都是数据安全事故。
 Environment="QQ_AGENT_DIR=${cfg.rootDir}"
 Environment="QQ_AGENT_DATA_DIR=${cfg.dataDir}"
 Environment="QQ_AGENT_BACKUP_DIR=${cfg.backupDir}"
 Environment="QQ_AGENT_SERVICE=${serviceName}"
 Environment="QQ_AGENT_KEEP=${cfg.keep}"
+Environment="QQ_AGENT_BACKUP_KEY_FILE=${envStr('QQ_AGENT_BACKUP_KEY_FILE', path.join(os.homedir(), '.config', 'qq-agent', 'backup.key'))}"
 ExecStart=${nodeBin} ${opsPath} backup --confirm
 `;
   const backupTimer = `[Unit]
@@ -2600,13 +2935,13 @@ function cmdInstallTimers(args) {
   }
   const reload = systemctlUser(['daemon-reload']);
   if (reload.missing) {
-    skipLine('缺少 systemctl：请手动执行 systemctl --user daemon-reload && systemctl --user enable --now qq-agent-backup.timer process-guard.timer qq-agent-health.timer qq-agent-audit-prune.timer');
+    skipLine('缺少 systemctl：请手动执行 systemctl --user daemon-reload && systemctl --user enable --now qq-agent-backup.timer qq-agent-backup-drill.timer process-guard.timer qq-agent-health.timer qq-agent-audit-prune.timer');
     return 0;
   }
   if (!reload.ok) ngLine(`daemon-reload 失败: ${text(reload)}`);
   const reloadOk = reload.ok;
-  const enable = systemctlUser(['enable', '--now', 'qq-agent-backup.timer', 'process-guard.timer', 'qq-agent-health.timer', 'qq-agent-audit-prune.timer'], { timeout: 60000 });
-  if (enable.ok) okLine('定时器已启用：qq-agent-backup.timer（每周日 04:10）、process-guard.timer（每 10 分钟）、qq-agent-health.timer（每 5 分钟巡检）、qq-agent-audit-prune.timer（每月 1 日 04:20 清理审计日志）');
+  const enable = systemctlUser(['enable', '--now', 'qq-agent-backup.timer', 'qq-agent-backup-drill.timer', 'process-guard.timer', 'qq-agent-health.timer', 'qq-agent-audit-prune.timer'], { timeout: 60000 });
+  if (enable.ok) okLine('定时器已启用：qq-agent-backup.timer（每周日 04:10）、qq-agent-backup-drill.timer（每月恢复演练）、process-guard.timer（每 10 分钟）、qq-agent-health.timer（每 5 分钟巡检）、qq-agent-audit-prune.timer（每月 1 日 04:20 清理审计日志）');
   else ngLine(`启用定时器失败: ${text(enable)}`);
   // 挂在部署链上时退出 0 等于告诉 systemd"成功"，而四个定时器其实一个都没起来（2026-10-03 全量审查）
   return reloadOk && enable.ok ? 0 : 1;
@@ -2690,6 +3025,16 @@ async function cmdPlugins(args) {
     if (hasFlag(args, '--dry-run')) return 0;
     if (!hasFlag(args, '--confirm')) {
       ngLine('这会移除插件代码：请加 --confirm 执行（或 --dry-run 只预览）');
+      return 1;
+    }
+    // 运行中的服务把插件 host 放在内存里：CLI 只挪目录，服务仍会继续调用已卸载插件的
+    // 工具/进程，而控制台又因为目录消失看不到它。要求先停服务，或从控制台卸载（会先 stopOne）。
+    const lock = inspectInstanceLock(cfg.dataDir);
+    if (['live', 'foreign', 'transient'].includes(lock.state)) {
+      const who = lock.holder
+        ? `pid ${lock.holder.pid}${lock.holder.hostname ? ` @ ${lock.holder.hostname}` : ''}`
+        : lock.state;
+      ngLine(`数据目录仍被实例占用（${who}）：请先从控制台卸载，或停止服务后再执行本命令`);
       return 1;
     }
     try {
@@ -2776,7 +3121,33 @@ OneBot get_status、协议端版本、Docker 套接字可读写性、
   --confirm  允许在"连续 3 次失败"或"恢复"时给 admin.ownerUin 发 QQ 私聊
              （不加只巡检、不发通知；状态仍会记录）。qq-agent-health.timer 用 --confirm。
 
-环境变量: QQ_AGENT_DATA_DIR / QQ_AGENT_ONEBOT_HTTP_PORT`,
+  环境变量: QQ_AGENT_DATA_DIR / QQ_AGENT_ONEBOT_HTTP_PORT`,
+
+  effects: `用法: node src/ops.js effects list [--state unknown] [--limit 30] [--data DIR]
+       node src/ops.js effects resolve <id> --sent|--failed --confirm [--data DIR]
+
+出站副作用账本（docs/EFFECT-LEDGER.md）的人工核对入口：
+  list     列出最近记录（默认 unknown），带 id/动作/会话/时间/错误摘要；
+  resolve  把一条 unknown 改判为 sent 或 failed（写入 resolvedBy=manual），
+           必须显式 --confirm。只改账本，不会补发/撤回任何消息。
+
+账本在 data/messages.sqlite 的 effects 表；服务运行时可安全读写（WAL）。
+只读子命令 list 不写业务数据；resolve 是受控写入。`,
+
+  doctor: `用法: node src/ops.js doctor [--out 文件] [--no-health]
+
+生成排障用的诊断包：巡检结果 + 脱敏配置 + 存储占用（含会话留档/压缩归档）+
+插件清单 + 异常台账 + 出站副作用账本状态 + 最近 3 小时日志（先 journalctl --user，
+再系统 journal，取不到则 data/logs 最新文件）。
+配置走 sanitizeConfigSecrets + redactSecretFields，MCP env/args 与插件设置的敏感键整段掩码；
+日志走 redactText（常见 Key/Token/查询串/Cookie 形态）。第三方插件自己打印的内容无法保证。
+
+  --out <文件>   输出路径（默认 ./qq-agent-diagnose-<时间戳>.tar.gz；
+                 tar 不可用时退化为同名 .d 目录）
+  --no-health    跳过巡检（不探测控制台/协议端/磁盘，包更小也更快）
+
+只读：不改配置、不重启服务、不写 data/health.json。
+退出码：0=健康且已生成 / 1=有失败项或包没生成。`,
 
   plugins: `用法: node src/ops.js plugins <子命令> [--data=目录]
 
@@ -2821,7 +3192,7 @@ SSH 配置、防火墙、定时任务、可升级包、TLS 证书到期、备份
 环境变量: QQ_AGENT_DATA_DIR`,
 
   backup: `用法: node src/ops.js backup --confirm [--keep=N] [--data=目录] [--backup-dir=目录]
-       [--include-stack-creds] [--no-encrypt] [--key-file=文件]
+       [--service=服务名] [--include-stack-creds] [--no-encrypt] [--key-file=文件]
        node src/ops.js backup --dry-run
        node src/ops.js backup --drill [--from=备份文件] [--key-file=文件]
 
@@ -2833,6 +3204,7 @@ SSH 配置、防火墙、定时任务、可升级包、TLS 证书到期、备份
 --confirm     实际执行（必需；没有它会打印提醒后退出 1）
 --dry-run     只打印将要做什么
 --keep=N      保留份数（默认 QQ_AGENT_KEEP=4）
+--service     要停/启的 systemd 用户服务名（自定义部署时必须与 deploy.sh --service 一致）
 --include-stack-creds  把 .env / .deployment.json / deployment-access.txt 放进归档顶层
               stack-credentials/（默认不含；恢复时不会自动写回，需人工取用）
 --no-encrypt  不加密（仅在明确知道备份不会离开主机时使用）
@@ -2843,7 +3215,7 @@ SSH 配置、防火墙、定时任务、可升级包、TLS 证书到期、备份
 环境变量: QQ_AGENT_DATA_DIR / QQ_AGENT_BACKUP_DIR / QQ_AGENT_SERVICE /
           QQ_AGENT_KEEP / QQ_AGENT_BACKUP_KEY / QQ_AGENT_BACKUP_KEY_FILE`,
 
-  restore: `用法: node src/ops.js restore --from <备份文件> [--data=目录] [--dry-run]
+  restore: `用法: node src/ops.js restore --from <备份文件> [--data=目录] [--service=服务名] [--dry-run]
        [--confirm] [--key-file=文件] [--no-encrypt]
 
 解密 -> 校验归档路径 -> 停服务 -> 旧数据留档 -> 解包 -> 起服务 -> 检查状态。
@@ -2851,6 +3223,7 @@ SSH 配置、防火墙、定时任务、可升级包、TLS 证书到期、备份
 
 --from        备份文件（.tar.gz.enc 或 .tar.gz）
 --data        目标数据目录（默认沿用配置）
+--service     要停/启的 systemd 用户服务名（自定义部署时必须与 deploy.sh --service 一致）
 --dry-run     只解密/列目录，不写任何数据
 --confirm     实际执行（必需）
 --key-file    指定密钥文件
@@ -2954,6 +3327,7 @@ SSH 配置、防火墙、定时任务、可升级包、TLS 证书到期、备份
 
 安装 systemd user 定时器：
   qq-agent-backup.timer（每周日 04:10 备份，Persistent=true）
+  qq-agent-backup-drill.timer（每月 1 日 05:10 验证备份可解密/可恢复）
   process-guard.timer（每 10 分钟进程看门狗）
   qq-agent-health.timer（每 5 分钟健康巡检）
   qq-agent-audit-prune.timer（每月 1 日 04:20 清理审计日志）
@@ -2985,6 +3359,8 @@ function printMainHelp() {
   say('  plugins         插件：本地文件安装 / 列已装的（node src/ops.js plugins install <文件>）');
   say('  install-timers  生成并安装 systemd user 定时器（需 --confirm）');
   say('  health-check    健康巡检（控制台/协议端/入站水位/磁盘/更新状态）；退出码 0=健康');
+  say('  doctor          一键诊断包（巡检+脱敏配置+存储占用+日志），提 issue 时附上');
+  say('  effects         出站副作用账本：列 unknown / 人工改判（需 --confirm）');
   say('  snowluma-version 看协议端（SnowLuma）镜像版本与是否落后于项目基线');
   say('  snowluma-update  更新协议端镜像（改 .env + compose pull/up -d，失败自动回滚）');
   say('  help            显示本帮助');
@@ -3012,6 +3388,8 @@ const COMMANDS = {
   console: { run: cmdConsole, help: HELP.console },
   'install-timers': { run: cmdInstallTimers, help: HELP['install-timers'] },
   'health-check': { run: cmdHealthCheck, help: HELP['health-check'] },
+  doctor: { run: cmdDoctor, help: HELP.doctor },
+  effects: { run: cmdEffects, help: HELP.effects },
   'snowluma-version': { run: cmdSnowlumaVersion, help: HELP['snowluma-version'] },
   'snowluma-update': { run: cmdSnowlumaUpdate, help: HELP['snowluma-update'] }
 };

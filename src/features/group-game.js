@@ -3,6 +3,7 @@
 // 设计要点（docs/research/GAME_HOSTING_DESIGN.md）：私密信息（词/身份）只走私聊，公开摘要不含隐藏信息。
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DATA_DIR, getConfig } from '../core/config.js';
 import { displayNameOf } from '../core/display-name.js';
 import { sanitizeUserText, ZONE_OFFSET_MS } from '../core/util.js';
@@ -21,10 +22,20 @@ const JOIN_RE = /(我玩|我要玩|我也玩|我来|我报名|报名|加我|带�
 // 否定/劝阻语境的直接跳过："别带我""不参与""我玩不动"都不是报名（子串匹配会误判，2026-09-29 审查 P1）
 const JOIN_NEG_RE = /不|别|勿|甭|算了|不用|拒绝/;
 
+/**
+ * 引用回复在正文前会带 `[引用#123·我：…]`；插件解析器多为整句/关键词锚定，
+ * 引用块里若碰巧含“投 3/刀 2”会把玩家的真实行动带偏。喂插件前先剥掉引用装饰。
+ */
+function stripQuotePrefix(text) {
+  return String(text || '').replace(/^\s*(?:\[引用[^\]]*\]\s*)+/, '').trim();
+}
+
 export class GroupGameManager {
-  constructor({ store, sender, log = console.log, now = () => Date.now(), rng = Math.random, wake = null } = {}) {
+  constructor({ store, sender, effects = null, log = console.log, now = () => Date.now(), rng = Math.random, wake = null } = {}) {
     this.store = store;
     this.sender = sender;
+    // 出站副作用账本：终局播报一局只发一次；结果未知时停止自动重试
+    this.effects = effects;
     this.log = log;
     this.now = now;
     this.rng = rng;
@@ -218,9 +229,10 @@ export class GroupGameManager {
 
   /** 把一条私聊喂给归属局；它不认领（白天/看不懂）就返回 null，由调用方交回模型。 */
   #feedPrivate(chatKey, uid, text, ts) {
+    const cleanText = stripQuotePrefix(text);
     for (const cand of this.#privateCandidates(chatKey)) {
       const out = cand.plugin.onPrivateMessage(cand.game.state, {
-        userId: uid, text, ts
+        userId: uid, text: cleanText, ts
       }, { now: this.now(), deadline: cand.game.deadlineAt });
       const claimed = Boolean(out?.effects?.length) || out?.consume === true;
       if (!claimed) continue;
@@ -291,6 +303,9 @@ export class GroupGameManager {
         const rows = this.store.recent(key, { limit: 200, afterId: after });
         for (const m of rows) {
           if (this.games.get(groupKey)?.state?.phase === 'ended') break;
+          // 延迟富化中的行正文还是占位符：先停在它这里，等放行后再从同一水位扫，
+          // 不能把占位正文喂给插件、也不能把水位推过它（Issue #85）。
+          if (m.state === 'deferred') break;
           const fedKey = `${key}|${String(m.id)}`;   // 消息 id 是每会话各自的序列，跨会话会重号：key 必须带 chatKey
           if (this._privateScanFedIds.has(fedKey)) continue;   // 扫描窗口内已被入口喂过
           this.#notePrivateSeen(m.id, uid);
@@ -334,10 +349,12 @@ export class GroupGameManager {
     // 取 readOnly 会把它们整批漏掉、45 秒到点直接"人数不够"（2026-09-29 审查 P2）
     const rows = this.store.recent(chatKey, { limit: 200, includeSelf: false, afterId: Number(g.lastSeenId || 0) });
     for (const m of rows) {
+      // 报名消息不能为了等富化而错过 45 秒窗口：占位正文里通常已有用户自己写的
+      // 「我玩/报名」，按它继续扫描；富化只会补充引用/转发细节，不会改变报名意图。
       g.lastSeenId = Math.max(Number(g.lastSeenId || 0), Number(m.id) || 0);
       const uid = String(m.senderId || '');
       if (!uid) continue;
-      const joinText = String(m.text || '').trim();
+      const joinText = stripQuotePrefix(m.text);
       if (!JOIN_RE.test(joinText) || JOIN_NEG_RE.test(joinText)) continue;
       if (g.state.joiners.some((j) => j.userId === uid)) continue;
       if (g.state.joiners.length >= g.state.maxPlayers) {
@@ -496,6 +513,9 @@ export class GroupGameManager {
       };
       this.games.set(chatKey, {
         gameId: plugin.meta.id,
+        // 每局唯一：终局播报的幂等键用它。不能用 gameId —— 那是游戏类型，
+        // 同一个群第二局会被第一局的 sent 记录挡住，终局播报永久静默（2026-10-31 审查 P0）。
+        instanceId: crypto.randomUUID(),
         state,
         startedAt: now,
         lastSeenId: last.length ? Number(last[0].id) || 0 : 0,
@@ -524,6 +544,7 @@ export class GroupGameManager {
     const last = this.store.recent(chatKey, { limit: 1, includeSelf: true });
     const item = {
       gameId: plugin.meta.id,
+      instanceId: crypto.randomUUID(),
       state,
       startedAt: now,
       lastSeenId: last.length ? Number(last[0].id) || 0 : 0,
@@ -597,13 +618,17 @@ export class GroupGameManager {
     let state = g.state;
     const effects = [];
     for (const m of rows) {
+      // 群聊的引用/@昵称可能还在后台富化：先停在它这里，别把占位正文喂给插件，
+      // 也别把 lastSeenId 推过去（投票“投 @他”必须等 @昵称解析完）。
+      if (m.state === 'deferred') break;
       g.lastSeenId = Math.max(Number(g.lastSeenId || 0), Number(m.id));
       if (m.self) continue;
       // "来晚了"提示：局开了以后，没在册的人发"我玩/报名"要有个回音（以前是默默忽略，
       // 人家以为报上了）。同一人每局只提醒一次。
       const uid = String(m.senderId || '');
+      const cleanText = stripQuotePrefix(m.text);
       const inRoster = (state.roles || []).some((r) => String(r.userId) === uid);
-      if (!inRoster && plugin.meta.needsPrivate && JOIN_RE.test(String(m.text || '').trim()) && !JOIN_NEG_RE.test(String(m.text || ''))) {
+      if (!inRoster && plugin.meta.needsPrivate && JOIN_RE.test(cleanText) && !JOIN_NEG_RE.test(cleanText)) {
         state.lateNoticed = Array.isArray(state.lateNoticed) ? state.lateNoticed : [];
         if (!state.lateNoticed.includes(uid)) {
           state.lateNoticed.push(uid);
@@ -614,7 +639,7 @@ export class GroupGameManager {
       const out = plugin.onMessage(state, {
         userId: String(m.senderId || ''),
         name: sanitizeUserText(String(m.senderName || '')),
-        text: String(m.text || ''),
+        text: cleanText,
         ts: Number(m.ts) || this.now()
       }, { now: this.now(), deadline: g.deadlineAt });
       state = out.state;
@@ -677,9 +702,36 @@ export class GroupGameManager {
           // 重启后不会立刻重打。
           if (Number(g.pendingEndRetryAt) > this.now()) continue;
           const name = PLUGINS.get(g.gameId)?.meta.name || '游戏';
+          const idemKey = `game:${chatKey}:${g.instanceId || g.startedAt || crypto.randomUUID()}`;
+          const began = this.effects?.begin({
+            kind: 'game-final',
+            chatKey,
+            idemKey,
+            detail: { gameId: g.gameId || '', instanceId: g.instanceId || '' }
+          });
+          if (began && (began.action === 'done' || began.action === 'review')) {
+            // 已送达（done）或上次结果未知（review）：都不再发，直接收尾
+            if (began.action === 'review') this.log(`[group-game] ${chatKey} 终局播报上次结果未知，停止自动重试`);
+            delete g.pendingEnd;
+            delete g.pendingEndRetryAt;
+            delete g.pendingEndRetryAttempts;
+            this.games.delete(chatKey);
+            this.#save();
+            continue;
+          }
+          if (began && began.action === 'in-flight') continue;
+          const effectId = began?.id || null;
           try {
-            await this.sender.sendTextBatch(chatKey, [`${name}结束：${g.pendingEnd}`.slice(0, 500)], {});
+            await this.sender.sendTextBatch(chatKey, [`${name}结束：${g.pendingEnd}`.slice(0, 500)], { runId: effectId });
+            if (effectId) this.effects.settle(effectId, 'sent', { retried: true });
           } catch (error) {
+            // 与发送队列同一口径：能证明没送达才算 failed；否则未知，绝不自动重发
+            const uncertain = effectId ? this.store.hasUncertainEffects(effectId) : true;
+            if (effectId) {
+              this.effects.settle(effectId, uncertain ? 'unknown' : 'failed', {
+                error: String(error?.message ?? error).slice(0, 200)
+              });
+            }
             const attempts = Math.min(20, (Number(g.pendingEndRetryAttempts) || 0) + 1);
             g.pendingEndRetryAttempts = attempts;
             g.pendingEndRetryAt = this.now() + Math.min(20000 * 2 ** (attempts - 1), 10 * 60 * 1000);
@@ -791,11 +843,53 @@ export class GroupGameManager {
         } else if (effect.type === 'end') {
           const g = this.games.get(chatKey);
           const name = PLUGINS.get(g?.gameId)?.meta.name || '游戏';
+          // 没有 g 的孤儿 end 用随机键（只留痕，不参与去重）；正常路径一定带 instanceId
+          const gameKey = g ? (g.instanceId || g.startedAt || crypto.randomUUID()) : crypto.randomUUID();
+          const idemKey = `game:${chatKey}:${gameKey}`;
+          const began = this.effects?.begin({
+            kind: 'game-final',
+            chatKey,
+            idemKey,
+            detail: { gameId: g?.gameId || '', instanceId: g?.instanceId || '' }
+          });
+          if (began && began.action === 'done') {
+            // 这一局的终局播报已经送达过（另一条路径/上一命）→ 不重复发
+            if (g) delete g.pendingEnd;
+            continue;
+          }
+          if (began && began.action === 'review') {
+            // 上次结果未知：保留 pendingEnd 让重试分支按"未知"收尾，不再发送
+            if (g) g.pendingEnd = String(effect.result || '');
+            this.log(`[group-game] ${chatKey} 终局播报上次结果未知，停止自动重试`);
+            continue;
+          }
+          if (began && began.action === 'in-flight') {
+            // 另一条路径正在发这局的终局播报：挂起 pendingEnd，下个 tick 按账本 done/review 收尾，
+            // 不能直接丢弃（否则调用方看到没有 pendingEnd 就把局删了，播报静默消失）
+            if (g) {
+              g.pendingEnd = String(effect.result || '');
+              g.pendingEndRetryAt = this.now() + 20000;
+            }
+            continue;
+          }
+          const effectId = began?.id || null;
           try {
-            await this.sender.sendTextBatch(chatKey, [`${name}结束：${String(effect.result || '')}`.slice(0, 500)], {});
+            await this.sender.sendTextBatch(
+              chatKey,
+              [`${name}结束：${String(effect.result || '')}`.slice(0, 500)],
+              { runId: effectId }
+            );
+            if (effectId) this.effects.settle(effectId, 'sent');
             if (g) delete g.pendingEnd;
           } catch (error) {
             // 终局播报发不出去不能把局就地删掉 —— 挂起 pendingEnd 下个 tick 重试（2026-10-10 审查 C1）
+            // 但"结果未知"不再重发：账本记 unknown，重试分支看到 review 就收尾。
+            const uncertain = effectId ? this.store.hasUncertainEffects(effectId) : true;
+            if (effectId) {
+              this.effects.settle(effectId, uncertain ? 'unknown' : 'failed', {
+                error: String(error?.message ?? error).slice(0, 200)
+              });
+            }
             if (g) g.pendingEnd = String(effect.result || '');
             throw error;
           }

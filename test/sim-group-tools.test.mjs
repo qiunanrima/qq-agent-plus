@@ -61,6 +61,7 @@ function baseConfig() {
   cfg.sticker.enabled = false;
   // 自动整理会额外调一次模型、把"模型调用次数"搅浑：本文件不测它，统一关掉
   cfg.memory.consolidateEnabled = false;
+  cfg.memory.hippocampusEnabled = false; // 本文件验证旧 memory_append 工具的会话隔离。
   return cfg;
 }
 

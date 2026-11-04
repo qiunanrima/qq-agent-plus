@@ -1,3 +1,9 @@
+import { randomWakeDelay } from './orchestrator-helpers.js';
+export { randomWakeDelay } from './orchestrator-helpers.js';
+import { proactiveProbability, proactiveScopes } from './orchestrator-helpers.js';
+export { proactiveProbability, proactiveScopes } from './orchestrator-helpers.js';
+import { followUpPlan, proactiveWindowState, lastSentText, hasInlineImage, modelMessagesForAudit, estimateNextPromptTokens, runTokenUsage } from './orchestrator-helpers.js';
+export { followUpPlan, proactiveWindows, proactiveWindowState, estimateNextPromptTokens, runTokenUsage } from './orchestrator-helpers.js';
 // 编排器：事件驱动的"无状态运行"核心。
 //
 // 流程（对应需求）：
@@ -48,61 +54,6 @@ const WAKE_RETRY_MS = 60 * 1000;
  * followUpEnabled 是控制台里的独立开关（proactive.followUpEnabled）：关了就不安排，
  * 它跟"冷场开话题"(proactive.enabled) 互不影响。
  */
-export function followUpPlan({
-  sentCount = 0, unread = 0, lastFollowUpAt = 0, hasScheduledWake = false,
-  windowActive = true, followUpEnabled = true, now = Date.now(), random = Math.random,
-  followUpDelayMinutes = 10, followUpCooldownMinutes = 20
-} = {}) {
-  if (!followUpEnabled) return { schedule: false, reason: '补话开关已关闭' };
-  if (!sentCount) return { schedule: false, reason: '本轮没发言' };
-  if (unread > 0) return { schedule: false, reason: '有人刚说话，走正常回复' };
-  if (hasScheduledWake) return { schedule: false, reason: '已有唤醒安排' };
-  if (!windowActive) return { schedule: false, reason: '不在可主动发言的时段' };
-  const base = Math.max(1, Number(followUpDelayMinutes) || 10);
-  // 冷却必须长于「实际补话延迟 + 最大抖动」，否则把 delay 调大后条件恒成立，会无限补话。
-  const cooldownMs = Math.max((base + 3) * 60000, (Number(followUpCooldownMinutes) || 20) * 60000);
-  if (now - Number(lastFollowUpAt || 0) < cooldownMs) {
-    return { schedule: false, reason: `${Math.round(cooldownMs / 60000)} 分钟内已经给过机会` };
-  }
-  return { schedule: true, minutes: base + Math.floor(random() * 3), reason: '发言后没人接话' };
-}
-
-function activeHoursMinuteOf(value, end = false) {
-  if (end && String(value) === '24:00') return 1440;
-  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value ?? ''));
-  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-}
-
-/** 解析时间段：支持 {start,end} 或 {windows:[{start,end},…]}；未配置 = 全天。 */
-export function proactiveWindows(raw) {
-  const list = [];
-  const push = (w) => {
-    const start = activeHoursMinuteOf(w?.start);
-    const end = activeHoursMinuteOf(w?.end, true);
-    if (start != null && end != null && start !== end) list.push({ start, end });
-  };
-  if (Array.isArray(raw?.windows)) raw.windows.forEach(push);
-  else push(raw);
-  return list;
-}
-
-/** 现在是否在某个窗口内；不在时给出最近的窗口开始时间。 */
-export function proactiveWindowState(raw, now) {
-  const windows = proactiveWindows(raw);
-  if (!windows.length) return { active: true, nextActiveAt: now };
-  const minute = minuteOfDayInZone(now);
-  let best = null;
-  for (const w of windows) {
-    const wrap = w.start > w.end;
-    const active = wrap ? (minute >= w.start || minute < w.end) : (minute >= w.start && minute < w.end);
-    if (active) return { active: true, nextActiveAt: now };
-    const delta = minute < w.start ? w.start - minute : 1440 - minute + w.start;
-    if (best == null || delta < best) best = delta;
-  }
-  return { active: false, nextActiveAt: now + best * 60000 };
-}
-
-
 import { safeSlice } from './util.js';
 import { canRun, chatAllowed } from './access.js';
 import { idList } from './list.js';
@@ -117,7 +68,7 @@ import { visibleImpressions, memoryVisibilityOf } from './memory-visibility.js';
 import { knowledgeEnabled } from '../knowledge/store.js';
 import { PersonaBackground } from '../persona-background/index.js';
 import { buildReminderNote, reminderNoteCost } from './reminders.js';
-import { ZONE_OFFSET_MS, minuteOfDayInZone, randInt, createEventBus, todayKey, sanitizeUserText } from './util.js';
+import { ZONE_OFFSET_MS, randInt, createEventBus, todayKey, sanitizeUserText } from './util.js';
 import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts, writePrivateInitiative } from './proactive-state.js';
 import { buildSystemPrompt, buildUserPrompt, isAtMe, resolveContextTier } from '../llm/prompt.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
@@ -163,109 +114,6 @@ function continuationParticipantIds(session, triggerEntries, store, chatKey) {
     if (last) ids.push(String(last.senderId));
   }
   return [...new Set(ids)].slice(0, 8);
-}
-
-function lastSentText(session) {
-  return (session?.sent || [])
-    .map((entry) => String(entry?.text || '').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .join('；')
-    .slice(0, 600);
-}
-
-function hasInlineImage(messages) {
-  return (messages || []).some((message) => Array.isArray(message?.content)
-    && message.content.some((part) => part?.type === 'image_url'
-      && String(part?.image_url?.url || '').startsWith('data:')));
-}
-
-function imagePartCount(messages) {
-  return (messages || []).reduce((total, message) => total + (
-    Array.isArray(message?.content)
-      ? message.content.filter((part) => part?.type === 'image_url').length
-      : 0
-  ), 0);
-}
-
-function modelMessagesForAudit(messages) {
-  return structuredClone(messages || []).map((message) => {
-    if (!Array.isArray(message?.content)) return message;
-    message.content = message.content.map((part) => {
-      const url = String(part?.image_url?.url || '');
-      if (part?.type !== 'image_url' || !url.startsWith('data:')) return part;
-      const mime = /^data:([^;,]+)/.exec(url)?.[1] || 'application/octet-stream';
-      return {
-        ...part,
-        image_url: {
-          ...part.image_url,
-          url: `[inline ${mime} omitted from audit snapshot; ${url.length} chars]`
-        }
-      };
-    });
-    return message;
-  });
-}
-
-export function estimateNextPromptTokens({
-  messages,
-  tools,
-  previousPromptTokens = 0,
-  previousEstimateChars = 0,
-  previousImageCount = 0
-}) {
-  const auditMessages = modelMessagesForAudit(messages);
-  const estimateChars = JSON.stringify({ messages: auditMessages, tools }).length;
-  const imageCount = imagePartCount(messages);
-  const textTokens = previousPromptTokens > 0 && previousEstimateChars > 0
-    ? Math.ceil(estimateChars * previousPromptTokens / previousEstimateChars * 1.08)
-    : Math.ceil(estimateChars * 0.55);
-  // 图片的 base64 字节不是文本 Token。只为本轮新加入的图片预留视觉编码预算；
-  // 已存在图片的成本已经包含在上一轮真实 prompt_tokens 比例里。
-  const newImages = Math.max(0, imageCount - Math.max(0, Number(previousImageCount) || 0));
-  return {
-    estimatedPromptTokens: textTokens + newImages * 4096,
-    estimateChars,
-    imageCount,
-    auditMessages
-  };
-}
-
-// 辅助调用按实际模型在外部台账计价；单次运行预算仍须包含它们，避免重复计入每日台账。
-export function runTokenUsage(session) {
-  return (Number(session.usage?.totalTokens) || 0) + (Number(session.auxiliaryUsage?.totalTokens) || 0);
-}
-
-export function randomWakeDelay(config = getConfig(), random = Math.random) {
-  const legacy = Math.max(0, Number(config?.wakeDelayMs) || 0);
-  let min = Number.isFinite(Number(config?.wakeDelayMinMs))
-    ? Math.max(0, Number(config.wakeDelayMinMs))
-    : legacy;
-  let max = Number.isFinite(Number(config?.wakeDelayMaxMs))
-    ? Math.max(0, Number(config.wakeDelayMaxMs))
-    : legacy;
-  if (min > max) [min, max] = [max, min];
-  const ratio = Math.min(1, Math.max(0, Number(random()) || 0));
-  return Math.round(min + (max - min) * ratio);
-}
-
-/**
- * 「冷场开话题」每轮真的发言的概率：0 是合法取值（= 不再随机开话题），别用 `|| 默认值` 把它吞掉；
- * 越界值夹到 [0,1]，非数字才回落到默认 0.25（2026-10-01 审查）。
- */
-export function proactiveProbability(raw) {
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.25;
-}
-
-/**
- * 冷场开话题的作用范围。默认群聊开、私聊关（与升级前行为一致）；
- * tick 的早退与候选选择共用这一处，避免两处各写一份默认值后漂移。
- */
-export function proactiveScopes(cfg = {}) {
-  return {
-    groups: cfg.proactive?.groupEnabled !== false,
-    private: cfg.proactive?.privateEnabled === true
-  };
 }
 
 /**
@@ -516,6 +364,7 @@ export class Orchestrator {
     sessions,
     onebot,
     reminders = null,
+    effects = null,
     getGames = null,
     emit = null,
     random = Math.random,
@@ -536,6 +385,8 @@ export class Orchestrator {
     this.sessions = sessions;
     this.onebot = onebot;
     this.reminders = reminders;
+    // 出站副作用账本（可选）：日报/提醒/游戏终局用它做幂等与 unknown 留痕
+    this.effects = effects;
     this.getPlugins = typeof getPlugins === 'function' ? getPlugins : null;
     this.getMcp = typeof getMcp === 'function' ? getMcp : null;
     this.getLifeFeed = typeof getLifeFeed === 'function' ? getLifeFeed : null;
@@ -658,6 +509,11 @@ export class Orchestrator {
    * 到点的提醒内容吞掉，2026-10-04 复审 P2）。
    * block：一律会丢。degrade：群里当前未读里没有 @ 的会丢（闸门判的就是这个）。
    */
+  #budgetHardBlock() {
+    const b = budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {});
+    return Boolean(b.enabled && b.exceeded && b.onExceed === 'block');
+  }
+
   #budgetWouldDrop(chatKey) {
     const b = budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {});
     if (!b.enabled || !b.exceeded) return false;
@@ -674,15 +530,68 @@ export class Orchestrator {
     return !pending.some((m) => mentionsOrPokesBot(m, this.onebot.selfId));
   }
 
+  /**
+   * 自动释放"未知已消解"的 held（Issue #84）。
+   * 回收循环每 5 秒先回收过期租约、再走这里：过期租约可能当场产生 held，
+   * 而它们的 outbox 如果已经终结，这一轮就该解除会话阻塞，不能等人工点「核对」。
+   */
+  releaseResolvedHeld() {
+    let result;
+    try {
+      result = this.store.autoReleaseResolvedHeld();
+    } catch (error) {
+      log.error('[held] 自动释放检查失败（下一轮再试）：', error?.message ?? error);
+      return { released: [], kept: [] };
+    }
+    for (const item of result.released) {
+      log.info(`[held] 自动释放 ${item.chatKey} run=${item.runId}：${item.messages} 条消息`
+        + `（${item.reason}，outbox=${JSON.stringify(item.outbox)}）`);
+      try { this.emit('chat-update', item.chatKey); } catch { /* 控制台刷新失败不影响释放 */ }
+    }
+    return result;
+  }
+
+  /**
+   * 长跑进程的 deferred 兜底：富化任务异常/停服竞态可能留下永久不可见的行。
+   * 这是最后兜底，不是队列调度：同一会话的富化是串行的，队列可能正常排几十秒；
+   * 只在 5 分钟仍未放行时才按占位符收掉，且 app 侧任务真正开始时会把 deferred_at 刷新。
+   */
+  releaseStaleDeferred() {
+    const timeout = Math.max(200, Number(getConfig().messageTypes?.enrichTimeoutMs) || 5000);
+    const olderThanMs = Math.max(5 * 60 * 1000, timeout * 4 + 5000);
+    let chats = [];
+    try {
+      chats = this.store.releaseStaleDeferred?.({ olderThanMs }) || [];
+    } catch (error) {
+      log.error('[ingest] 兜底放行 deferred 失败（下一轮再试）：', error?.message ?? error);
+      return [];
+    }
+    for (const chatKey of chats) {
+      log.warn(`[ingest] ${chatKey} 的延迟富化超过 ${Math.round(olderThanMs / 1000)}s，按占位符放行`);
+      try { this.emit('chat-update', chatKey); } catch { /* 控制台刷新失败不影响放行 */ }
+    }
+    return chats;
+  }
+
   startRecoveryLoop() {
     clearInterval(this.retryTimer);
-    this.store.recoverExpired(Date.now(), { live: this.liveLeases });
-    this.store.expireConversationThreads?.();
+    // 启动首轮与周期 tick 同口径：SQLITE_BUSY/磁盘暂时不可用不能把整个进程带崩，
+    // 更不能让 retryTimer 没装上。下一轮 5 秒后重试。
+    try {
+      this.store.recoverExpired(Date.now(), { live: this.liveLeases });
+      this.releaseResolvedHeld();
+      this.releaseStaleDeferred();
+      this.store.expireConversationThreads?.();
+    } catch (error) {
+      log.error('[recovery] 启动首轮回收失败（5 秒后重试）：', error?.message ?? error);
+    }
     this.retryTimer = setInterval(() => {
       // 兜底回收不能把进程带走：SQLITE_BUSY、磁盘满、库损坏都可能在恢复期间抛出，
       // 而 server.js 的 uncaughtException 会直接 process.exit(1)。下一个 tick 再试即可。
       try {
         this.store.recoverExpired(Date.now(), { live: this.liveLeases });
+        this.releaseResolvedHeld();
+        this.releaseStaleDeferred();
         this.store.expireConversationThreads?.();
         if (this.paused || this.aborted) return;
         this.#maintainHippocampus();
@@ -701,6 +610,17 @@ export class Orchestrator {
             || !this.#chatRuntimeDecision(key).allowed
             || this.store.unreadCount(key) <= 0) continue;
           if (this.#budgetWouldDrop(key)) continue;
+          // 自主节奏：兜底回收也不能绕过 pacing 直接排 8–12 秒的即时唤醒，
+          // 否则普通消息会在十几秒内被处理，概率档下还会被 markRead 静默丢弃
+          // （2026-10-31 盲审 P1）。只保证"有一次 paced 安排"，已存在则不顶掉。
+          if (this.#pacingApplies(key)) {
+            const pending = this.store.peekUnread(key, this.#unreadScanLimit()) || [];
+            const mentioned = pending.some((message) => mentionsOrPokesBot(message, this.onebot.selfId));
+            if (!(mentioned && getConfig().pacing?.instantOnMention !== false)) {
+              this.#ensurePacedWake(key);
+              continue;
+            }
+          }
           this.scheduleWake(key);
         }
       } catch (error) {
@@ -1389,8 +1309,8 @@ export class Orchestrator {
       if (budget.notify) this.#maybeNotifyBudgetExceeded(budget);
       if (budget.onExceed === 'block' && !budgetExempt) {
         const activeMode = String(getConfig().runtime?.mode || 'active') !== 'observe';
-        // 只在"有新消息"这一路回话：主动唤醒没有人在等，插一句只会变成刷屏
-        if (activeMode && !proactive) await this.#maybeSayBudgetExhausted(chatKey);
+        // 只在"有新消息"这一路回话：主动/自主节奏唤醒没有人在等，插一句只会变成刷屏。
+        if (activeMode && !proactive && !paced) await this.#maybeSayBudgetExhausted(chatKey);
         if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '本轮额度已用完');
         return;
       }
@@ -1783,6 +1703,7 @@ export class Orchestrator {
 
     // 记忆自动整理（后台静默，绝不阻塞/影响聊天主流程）
     this.#maybeConsolidateMemory(chatKey);
+    return { sessionId: session.id, status: session.sent.length > 0 ? 'done' : 'noreply', sent: session.sent };
   }
 
   #commitSessionHandoff(session, { chatKey, triggerEntries }) {
@@ -2150,8 +2071,10 @@ export class Orchestrator {
     // 上下文统计
     const tenMinAgo = Date.now() - 600000;
     const recentCount = this.store.recent(chatKey, { limit: 200 }).filter((m) => m.ts >= tenMinAgo).length;
-    const myMessages = this.store.recent(chatKey, { limit: 100 }).filter((m) => m.self);
-    const selfLastMessageAt = myMessages.length ? myMessages[myMessages.length - 1].ts : 0;
+    // 直接查最新一条 self；活跃群 100 条窗口里可能已经没有自己，误判成“从没发过言”。
+    const selfLastMessageAt = typeof this.store.lastSelfMessageAt === 'function'
+      ? this.store.lastSelfMessageAt(chatKey)
+      : 0;
     const lastMessageAt = (() => {
       const all = this.store.recent(chatKey, { limit: 10 });
       return all.length ? all[all.length - 1].ts : Date.now();
@@ -2316,11 +2239,9 @@ export class Orchestrator {
       persona,
       // 与【此刻状态】用同一个名字（群名片优先），否则同一次请求里会出现两个"你在群里的名字"
       selfNickname,
-      // 进行中的游戏：只注入公开摘要（不含词与身份）
-      gameContext: this.getGames?.()?.summaryFor(chatKey) || '',
       identityPilotAvailable: identityAvailable,
       friendProposalAvailable,
-      stickerEntries,
+      // 表情清单与游戏状态是动态的：走 buildUserPrompt，不再进 system 前缀（Issue #86）。
       // 平台能力的"教不教"必须与上面工具表的"给不给"同判（含按群覆盖）：同一个 chatKey。
       platform: cfg.platform,
       chatKey
@@ -2419,6 +2340,7 @@ export class Orchestrator {
       store: this.store,
       memory: this.memory,
       stickerEntries,
+      gameContext: this.getGames?.()?.summaryFor(chatKey) || '',
       slangContext,
       incidentContext,
       selfNickname,
@@ -2569,6 +2491,8 @@ export class Orchestrator {
       stickers: this.stickers,
       sender: this.sender,
       session,
+      // 自主节奏（paced）也会带 manual:true 派发；工具侧必须能区分“管理员手动”与“到点自动”。
+      paced,
       // 动作冷却跨轮：session 每次运行都新建，冷却时间不能只存在 session 上。
       actionMemory: this.actionMemory,
       signal,
@@ -2577,6 +2501,8 @@ export class Orchestrator {
       scheduleWake: (delayMs, note) => this.scheduleInitiativeWake(chatKey, delayMs, note),
       // 定时提醒（remind 工具）：持久化的"给别人的承诺"，到点走主动唤醒
       reminders: this.reminders,
+      // 出站副作用账本：直连协议端的写工具用它登记（只记录，不拦截正常调用）
+      effects: this.effects,
       // 本轮触发消息（remind 的 from 兜底要判断"是否只有一个发送者"；只带最小字段）
       triggerEntries: (triggerEntries || []).map((m) => ({
         senderId: m?.senderId || '', senderName: m?.senderName || '', self: Boolean(m?.self),
@@ -3042,10 +2968,15 @@ export class Orchestrator {
       // （与定时提醒同一类静默丢失，2026-09-29 审查）。顺延一轮再试，而不是丢掉。
       // paced 不在此列：它每次运行结束都会由 #ensurePacedWake 重新排，不需要这里兜。
       // 不走 scheduleInitiativeWake 重排：那个函数按默认 noteLimit(200) 截断留言，这里原样保留。
-      if (!item.paced && this.#wakeBlockedNow(chatKey, cfgNow)) {
-        const timer = setTimeout(() => { try { this.fireDueScheduledWakes(); } catch { /* 忽略 */ } }, WAKE_RETRY_MS + 50);
+      // 只有 block 会让 proactive 唤醒也静默 return；degrade 只挡非 proactive（私聊/主动
+      // 唤醒照常），不能把它一起顺延 24 小时，否则"过会儿回来看"的留言会被无谓压一天。
+      const budgetDrop = !item.paced && this.#budgetHardBlock();
+      if (!item.paced && (budgetDrop || this.#wakeBlockedNow(chatKey, cfgNow))) {
+        const delay = budgetDrop ? 24 * 60 * 60 * 1000 : WAKE_RETRY_MS;
+        const timer = setTimeout(() => { try { this.fireDueScheduledWakes(); } catch { /* 忽略 */ } }, delay + 50);
         if (timer.unref) timer.unref();
-        this.scheduledWakes.set(chatKey, { ...item, at: Date.now() + WAKE_RETRY_MS, timer });
+        this.scheduledWakes.set(chatKey, { ...item, at: Date.now() + delay, timer });
+        if (budgetDrop) log.info(`[wake] ${chatKey} 预算闸门会丢掉这次主动唤醒，顺延 24 小时（留言保留）`);
         continue;
       }
       this.wake(chatKey, item.paced
@@ -3114,8 +3045,15 @@ export class Orchestrator {
     // 控制台开关（设置 → 定时提醒）：关掉后不派发，已存数据保留，重新打开继续用
     if (getConfig().reminders?.enabled === false) return;
     const now = Date.now();
-    // 离线太久（迟到 >12 小时）的直接作废：不补发一串"迟到的提醒"
+    // 离线太久（迟到 >12 小时）的直接作废：不补发一串"迟到的提醒"。
+    // 周期项例外：作废整条会让"每天 9 点吃药"永久消失，改为跳过这一期、re-arm 到下一次
+    //（2026-10-31 盲审 P2；暂停/held 超过 12 小时也会走到这里）。
     for (const item of this.reminders.expired(now)) {
+      if (item.repeat && typeof item.repeat === 'object') {
+        this.reminders.skipOccurrence(item.id, now);
+        log.info(`[reminder] 周期提醒错过一期，已跳到下一次：${item.chatKey} ${String(item.text).slice(0, 30)}`);
+        continue;
+      }
       this.reminders.markExpired(item.id, now);
       log.info(`[reminder] 过期作废（迟到超过 12 小时）：${item.chatKey} ${String(item.text).slice(0, 30)}`);
     }
@@ -3155,7 +3093,6 @@ export class Orchestrator {
         bodyChars += cost;
       }
       // 派发话术的唯一真源在 reminders.buildReminderNote（含"谁提的/提醒谁"的归属）
-      const note = buildReminderNote(chosen, { now });
       // **直接唤醒**，不走 scheduledWakes：那是"每会话单槽"，两批提醒只要落在相邻 tick
       // （30 秒一轮）就会互相顶掉——先被顶掉的那批已经标记 fired，内容永久丢失。
       // 2026-09-28 服务器实测：相隔 5 秒的两条提醒，第一条"喝水"从未发出。
@@ -3184,20 +3121,82 @@ export class Orchestrator {
         }
         continue;
       }
-      const dispatchedAt = Date.now();
+      // 账本（docs/EFFECT-LEDGER.md）：每条提醒按「提醒 id + 计划触发时刻」幂等。
+      //   done      → 上一条命已经播报过，直接 markFired，不再唤醒（崩溃/重启不重复提醒）
+      //   review    → 上次结果未知，停止自动重试，等人工核对
+      //   in-flight → 同一进程正在处理，本轮跳过
+      // 这三类都不进 note：已经发过/不打算再发的正文不能再喂给模型，否则它会再说一遍。
+      const batch = [];
+      for (const it of chosen) {
+        // 幂等键用 occurrenceId，不能用 at：at 会被 deferTo（静默段/预算）改写，
+        // 崩溃后顺延再派发就会换键，账本里的 planned/unknown 对不上，于是重复提醒。
+        const occurrenceId = this.reminders.ensureOccurrenceId?.(it.id) || String(Number(it.at) || 0);
+        const began = this.effects?.begin({
+          kind: 'reminder',
+          chatKey,
+          idemKey: `reminder:${it.id}:${occurrenceId}`,
+          detail: { reminderId: it.id, occurrenceId, at: Number(it.at) || 0 }
+        });
+        if (began) {
+          if (began.action === 'done') {
+            this.reminders.markFired(it.id, now);
+            log.info(`[reminder] ${chatKey} ${it.id} 已由上一轮播报，跳过`);
+            continue;
+          }
+          if (began.action === 'review') {
+            if (it.repeat) {
+              // 周期项只作废这一期：markFired 会重算下一次并换 occurrenceId。
+              // 用 failDelivery 会把整条每日/每周提醒永久停掉（2026-10-31 审查 P2）。
+              this.reminders.markFired(it.id, now);
+              log.error(`[reminder] ${chatKey} ${it.id} 本期投递结果未知，跳过本期并重排下一次`);
+            } else {
+              this.reminders.failDelivery(it.id, '上一次投递结果未知，已停止自动重试，请人工核对');
+              log.error(`[reminder] ${chatKey} ${it.id} 上次投递结果未知，停止自动重试`);
+            }
+            continue;
+          }
+          if (began.action === 'in-flight') continue;
+        }
+        batch.push({ it, effectId: began?.id || null });
+      }
+      if (!batch.length) continue;
+      const settleAll = (state, detail = {}) => {
+        for (const pair of batch) {
+          if (pair.effectId) this.effects.settle(pair.effectId, state, detail);
+        }
+      };
+      // 连续未确认播报：一次性提醒耗尽后停用（未知不能重发）；周期项耗尽只跳过本期，
+      // 必须 re-arm 到下一次，否则“每天 9 点吃药”会在一次网关故障后永久消失。
+      const retryOrRearm = (pair, later) => {
+        // 周期项已经用完重试次数：直接跳过本期并 re-arm，不能先 retryLater 置 failed
+        //（#prune 可能在 markFired 前把这条已完成记录清掉，导致永久停用）。
+        if (pair.it.repeat && typeof pair.it.repeat === 'object'
+          && Number(pair.it.deliveryAttempts) >= 3) {
+          this.reminders.markFired(pair.it.id, now);
+          return 'rearmed';
+        }
+        const retry = this.reminders.retryLater(pair.it.id, later, { maxAttempts: 3 });
+        if (!retry.exhausted) return retry.missing ? 'missing' : 'retry';
+        if (pair.it.repeat && typeof pair.it.repeat === 'object') {
+          this.reminders.markFired(pair.it.id, now);
+          return 'rearmed';
+        }
+        return 'exhausted';
+      };
+      const note = buildReminderNote(batch.map((pair) => pair.it), { now });
       // 只把**本次唤醒新产生**的 unknown 当成本轮结果不确定：历史遗留的 unknown/sending
       // （上次硬崩溃、别的 run 的残行）不该让每条提醒一上来就放弃重试。
       const unknownBefore = new Set(this.store.listUnknownOperations(chatKey).map((op) => op.id));
-      for (const it of chosen) this.#remindersInFlight.add(it.id);
+      for (const pair of batch) this.#remindersInFlight.add(pair.it.id);
       this.wake(chatKey, { manual: true, paced: true, wakeNote: note })
-        .then(() => {
-          // #wake 不会因为模型请求失败而 reject；用"本轮之后有没有自己的消息落库"
-          // 判断提醒是否真的播报出去。没播报就顺延 5 分钟重试，别直接 markFired
-          //（模型网关故障时提醒会永久丢失，2026-10-20 审查）。
-          const delivered = this.store.hasSelfSince(chatKey, dispatchedAt);
+        .then((result) => {
+          // 只认**本轮唤醒自己发出的消息**。用 hasSelfSince 会把日报/游戏/插件的自发消息
+          // 误当成提醒已播报，提醒正文就永久丢了（2026-11-03 第五轮复审 A3）。
+          const delivered = Array.isArray(result?.sent) && result.sent.length > 0;
           if (delivered) {
-            for (const it of chosen) this.reminders.markFired(it.id, now);
-            log.info(`[reminder] 已播报 ${chosen.length} 条：${chatKey} ${chosen.map((x) => String(x.text)).join(' / ')}`);
+            settleAll('sent', { deliveredAt: Date.now() });
+            for (const pair of batch) this.reminders.markFired(pair.it.id, now);
+            log.info(`[reminder] 已播报 ${batch.length} 条：${chatKey} ${batch.map((pair) => String(pair.it.text)).join(' / ')}`);
             return;
           }
           // 发送结果不确定（outbox unknown）时绝不自动重试：换一轮 lease 后
@@ -3205,44 +3204,64 @@ export class Orchestrator {
           const uncertain = this.store.listUnknownOperations(chatKey)
             .some((op) => !unknownBefore.has(op.id));
           if (uncertain) {
-            for (const it of chosen) this.reminders.failDelivery(it.id, '发送结果未知，已停止自动重试，请人工核对');
-            log.error(`[reminder] 有未确认的外发，${chosen.length} 条提醒停止自动重试：${chatKey}`);
+            settleAll('unknown', { reason: 'outbox-unknown' });
+            for (const pair of batch) {
+              // 周期项不能被一次“结果未知”永久停掉：跳过本期、重排下一次；
+              // 一次性提醒仍保留人工核对语义（未知绝不自动重发）。
+              if (pair.it.repeat && typeof pair.it.repeat === 'object') {
+                this.reminders.markFired(pair.it.id, now);
+              } else {
+                this.reminders.failDelivery(pair.it.id, '发送结果未知，已停止自动重试，请人工核对');
+              }
+            }
+            log.error(`[reminder] 有未确认的外发，${batch.length} 条提醒停止自动重试：${chatKey}`);
             return;
           }
+          // 本轮确实一条都没发：失败可重试（账本 failed 允许重新 begin）
+          settleAll('failed', { reason: 'no-send' });
           const later = Date.now() + 5 * 60 * 1000;
           let exhausted = 0;
-          for (const it of chosen) {
-            const retry = this.reminders.retryLater(it.id, later, { maxAttempts: 3 });
-            if (retry.exhausted) exhausted += 1;
+          let rearmed = 0;
+          for (const pair of batch) {
+            const outcome = retryOrRearm(pair, later);
+            if (outcome === 'exhausted') exhausted += 1;
+            else if (outcome === 'rearmed') rearmed += 1;
           }
-          if (exhausted) {
-            const retried = chosen.length - exhausted;
-            log.error(`[reminder] ${exhausted} 条连续未确认播报，已停止自动重试`
+          if (exhausted || rearmed) {
+            const retried = batch.length - exhausted - rearmed;
+            log.error(`[reminder] ${exhausted + rearmed} 条连续未确认播报，已停止自动重试`
+              + (rearmed ? `（其中 ${rearmed} 条周期提醒已重排下一期）` : '')
               + (retried ? `；另外 ${retried} 条 5 分钟后重试` : '') + `：${chatKey}`);
           } else {
-            log.warn(`[reminder] 本轮未检测到发送，${chosen.length} 条 5 分钟后重试：${chatKey}`);
+            log.warn(`[reminder] 本轮未检测到发送，${batch.length} 条 5 分钟后重试：${chatKey}`);
           }
         })
         .catch((error) => {
+          // 唤醒本身抛错：没有任何发送证据，按 failed 处理（允许下一次重试）
+          settleAll('failed', { reason: 'wake-error', error: String(error?.message ?? error).slice(0, 200) });
           const later = Date.now() + 5 * 60 * 1000;
           let exhausted = 0;
-          for (const it of chosen) {
-            const retry = this.reminders.retryLater(it.id, later, { maxAttempts: 3 });
-            if (retry.exhausted) exhausted += 1;
+          let rearmed = 0;
+          for (const pair of batch) {
+            const outcome = retryOrRearm(pair, later);
+            if (outcome === 'exhausted') exhausted += 1;
+            else if (outcome === 'rearmed') rearmed += 1;
           }
-          const retried = chosen.length - exhausted;
+          const retried = batch.length - exhausted - rearmed;
           log.error(`[reminder] 唤醒出错，`
             + (exhausted ? `${exhausted} 条已停止重试` : '')
-            + (exhausted && retried ? '，' : '')
+            + (exhausted && rearmed ? '，' : '')
+            + (rearmed ? `${rearmed} 条周期提醒已重排下一期` : '')
+            + ((exhausted || rearmed) && retried ? '，' : '')
             + (retried ? `${retried} 条 5 分钟后重试` : '')
             + ':', error?.message ?? error);
         })
         .finally(() => {
-          for (const it of chosen) this.#remindersInFlight.delete(it.id);
+          for (const pair of batch) this.#remindersInFlight.delete(pair.it.id);
         });
       const deferred = items.length - chosen.length;
       // 全文进日志（单条正文 ≤200 字）：先记下派发内容，播报结果在 then/catch 里补。
-      log.info(`[reminder] 到点派发 ${chosen.length} 条：${chatKey} ${chosen.map((x) => String(x.text)).join(' / ')}`
+      log.info(`[reminder] 到点派发 ${batch.length} 条：${chatKey} ${batch.map((pair) => String(pair.it.text)).join(' / ')}`
         + (deferred > 0 ? `（另有 ${deferred} 条本轮装不进提示词，30 秒后继续派发）` : ''));
     }
   }
@@ -3476,6 +3495,13 @@ export class Orchestrator {
     });
     // 被可见性排除不等于没有记忆，不能在指定目标或发现新人时重新纳入。
     const invisibleUserIds = new Set(invisibleMembers.map((member) => String(member.userId || '')));
+    // 反查名字后 uid 可能指向一个"不在 members(chatKey) 里"的人（只有私聊/其他群来源），
+    // invisibleMembers 是在反查前算的，所以必须在 resolve 之后再按最终 impressions 查一次，
+    // 否则隐藏来源的正文会被送给整理模型并写进当前群（2026-11-01 复审 P1）。
+    const resolvedHasInvisible = (member) => {
+      const list = Array.isArray(member?.impressions) ? member.impressions : [];
+      return visibleImpressions(list, chatKey, vis).length !== list.length;
+    };
 
     // ── 选出要整理的人 ──
     const targets = [];
@@ -3504,7 +3530,10 @@ export class Orchestrator {
         const found = existing.find((m) => String(m.userId || '') === uid);
         if (found) {
           const resolved = this.#resolveIdentity(chatKey, found, stats, notes);
-          if (invisibleUserIds.has(String(resolved.userId || ''))) { skipInvisible(resolved); continue; }
+          if (invisibleUserIds.has(String(resolved.userId || '')) || resolvedHasInvisible(resolved)) {
+            skipInvisible(resolved);
+            continue;
+          }
           targets.push({ ...resolved, isNew: false });
           continue;
         }
@@ -3530,7 +3559,12 @@ export class Orchestrator {
       for (const mem of existing) {
         const resolved = this.#resolveIdentity(chatKey, mem, stats, notes);
         const uid = String(resolved.userId || '');
-        if (uid && invisibleUserIds.has(uid)) { skipInvisible(resolved); continue; }
+        if ((uid && invisibleUserIds.has(uid)) || resolvedHasInvisible(resolved)) {
+          // 记进 knownUserIds：否则后面的“发现活跃成员”会把这个刚被跳过的人当新人再整理一次。
+          if (uid) knownUserIds.add(uid);
+          skipInvisible(resolved);
+          continue;
+        }
         if (uid) knownUserIds.add(uid);
         if (this.#shouldSkip(resolved, force)) {
           skipped.push({
@@ -3691,10 +3725,11 @@ export class Orchestrator {
 
   /** 批量整理时是否跳过某人（指定群友 / 强制模式不跳过）。 */
   #shouldSkip(resolved, force) {
-    if (force) return false;
     // 没有数字 QQ 号的条目（旧数据里"按名字存"的遗留）无法写回：replaceMember 只接受数字 uid。
     // 必须在**调模型之前**跳过，否则每轮整理都白烧一次调用、再在写回时抛错记成 failed。
+    // 这个检查不能放在 force 之后：控制台手动整理默认 force=true，否则每次点都白烧一次。
     if (!/^\d{1,15}$/.test(String(resolved.userId || '').trim())) return true;
+    if (force) return false;
     if (resolved.msgCount < Orchestrator.MEMBER_MIN_MESSAGES && !String(resolved.name || '').trim()) return true;
     if (resolved.msgCount < Orchestrator.MEMBER_MIN_MESSAGES && !resolved.impressions.length) return true;
     if (resolved.impressions.length < Orchestrator.MEMBER_MIN_IMPRESSIONS) return true;
@@ -3752,7 +3787,7 @@ export class Orchestrator {
 
     const { system, user } = isNew
       ? this.#buildNewImpressionPrompt(chatKey, mem, stats)
-      : this.#buildConsolidatePrompt(mem);
+      : this.#buildConsolidatePrompt(mem, chatKey);
 
     const res = await this.#memoryChat([
       { role: 'system', content: system },
@@ -3769,7 +3804,21 @@ export class Orchestrator {
       return null;
     }
 
-    const parsedImpressions = parsed.impressions;
+    // 兜底：模型仍可能把【对象信息】抄进输出。只过滤精确的元信息前缀，
+    // 不误删正常印象；过滤在护栏之前做，避免多出的元信息行把"结果变多"护栏触发。
+    const META_PREFIXES = ['群友 QQ：', '当前名字：', '今天：', '身份：这是机器人管理员本人'];
+    const isMetaImpression = (value) => typeof value === 'string'
+      && META_PREFIXES.some((prefix) => value.trim().startsWith(prefix));
+    const hadMetaLines = Array.isArray(parsed.impressions) && parsed.impressions.some(isMetaImpression);
+    const parsedImpressions = Array.isArray(parsed.impressions)
+      ? parsed.impressions.filter((item) => !isMetaImpression(item))
+      : parsed.impressions;
+    // 只抄回元信息、没有任何有效条目：这是模型答歪了，不是"用户没有可保留的印象"。
+    // 继续写回会把现有印象整份清空（2026-11-01 issue #27）。
+    if (hadMetaLines && Array.isArray(parsedImpressions) && parsedImpressions.length === 0) {
+      log.warn(`[memory] 整理 ${chatKey}/${mem.userId} 放弃：模型只返回了对象信息，保留原印象`);
+      return null;
+    }
     const raw = Array.isArray(parsedImpressions) ? parsedImpressions : [];
     const maxKeep = Number(getConfig().memory?.maxImpressionsPerMember) || 5;
 
@@ -3784,6 +3833,16 @@ export class Orchestrator {
     const snapshotTexts = new Set(existing.map((e) => String(e?.content ?? '').trim()));
     const currentRow = (this.memory.members(chatKey) || [])
       .find((m) => String(m?.userId || '') === String(mem.userId || ''));
+    if (!isNew && !currentRow) {
+      // 整理期间管理员把这个人的记忆删了：不能拿 await 前的 existing 旧快照复活它。
+      log.warn(`[memory] 整理 ${chatKey}/${mem.userId} 放弃：整理期间记忆已被删除`);
+      return null;
+    }
+    if (!isNew && !(Array.isArray(currentRow?.sourceChatKeys) ? currentRow.sourceChatKeys : [])
+      .includes(String(chatKey || '').trim())) {
+      log.warn(`[memory] 整理 ${chatKey}/${mem.userId} 放弃：记忆来源已不含当前会话`);
+      return null;
+    }
     const currentImpressions = currentRow?.impressions || existing;
     // 控制台手写的（origin=manual）条目是用户的明确输入，模型无权改写/删除。
     // 不依赖模型"听话"：写回前强制把**当前**手工条目并进结果，且不占模型输出的配额。
@@ -3849,7 +3908,7 @@ export class Orchestrator {
   }
 
   /** 整理模式：合并/删减已有印象。 */
-  #buildConsolidatePrompt(mem) {
+  #buildConsolidatePrompt(mem, chatKey) {
     // 与"今天"同口径（上海）：原来用 UTC，凌晨产生的印象在模型眼里会算成前一天。
     // 坏时间戳（负数/纳秒级/超范围）必须先夹住：toISOString 碰到 Invalid Date 会抛 RangeError，
     // 这条人物会因此永远整理不了（异常被记成 failed，坏值本身没人清理）。
@@ -3870,26 +3929,36 @@ export class Orchestrator {
     const isOwner = Boolean(ownerUin) && ownerUin === String(mem.userId || '').trim();
     // 要算"90 天前"就得知道今天，整理这次调用看不到别的时间来源
     const today = todayKey();
-    const lines = [`群友 QQ：${sanitizeUserText(String(mem.userId || ''))}`, `当前名字：${sanitizeUserText(String(mem.name || ''))}`, `今天：${today}（Asia/Shanghai）`];
-    if (isOwner) lines.push('身份：这是机器人管理员本人（设置角色卡、管这台机器人的人）');
+    // 已有印象的人也要能看到最近的发言：否则整理只能合并/删除，结构上无法变丰富
+    // （2026-11-01 插件仓库 issue #25）。只取该成员最近 30 条、每条 200 字，作为补充证据。
+    const sample = chatKey
+      ? filterBlockedHistory(this.store.recentBySender(chatKey, String(mem.userId || ''), 30), chatKey)
+        .map((m) => safeSlice(String(m.text || ''), 200))
+        .filter(Boolean)
+      : [];
+    // 元信息和印象条目必须分开：0.9.12/0.9.13 加了子标题后，元信息成了"子标题前的
+    // 孤立段落"，模型会把它们当印象抄回库里（2026-11-01 插件仓库 issue #27 实测）。
+    const metaLines = [`群友 QQ：${sanitizeUserText(String(mem.userId || ''))}`, `当前名字：${sanitizeUserText(String(mem.name || ''))}`, `今天：${today}（Asia/Shanghai）`];
+    if (isOwner) metaLines.push('身份：这是机器人管理员本人（设置角色卡、管这台机器人的人）');
+    const entryLines = [];
     const manual = (mem.impressions || []).filter((e) => String(e?.origin || '') === 'manual');
     const automatic = (mem.impressions || []).filter((e) => String(e?.origin || '') !== 'manual');
     const pushEntry = (e) => {
       const created = clampTs(e.createdAt);
       const observed = clampTs(e.lastObservedAt);
-      lines.push(`- ${sanitizeUserText(e.content)}（记于 ${fmtTs(created)}${observed && observed !== created ? `，最近观察到 ${fmtTs(observed)}` : ''}）`);
+      entryLines.push(`- ${sanitizeUserText(e.content)}（记于 ${fmtTs(created)}${observed && observed !== created ? `，最近观察到 ${fmtTs(observed)}` : ''}）`);
     };
     if (manual.length) {
-      lines.push('', '【手工印象：用户亲自写的，必须原样逐字保留，不得改写、合并或删除】');
+      entryLines.push('', '【手工印象：用户亲自写的，必须原样逐字保留，不得改写、合并或删除】');
       manual.forEach(pushEntry);
     }
     if (automatic.length) {
-      lines.push('', '【自动积累的印象：可以按下面的规则合并、改写或删除】');
+      entryLines.push('', '【自动积累的印象：可以按下面的规则合并、改写或删除】');
       automatic.forEach(pushEntry);
     }
     const maxKeep = Number(cfg.memory?.maxImpressionsPerMember) || 5;
     return {
-      system: '你是聊天机器人的记忆整理模块，负责整理对某一位群友的长期印象。你只做合并、改写与删除，绝不发明任何新事实。输出必须是严格的 JSON 对象，不要 Markdown 代码块，不要任何解释文字。格式：{"impressions":["…"]}',
+      system: '你是聊天机器人的记忆整理模块，负责整理对某一位群友的长期印象。你只做合并、改写与删除，或依据【最近的发言】做有原文依据的补充；绝不发明任何新事实。输出必须是严格的 JSON 对象，不要 Markdown 代码块，不要任何解释文字。格式：{"impressions":["…"]}',
       user: [
         '下面是机器人对一位群友的全部印象，请整理：',
         '1. 把同义/重复的印象合并成一条。冲突时以**最近观察到的**为准；拿不准就保留较新的一条，别自己裁量。',
@@ -3901,9 +3970,22 @@ export class Orchestrator {
         '   写"会反复问人设、爱逗人表演"，不要写"想掌控设定""扬言改人设""喜欢试探规则"这类带立场的说法。',
         '7. 如果写的是管理员本人：他改人设、问人设、逗你玩都是本职，不是"试探"或"施压"，照事实记就行。',
         '8. 【手工印象】段里的每一条都必须原样逐字出现在输出里：不得改写、合并、删除，也不受第 1-7 条约束；输出时只写正文，不要带段标题。',
+        ...(sample.length ? [
+          '9. 可以依据【最近的发言】补充稳定特征，但每条必须有原文依据；不要逐条复述、不要记流水账。'
+            + '已有印象已满时，用有近期证据的稳定特征替换过时/重复条目，不要为凑数新增。'
+        ] : []),
         '原则：所有信息只能来自原文，语义不变，宁少勿错；没有可保留的时输出空数组。',
         '',
-        ...lines
+        '【对象信息】（只用于判断身份与时间，不是印象条目；不要写进输出）',
+        ...metaLines,
+        '',
+        '【需要整理的印象】（下面以「- 」开头的才是印象条目）',
+        ...entryLines,
+        ...(sample.length ? [
+          '',
+          '【最近的发言】（只作补充证据，不要逐条复述）',
+          ...sample
+        ] : []),
       ].join('\n')
     };
   }
@@ -3912,6 +3994,7 @@ export class Orchestrator {
   #buildNewImpressionPrompt(chatKey, mem) {
     const maxKeep = Number(getConfig().memory?.maxImpressionsPerMember) || 5;
     const uid = String(mem.userId || '');
+    const safeName = sanitizeUserText(safeSlice(String(mem.name || ''), 60));
     const sample = filterBlockedHistory(this.store.recent(chatKey, { limit: 2000 }), chatKey)
       .filter((m) => !m.self && String(m.senderId) === uid)
       .slice(-40)
@@ -3921,7 +4004,7 @@ export class Orchestrator {
     return {
       system: '你是聊天机器人的记忆模块，负责从聊天记录里提炼对某一位群友的长期印象。只提炼"以后跟这个人打交道用得上"的稳定特征，严格依据给定的发言，不要编造。输出必须是严格的 JSON 对象，不要 Markdown 代码块，不要任何解释文字。格式：{"impressions":["…"]}',
       user: [
-        `下面是群友（QQ ${uid}${(mem.name && `，名字 ${mem.name}`) || ''}${(uid && String(getConfig()?.admin?.ownerUin || '').trim() === uid) ? '，**这是机器人管理员本人**（设置角色卡、管这台机器人的人）' : ''}）最近的部分发言，请提炼对他的长期印象：`,
+        `下面是群友（QQ ${uid}${(safeName && `，名字 ${safeName}`) || ''}${(uid && String(getConfig()?.admin?.ownerUin || '').trim() === uid) ? '，**这是机器人管理员本人**（设置角色卡、管这台机器人的人）' : ''}）最近的部分发言，请提炼对他的长期印象：`,
         '1. 只保留稳定特征：说话风格、爱玩的梗、常聊话题、雷点、身份关系。',
         '2. 不要记一次性事件、临时话题，也不要记录流水账。',
         `3. 最多 ${maxKeep} 条，每条不超过 120 字，用第一人称视角（"他/她…"）。`,

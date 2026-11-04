@@ -262,7 +262,7 @@ async function saveConfig({ quiet = false } = {}) {
       ...(c.lifeFeed || {}),
       enabled: chk('#cfg-lifefeed-enabled', c.lifeFeed?.enabled === true),
       sources: ['bilibili', 'plugin', 'rss'].filter((id) =>
-        chk(`#cfg-lifefeed-src-${id}`, (c.lifeFeed?.sources || ['bilibili']).includes(id))),
+        chk(`#cfg-lifefeed-src-${id}`, (c.lifeFeed?.sources || ['bilibili', 'plugin']).includes(id))),
       shareMode: String(val('#cfg-lifefeed-sharemode', c.lifeFeed?.shareMode || 'auto')) === 'manual' ? 'manual' : 'auto',
       ...(shareGroups ? { shareGroups } : {}),
       rssUrls: splitKeywords('#cfg-lifefeed-rss-urls'),
@@ -1084,6 +1084,10 @@ async function saveConfig({ quiet = false } = {}) {
       },
       maxMessagesPerChat: clampInt(val('#cfg-store-maxmessages', c.store?.maxMessagesPerChat ?? 0), 0, 1000000, 0),
       keepSessionFiles: numKeep(val('#cfg-store-keepsessions', c.store?.keepSessionFiles ?? 2000), c.store?.keepSessionFiles, 0, 100000, 2000),
+      // 留档压缩天数与总量上限：显式填 0 是"关闭"，但**清空输入框要保留原值** ——
+      // 用 clampInt 会把空串当成 0，等于用户清空一下就把两个磁盘保护同时关掉。
+      sessionCompressAfterDays: numKeep(val('#cfg-store-compressdays', c.store?.sessionCompressAfterDays ?? 30), c.store?.sessionCompressAfterDays, 0, 3650, 30),
+      sessionMaxTotalMb: numKeep(val('#cfg-store-sessionmb', c.store?.sessionMaxTotalMb ?? 1024), c.store?.sessionMaxTotalMb, 0, 1048576, 1024),
       // 磁盘写入档位：只暴露三个预设，选「自定义」时保持配置文件里的原值
       ...(() => {
         const preset = IO_PROFILES[val('#cfg-store-ioprofile', 'balanced')];

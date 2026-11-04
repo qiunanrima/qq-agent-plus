@@ -30,7 +30,7 @@ test('global person memory renders only inside the dedicated people page', () =>
   assert.doesNotMatch(people, /data-tab="memory"/);
   assert.doesNotMatch(people, /view-memory\[data-global-memory/);
   assert.match(people, /sourceChatKeys/);
-  assert.match(people, /来源会话只用于证据追溯/);
+  assert.match(people, /sourceChatKeys 仅保留来源/);
 });
 
 test('session memory page suppresses person-memory controls and keeps handoff visible', () => {
