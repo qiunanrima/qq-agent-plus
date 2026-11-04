@@ -1,6 +1,8 @@
+import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
+export { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate } from './orchestrator-helpers.js';
 import { randomWakeDelay } from './orchestrator-helpers.js';
 export { randomWakeDelay } from './orchestrator-helpers.js';
-import { proactiveProbability, proactiveScopes } from './orchestrator-helpers.js';
+import { proactiveScopes } from './orchestrator-helpers.js';
 export { proactiveProbability, proactiveScopes } from './orchestrator-helpers.js';
 import { followUpPlan, proactiveWindowState, lastSentText, hasInlineImage, modelMessagesForAudit, estimateNextPromptTokens, runTokenUsage } from './orchestrator-helpers.js';
 export { followUpPlan, proactiveWindows, proactiveWindowState, estimateNextPromptTokens, runTokenUsage } from './orchestrator-helpers.js';
@@ -17,7 +19,7 @@ export { followUpPlan, proactiveWindows, proactiveWindowState, estimateNextPromp
 import crypto from 'node:crypto';
 import { PerceptionWake } from '../memory/perception.js';
 import { RestrictedSubagents } from '../subagents/index.js';
-import { quietPrivateChat, selfWakeAllowed, privateInitiativeAllowed, proactiveScopeProbability } from './private-proactive-policy.js';
+import { quietPrivateChat, selfWakeAllowed, proactiveScopeProbability } from './private-proactive-policy.js';
 import path from 'node:path';
 import {
   DATA_DIR,
@@ -71,6 +73,7 @@ import { buildReminderNote, reminderNoteCost } from './reminders.js';
 import { ZONE_OFFSET_MS, randInt, createEventBus, todayKey, sanitizeUserText } from './util.js';
 import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts, writePrivateInitiative } from './proactive-state.js';
 import { buildSystemPrompt, buildUserPrompt, isAtMe, resolveContextTier } from '../llm/prompt.js';
+import { createMcpHostRun, contextWithToolSignal } from '../antigravity-cli/mcp-run.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool, platformToolAllowed } from '../tools/tools.js';
 import { normalizeMid } from '../tools/tools-core.js';
@@ -114,106 +117,6 @@ function continuationParticipantIds(session, triggerEntries, store, chatKey) {
     if (last) ids.push(String(last.senderId));
   }
   return [...new Set(ids)].slice(0, 8);
-}
-
-/**
- * 挑出这次"冷场主动开话题"可以去的会话（纯函数，便于单测）。
- *
- * 作用范围由控制台两个复选框决定：
- *   · 群聊（proactive.groupEnabled，默认开）：沿用 allow.groups / allowAllWhenEmpty；
- *   · 私聊（proactive.privateEnabled，默认关）：沿用 allow.private（deny 优先、名单空时看
- *     allowAllWhenEmpty），与平时回复私聊的白名单规则一致，不另建名单。
- */
-export function proactiveCandidates({
-  chatKeys = [], cfg = {}, metaOf = () => ({}), now = Date.now(),
-  canWake = () => true, isRunning = () => false, lastPrivateInitiativeOf = () => 0
-} = {}) {
-  // 注入点先落本地 const（ops scan --strict 只认 const/let；同 capabilities.js 约定）
-  const metaOfFn = metaOf;
-  const canWakeFn = canWake;
-  const isRunningFn = isRunning;
-  const idleMs = Math.max(300000, Number(cfg.proactive?.idleThresholdMs) || 1800000);
-  const allowGroups = idList(cfg.allow?.groups);
-  const scopes = proactiveScopes(cfg);
-  const out = [];
-  for (const chatKey of chatKeys) {
-    const [kind, id] = String(chatKey).split(':');
-    if (kind === 'group') {
-      if (!scopes.groups) continue;
-      if (allowGroups.length > 0 ? !allowGroups.includes(id) : !cfg.allowAllWhenEmpty) continue;
-    } else if (kind === 'private') {
-      if (!scopes.private) continue;
-      if (!privateInitiativeAllowed(chatKey, cfg, lastPrivateInitiativeOf(chatKey), now)) continue;
-    } else {
-      continue;
-    }
-    if (!canWakeFn(chatKey)) continue;
-    if (isRunningFn(chatKey)) continue;
-    const meta = metaOfFn(chatKey) || {};
-    if (meta.unread > 0) continue;
-    if (now - (Number(meta.lastTs) || 0) < idleMs) continue;
-    out.push(chatKey);
-  }
-  return out;
-}
-
-export function triggerKindForTier(result = {}, {
-  manual = false,
-  proactive = false,
-  chatKey = ''
-} = {}) {
-  const tier = Number(result?.tier);
-  const reason = String(result?.reason || '');
-  if (manual) return 'manual';
-  if (proactive) return 'proactive';
-  if (reason === '私聊' || String(chatKey).startsWith('private:')) return 'private';
-  if (tier === 1 || reason === '被艾特') return 'mention';
-  if (tier === 2 || reason === '关键词命中') return 'keyword';
-  if (tier === 3 || reason.startsWith('随机命中')) return 'probability';
-  if (tier === 4 || reason === '全部响应') return 'all';
-  if (tier === 5 || /引用机器人/.test(reason)) return 'reply';
-  if (tier === 6 || /生命周期：(?:活跃|监听)状态/.test(reason)) return 'lifecycle';
-  if (tier === 7 || /硬上限后的任意消息续接/.test(reason)) return 'rollover';
-  if (tier === 8 || reason === '失败批次重试') return 'retry';
-  return 'unknown';
-}
-
-/**
- * 是否该跑一次自动记忆整理（纯函数，便于单测）。
- *
- * 触发规则：
- *   - 一条印象都没有时：**允许跑一次**。整理里的"发现新人"那条路
- *     （发言够多但零印象的人 → 新建印象）正是给这种情况准备的；如果这里也按
- *     "印象数 > 阈值"卡住，新装实例的自动整理就永远不会触发 ——
- *     印象数从 0 开始，永远够不到阈值，于是谁都没有人物记忆。
- *   - 已经有印象时：按阈值来（全群总数超过 minImpressions，或某人超过 maxPerMember）。
- */
-export function shouldAutoConsolidate({
-  impressionCount = 0,
-  memberCounts = [],
-  minImpressions = 4,
-  maxPerMember = 5
-} = {}) {
-  const total = Number(impressionCount) || 0;
-  if (total <= 0) return true;
-  if (total > Math.max(1, Number(minImpressions) || 4)) return true;
-  return memberCounts.some((count) => Number(count) > Math.max(2, Number(maxPerMember) || 5));
-}
-
-/**
- * 同一份记忆的两条记录合成一条时用（遗留条目反查出的 QQ 与本人记录指向同一个人）：
- * 按正文去重，保留先出现那条的时间戳与来源。
- */
-function mergeImpressionLists(base = [], extra = []) {
-  const out = [...(Array.isArray(base) ? base : [])];
-  const seen = new Set(out.map((e) => String(e?.content ?? '')));
-  for (const entry of Array.isArray(extra) ? extra : []) {
-    const content = String(entry?.content ?? '');
-    if (!content || seen.has(content)) continue;
-    seen.add(content);
-    out.push(entry);
-  }
-  return out;
 }
 
 /**
@@ -1184,7 +1087,7 @@ export class Orchestrator {
     if (this.runningChats.size >= Math.max(1, Number(getConfig().maxConcurrentRuns) || 2)) {
       return { ok: false, reason: '当前并发已满，请稍后重试' };
     }
-    if (!String(getConfig().api.model || '').trim()) {
+    if (!getConfig().antigravityCli?.enabled && !String(getConfig().api.model || '').trim()) {
       return { ok: false, reason: '模型未设置' };
     }
 
@@ -1234,7 +1137,7 @@ export class Orchestrator {
     if (this.runningChats.has(chatKey)) return false;
 
     // 模型未设置：不产生报错会话，消息保留为未读；设置模型后（下一条消息或手动唤醒）自动补处理
-    if (!String(getConfig().api.model || '').trim()) {
+    if (!getConfig().antigravityCli?.enabled && !String(getConfig().api.model || '').trim()) {
       if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '模型未设置');
       return false;
     }
@@ -1930,7 +1833,8 @@ export class Orchestrator {
     const budgetLeft = runTokenUsage(session) + lastPromptTokens < runLimits.maxRunTokens;
     let sendFailed = false;
 
-    if (sendTool && budgetLeft) {
+    // MCP already had an opportunity to send; avoid another automatic CLI invocation.
+    if (sendTool && budgetLeft && !(getConfig().antigravityCli?.enabled && getConfig().antigravityCli.transport === 'mcp')) {
       try {
         const response = await chatCompletionWithRetry({ usageTracked: true,
           messages: [...messages, {
@@ -2574,12 +2478,114 @@ export class Orchestrator {
       session.inputHasOmittedImages = hasInlineImage(messages);
       session.inputMessages = requestAuditMessages;
       markActivity('正在思考…');
+      const toolResults = [];
+      const imageUserMessages = [];
+      let priorFailure = false;
+      const executeOneTool = async (call, toolSignal = signal) => {
+        toolSignal.throwIfAborted();
+        if (!canRun(chatKey)) throw new Error('Run cancelled');
+        const name = call?.function?.name ?? '';
+        const argsRaw = call?.function?.arguments ?? '{}';
+        if (['search_web', 'fetch_url', 'web_search', 'web_fetch'].includes(name)) webSearchCount += 1;
+        session.webSearchCount = webSearchCount + (session.subagentWebSearchCount || 0);
+        markActivity(`正在调用 ${name}…`);
+        // 技能白名单只收窄本轮工具；finish/skill_list/skill_use 在 skill_use 时已加入集合。
+        // send_message 永远放行：模型可能只是想“看看有哪些技能，然后正常回一句”；
+        // 不能因为列过一次技能就把正常回复也堵死。
+        const skillGate = skillGateMessage(ctx.activeSkill, ctx.pendingSkillUse, name, safeParse(argsRaw));
+        const blocked = finishBarrierBlock(name, {
+          finished: finish,
+          priorFailure,
+          unsentDeliveryFailure: unsentDeliveryFailure && session.sent.length === 0 && session.visibleReply !== true
+        }) || skillGate;
+        const result = blocked
+          ? { content: blocked, isError: true, reportIncident: false, skillBlocked: Boolean(skillGate) }
+          : await executeTool(toolDefs, contextWithToolSignal(ctx, toolSignal), name, argsRaw);
+        if (
+          result.isError
+          && result.incidentCaptured !== true
+          && result.reportIncident !== false
+        ) {
+          // 工具报错也写一行 journal（Issue #17 反馈：只进控制台异常面板、journal 里查不到，
+          // 排查时容易漏）。同一判定口径：reportIncident:false 的工具照旧不刷。
+          // 脱敏走 incident-pilot 同款规则——错误串里可能带上 URL 查询串里的 access_token。
+          log.warn(`[tool] ${name} 出错：${redactText(String(result.content || '工具执行失败').replace(/\s+/g, ' '), 160)}`);
+          this.getIncidentPilot()?.capture(new Error(String(result.content || '工具执行失败')), {
+            source: `tool:${name}`,
+            category: 'tool',
+            severity: 'warning',
+            chatKey,
+            sessionId: session.id,
+            details: { tool: name }
+          });
+        }
+        // 工具结果：文本走 tool 消息；图片（parts 数组）不能塞进 tool 消息——
+        // 很多 OpenAI 兼容端点不接受。做法：tool 消息只带文本，图片随后以 user 消息补发
+        // （[{type:'text'},{type:'image_url'}]），这是兼容面最广的视觉输入方式。
+        let contentStr = '';
+        let images = [];
+        if (Array.isArray(result.content)) {
+          contentStr = result.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+          images = result.content.filter((p) => p.type === 'image_url');
+        } else {
+          contentStr = String(result.content);
+        }
+        toolResults.push({ role: 'tool', tool_call_id: call.id, name, content: contentStr, isError: !!result.isError });
+        session.messages.push({
+          toolCall: {
+            name,
+            args: result.parsedArgs ?? safeParse(argsRaw),
+            result: safeSlice(contentStr, 2000),
+            isError: !!result.isError,
+            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+            ...(result.argumentsRepaired ? { argumentsRepaired: true } : {})
+          }
+        });
+        if (images.length) {
+          imageUserMessages.push({
+            role: 'user',
+            content: [
+              { type: 'text', text: `[系统：以下是工具 ${name} 返回的 ${images.length} 张图片，请直接"看图"回应]` },
+              ...images
+            ]
+          });
+          session.messages.push({ toolImages: { tool: name, count: images.length } });
+        }
+        this.sessions.update(session.id);
+        this.emit('session-update', session.id);
+        if (this.store.hasUncertainEffects(session.leaseId)) {
+          throw new Error('Delivery uncertain; batch held for operator review');
+        }
+        // 部分发送失败（sendTextBatch 有 failed 但至少一条成功）不算 isError，
+        // 但同样不能把 finish 提交掉，否则失败的那几条永远没有下一轮补发（复审 P1）。
+        // 技能白名单拦截不是"工具坏了"：不让它把 finish 屏障也一起触发，否则模型被挡住一次
+        // 就再也收不了尾。真正的工具失败仍然照旧挡 finish。
+        if ((result.isError && result.skillBlocked !== true) || result.partialFailure === true) priorFailure = true;
+        if (name === 'send_sticker'
+          && result.isError
+          && (result.errorCode === 'action-cooldown' || /这个动作刚刚用过/.test(contentStr))
+          && session.sent.length === 0
+          && session.visibleReply !== true) {
+          // 表情被冷却拦下且本轮还什么都没有送到：拦住"只 finish 不回复"（PR #65）。
+          // visibleReply（拍一拍/点赞/传相册等）已算"回过"，不必再逼一条文字。
+          unsentDeliveryFailure = true;
+        }
+        if (name === 'finish' && !result.isError) finish = true;
+        return result;
+      };
+      const mcpRun = createMcpHostRun({
+        chatKey, runId: session.id, signal,
+        allowed: () => !signal.aborted && !this.paused && !this.aborted && canRun(chatKey),
+        execute: executeOneTool,
+        transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
+      });
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,
         tools: openAiTools,
         signal,
         cacheKey: `qq-agent:${promptPrefixHash.slice(0, 32)}`,
+        mcpRun,
         purpose: 'chat',
         maxTokens: Math.max(256, Math.min(8192, maxRunTokens - runTokenUsage(session) - estimatedPromptTokens))
       });
@@ -2653,7 +2659,7 @@ export class Orchestrator {
       // 该 assistant 消息改成 tool_calls 形态回填 messages，并追加真正的 tool 结果。
       const rawContent = typeof msg.content === 'string' ? msg.content : '';
       let inlineCalls = [];
-      if (!toolCalls.length && rawContent) {
+      if (!response.toolsExecutedViaMcp && !toolCalls.length && rawContent) {
         inlineCalls = parseInlineToolCalls(rawContent);
       }
       if (inlineCalls.length) {
@@ -2708,107 +2714,13 @@ export class Orchestrator {
         }
       }
 
-      const toolResults = [];
-      const imageUserMessages = [];
-      // 只在"同一批 tool_calls"内有效：上一批的失败不挡下一批（模型可能已经在新一批里修正了）。
-      let priorFailure = false;
       // 流式响应结束后，把 assistant 条目的 tool_calls 也同步到会话消息流（一次）
       const liveTool = this.sessions.current.get(session.id);
       const lastAssistantUi = liveTool?.messages?.[liveTool.messages.length - 1];
       if (lastAssistantUi?.role === 'assistant' && Array.isArray(toolCalls) && toolCalls.length) {
         if (!lastAssistantUi.tool_calls) lastAssistantUi.tool_calls = structuredClone(toolCalls);
       }
-      for (const call of toolCalls) {
-        signal.throwIfAborted();
-        if (!canRun(chatKey)) throw new Error('Run cancelled');
-        const name = call?.function?.name ?? '';
-        const argsRaw = call?.function?.arguments ?? '{}';
-        if (['search_web', 'fetch_url', 'web_search', 'web_fetch'].includes(name)) webSearchCount += 1;
-        session.webSearchCount = webSearchCount + (session.subagentWebSearchCount || 0);
-        markActivity(`正在调用 ${name}…`);
-        // 技能白名单只收窄本轮工具；finish/skill_list/skill_use 在 skill_use 时已加入集合。
-        // send_message 永远放行：模型可能只是想“看看有哪些技能，然后正常回一句”；
-        // 不能因为列过一次技能就把正常回复也堵死。
-        const skillGate = skillGateMessage(ctx.activeSkill, ctx.pendingSkillUse, name, safeParse(argsRaw));
-        const blocked = finishBarrierBlock(name, {
-          finished: finish,
-          priorFailure,
-          unsentDeliveryFailure: unsentDeliveryFailure && session.sent.length === 0 && session.visibleReply !== true
-        }) || skillGate;
-        const result = blocked
-          ? { content: blocked, isError: true, reportIncident: false, skillBlocked: Boolean(skillGate) }
-          : await executeTool(toolDefs, ctx, name, argsRaw);
-        if (
-          result.isError
-          && result.incidentCaptured !== true
-          && result.reportIncident !== false
-        ) {
-          // 工具报错也写一行 journal（Issue #17 反馈：只进控制台异常面板、journal 里查不到，
-          // 排查时容易漏）。同一判定口径：reportIncident:false 的工具照旧不刷。
-          // 脱敏走 incident-pilot 同款规则——错误串里可能带上 URL 查询串里的 access_token。
-          log.warn(`[tool] ${name} 出错：${redactText(String(result.content || '工具执行失败').replace(/\s+/g, ' '), 160)}`);
-          this.getIncidentPilot()?.capture(new Error(String(result.content || '工具执行失败')), {
-            source: `tool:${name}`,
-            category: 'tool',
-            severity: 'warning',
-            chatKey,
-            sessionId: session.id,
-            details: { tool: name }
-          });
-        }
-        // 工具结果：文本走 tool 消息；图片（parts 数组）不能塞进 tool 消息——
-        // 很多 OpenAI 兼容端点不接受。做法：tool 消息只带文本，图片随后以 user 消息补发
-        // （[{type:'text'},{type:'image_url'}]），这是兼容面最广的视觉输入方式。
-        let contentStr = '';
-        let images = [];
-        if (Array.isArray(result.content)) {
-          contentStr = result.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
-          images = result.content.filter((p) => p.type === 'image_url');
-        } else {
-          contentStr = String(result.content);
-        }
-        toolResults.push({ role: 'tool', tool_call_id: call.id, name, content: contentStr, isError: !!result.isError });
-        session.messages.push({
-          toolCall: {
-            name,
-            args: result.parsedArgs ?? safeParse(argsRaw),
-            result: safeSlice(contentStr, 2000),
-            isError: !!result.isError,
-            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
-            ...(result.argumentsRepaired ? { argumentsRepaired: true } : {})
-          }
-        });
-        if (images.length) {
-          imageUserMessages.push({
-            role: 'user',
-            content: [
-              { type: 'text', text: `[系统：以下是工具 ${name} 返回的 ${images.length} 张图片，请直接"看图"回应]` },
-              ...images
-            ]
-          });
-          session.messages.push({ toolImages: { tool: name, count: images.length } });
-        }
-        this.sessions.update(session.id);
-        this.emit('session-update', session.id);
-        if (this.store.hasUncertainEffects(session.leaseId)) {
-          throw new Error('Delivery uncertain; batch held for operator review');
-        }
-        // 部分发送失败（sendTextBatch 有 failed 但至少一条成功）不算 isError，
-        // 但同样不能把 finish 提交掉，否则失败的那几条永远没有下一轮补发（复审 P1）。
-        // 技能白名单拦截不是"工具坏了"：不让它把 finish 屏障也一起触发，否则模型被挡住一次
-        // 就再也收不了尾。真正的工具失败仍然照旧挡 finish。
-        if ((result.isError && result.skillBlocked !== true) || result.partialFailure === true) priorFailure = true;
-        if (name === 'send_sticker'
-          && result.isError
-          && (result.errorCode === 'action-cooldown' || /这个动作刚刚用过/.test(contentStr))
-          && session.sent.length === 0
-          && session.visibleReply !== true) {
-          // 表情被冷却拦下且本轮还什么都没有送到：拦住"只 finish 不回复"（PR #65）。
-          // visibleReply（拍一拍/点赞/传相册等）已算"回过"，不必再逼一条文字。
-          unsentDeliveryFailure = true;
-        }
-        if (name === 'finish' && !result.isError) finish = true;
-      }
+      for (const call of toolCalls) await executeOneTool(call);
       messages.push(...toolResults.map(({ role, tool_call_id, name, content }) => ({ role, tool_call_id, content, name })));
       // 图片消息跟随在全部 tool 结果之后（OpenAI 校验要求每个 tool_call 都有对应 tool 消息）
       messages.push(...imageUserMessages);

@@ -290,7 +290,7 @@ async function startQrLogin(id) {
   // 必须在 await 之前拿代号：start 请求可能几秒才回来；期间用户切页/返回目录会再次
   // stopQrPoll()。若 await 后才读 qrPollGen，迟到的响应会拿到新代号并重新起轮询。
   const gen = qrPollGen;
-  setQrPanel(id, '<div class="plugin-note">正在向 B 站请求登录二维码…</div>');
+  setQrPanel(id, '<div class="plugin-note">正在请求登录二维码…</div>');
   try {
     const result = await api('/api/plugins/call', {
       method: 'POST',
@@ -302,9 +302,9 @@ async function startQrLogin(id) {
       return;
     }
     setQrPanel(id, `
-      <div class="pd-qr-title">用手机 B 站 App 扫这个码，在手机上点确认</div>
+      <div class="pd-qr-title">${esc(String(result.note || '用对应服务的手机 App 扫码，在手机上点确认'))}</div>
       <img class="pd-qr-img" src="${esc(result.qrcodeDataUrl || '')}" alt="登录二维码" width="220" height="220" />
-      <div class="pd-qr-status" data-pd-qr-status>等待扫码中…（8 分钟内有效）</div>
+      <div class="pd-qr-status" data-pd-qr-status>等待扫码中…（${Math.max(1, Math.ceil(Math.min(480, Number(result.expiresIn) || 480) / 60))} 分钟内有效）</div>
       <div style="display:flex;gap:8px">
         <button type="button" class="btn btn-small" data-pd-qr-poll="${esc(id)}">查扫码结果</button>
         <button type="button" class="btn btn-small" data-pd-qr-stop>取消</button>

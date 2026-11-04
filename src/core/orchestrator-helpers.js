@@ -1,3 +1,5 @@
+import { idList } from './list.js';
+import { privateInitiativeAllowed } from './private-proactive-policy.js';
 import { getConfig } from './config.js';
 import { minuteOfDayInZone } from './util.js';
 
@@ -163,4 +165,104 @@ export function randomWakeDelay(config = getConfig(), random = Math.random) {
   if (min > max) [min, max] = [max, min];
   const ratio = Math.min(1, Math.max(0, Number(random()) || 0));
   return Math.round(min + (max - min) * ratio);
+}
+
+/**
+ * 挑出这次"冷场主动开话题"可以去的会话（纯函数，便于单测）。
+ *
+ * 作用范围由控制台两个复选框决定：
+ *   · 群聊（proactive.groupEnabled，默认开）：沿用 allow.groups / allowAllWhenEmpty；
+ *   · 私聊（proactive.privateEnabled，默认关）：沿用 allow.private（deny 优先、名单空时看
+ *     allowAllWhenEmpty），与平时回复私聊的白名单规则一致，不另建名单。
+ */
+export function proactiveCandidates({
+  chatKeys = [], cfg = {}, metaOf = () => ({}), now = Date.now(),
+  canWake = () => true, isRunning = () => false, lastPrivateInitiativeOf = () => 0
+} = {}) {
+  // 注入点先落本地 const（ops scan --strict 只认 const/let；同 capabilities.js 约定）
+  const metaOfFn = metaOf;
+  const canWakeFn = canWake;
+  const isRunningFn = isRunning;
+  const idleMs = Math.max(300000, Number(cfg.proactive?.idleThresholdMs) || 1800000);
+  const allowGroups = idList(cfg.allow?.groups);
+  const scopes = proactiveScopes(cfg);
+  const out = [];
+  for (const chatKey of chatKeys) {
+    const [kind, id] = String(chatKey).split(':');
+    if (kind === 'group') {
+      if (!scopes.groups) continue;
+      if (allowGroups.length > 0 ? !allowGroups.includes(id) : !cfg.allowAllWhenEmpty) continue;
+    } else if (kind === 'private') {
+      if (!scopes.private) continue;
+      if (!privateInitiativeAllowed(chatKey, cfg, lastPrivateInitiativeOf(chatKey), now)) continue;
+    } else {
+      continue;
+    }
+    if (!canWakeFn(chatKey)) continue;
+    if (isRunningFn(chatKey)) continue;
+    const meta = metaOfFn(chatKey) || {};
+    if (meta.unread > 0) continue;
+    if (now - (Number(meta.lastTs) || 0) < idleMs) continue;
+    out.push(chatKey);
+  }
+  return out;
+}
+
+export function triggerKindForTier(result = {}, {
+  manual = false,
+  proactive = false,
+  chatKey = ''
+} = {}) {
+  const tier = Number(result?.tier);
+  const reason = String(result?.reason || '');
+  if (manual) return 'manual';
+  if (proactive) return 'proactive';
+  if (reason === '私聊' || String(chatKey).startsWith('private:')) return 'private';
+  if (tier === 1 || reason === '被艾特') return 'mention';
+  if (tier === 2 || reason === '关键词命中') return 'keyword';
+  if (tier === 3 || reason.startsWith('随机命中')) return 'probability';
+  if (tier === 4 || reason === '全部响应') return 'all';
+  if (tier === 5 || /引用机器人/.test(reason)) return 'reply';
+  if (tier === 6 || /生命周期：(?:活跃|监听)状态/.test(reason)) return 'lifecycle';
+  if (tier === 7 || /硬上限后的任意消息续接/.test(reason)) return 'rollover';
+  if (tier === 8 || reason === '失败批次重试') return 'retry';
+  return 'unknown';
+}
+
+/**
+ * 是否该跑一次自动记忆整理（纯函数，便于单测）。
+ *
+ * 触发规则：
+ *   - 一条印象都没有时：**允许跑一次**。整理里的"发现新人"那条路
+ *     （发言够多但零印象的人 → 新建印象）正是给这种情况准备的；如果这里也按
+ *     "印象数 > 阈值"卡住，新装实例的自动整理就永远不会触发 ——
+ *     印象数从 0 开始，永远够不到阈值，于是谁都没有人物记忆。
+ *   - 已经有印象时：按阈值来（全群总数超过 minImpressions，或某人超过 maxPerMember）。
+ */
+export function shouldAutoConsolidate({
+  impressionCount = 0,
+  memberCounts = [],
+  minImpressions = 4,
+  maxPerMember = 5
+} = {}) {
+  const total = Number(impressionCount) || 0;
+  if (total <= 0) return true;
+  if (total > Math.max(1, Number(minImpressions) || 4)) return true;
+  return memberCounts.some((count) => Number(count) > Math.max(2, Number(maxPerMember) || 5));
+}
+
+/**
+ * 同一份记忆的两条记录合成一条时用（遗留条目反查出的 QQ 与本人记录指向同一个人）：
+ * 按正文去重，保留先出现那条的时间戳与来源。
+ */
+export function mergeImpressionLists(base = [], extra = []) {
+  const out = [...(Array.isArray(base) ? base : [])];
+  const seen = new Set(out.map((e) => String(e?.content ?? '')));
+  for (const entry of Array.isArray(extra) ? extra : []) {
+    const content = String(entry?.content ?? '');
+    if (!content || seen.has(content)) continue;
+    seen.add(content);
+    out.push(entry);
+  }
+  return out;
 }

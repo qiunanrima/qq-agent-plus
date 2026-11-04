@@ -311,6 +311,13 @@ v1 插件原样可用，加载时 `apiVersion` 字段在 1 与 2 之间都算兼
 
 ### 官方例子
 
+`examples/plugins/xiaomi-health` 是非官方小米运动健康的宿主适配：控制台扫码、
+宿主加密凭据、管理员私聊只读查询（步数/睡眠/心率），不自动播报或写入记忆。
+安装、接口限制与回滚见该目录 README.md；需要本人扫码验证真实账号可用性。
+HTTP 能力新增可选 `redirect: 'manual'`，返回中间响应的 `location`；只有显式
+`withSetCookies: true` 且声明 secrets 的插件能读 Cookie。默认重定向策略不变，
+手动跟随的下一次请求仍独立通过全部网络守卫。
+
 `examples/plugins/bilibili` 是完整的 v2 例子：读接口、DASH 下载合流、写操作（授权 + 配额）。
 它的用法与限制见 [BILIBILI.md](BILIBILI.md)。
 

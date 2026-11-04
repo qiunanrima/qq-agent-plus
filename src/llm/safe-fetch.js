@@ -292,7 +292,8 @@ function requestHttp1(url, ip, { asBinary = false, maxBytes = 50000, signal, hea
       if ([301, 302, 303, 307, 308].includes(statusCode)) {
         // 不要 resume() 排空响应体：它不计入 maxBytes，恶意目标可以一直吐数据把连接占住
         res.destroy();
-        resolve({ statusCode, redirect: String(res.headers.location || '') });
+        resolve({ statusCode, redirect: String(res.headers.location || ''),
+          ...(wantSetCookies ? { setCookies: res.headers['set-cookie'] || [] } : {}) });
         return;
       }
       const typeError = rejectedContentType(statusCode, String(res.headers['content-type'] || ''), acceptContentType);
@@ -448,7 +449,8 @@ function requestHttp2(url, ip, { asBinary = false, maxBytes = 50000, signal, hea
       };
       if ([301, 302, 303, 307, 308].includes(statusCode)) {
         stream.close(http2.constants.NGHTTP2_CANCEL);
-        settle({ statusCode, redirect: firstHeader(responseHeaders.location) });
+        settle({ statusCode, redirect: firstHeader(responseHeaders.location),
+          ...(wantSetCookies ? { setCookies: setCookieValues(responseHeaders['set-cookie']) } : {}) });
         return;
       }
       const typeError = rejectedContentType(statusCode, meta.contentType, acceptContentType);
@@ -562,7 +564,7 @@ export async function safeFetch(urlString, { maxBytes = 50000, signal, headers, 
  */
 export async function safeFetchRequest(urlString, {
   method = 'GET', headers = null, body = null, maxBytes = 50000, signal, decompress = false,
-  allowedDomains = null, allowPrivate = false, withSetCookies = false
+  allowedDomains = null, allowPrivate = false, withSetCookies = false, redirect = 'follow'
 } = {}) {
   const verb = String(method || 'GET').toUpperCase();
   if (!['GET', 'POST'].includes(verb)) throw new Error(`不支持的请求方法：${verb}（只允许 GET / POST）`);
@@ -580,6 +582,13 @@ export async function safeFetchRequest(urlString, {
       wantSetCookies: withSetCookies
     });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
+      // Authentication clients need the intermediate cookies. Never follow or send credentials
+      // here: the next request must independently pass the normal URL/domain/DNS guards.
+      if (redirect === 'manual') return {
+        statusCode: result.statusCode, body: '', truncated: false,
+        location: String(result.redirect || ''),
+        ...(withSetCookies ? { setCookies: result.setCookies || [] } : {})
+      };
       if (verb !== 'GET') throw new Error(`请求被重定向（HTTP ${result.statusCode}）：已停止，避免把凭据带到另一个地址`);
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();

@@ -35,6 +35,8 @@ export function permissionFlagSupported() {
  */
 export function pluginNodeArgs({ pluginDir = '' } = {}) {
   const args = ['--permission'];
+  // Node 26 gates net APIs; Linux network namespaces remain unchanged.
+  if (process.allowedNodeEnvironmentFlags?.has?.('--allow-net')) args.push('--allow-net');
   // 权限模型会打一条 ExperimentalWarning 到 stderr，混在插件日志里既吵又容易被当成故障。
   // 老 node 不认这个 flag 时不加（认不认由 probeIsolation 实测）。
   if (process.allowedNodeEnvironmentFlags?.has?.('--disable-warning')) {

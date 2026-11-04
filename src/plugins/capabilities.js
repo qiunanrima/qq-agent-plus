@@ -267,7 +267,7 @@ export function createCapabilities({
       return { ok: true, chatKey: target, chars: body.length };
     },
 
-    [CAP_METHODS.httpRequest]: async ({ url, maxChars, method, headers, body, decompress, withSetCookies } = {}) => {
+    [CAP_METHODS.httpRequest]: async ({ url, maxChars, method, headers, body, decompress, withSetCookies, redirect } = {}) => {
       const target = String(url ?? '').trim();
       if (!target) throw fail('E_ARGS', 'url 不能为空');
       let parsed;
@@ -317,6 +317,7 @@ export function createCapabilities({
         // 默认关。开着时也只把 cookie 名与值交给**声明了 secrets 能力**的插件，
         // 且写一条日志（哪个插件在什么时候收了凭据）。
         withSetCookies: withSetCookies === true && (pluginManifest?.capabilities || []).includes('secrets'),
+        redirect: redirect === 'manual' ? 'manual' : 'follow',
         // 白名单跟着每一跳重定向走：只查初始 URL 的话，白名单域一个 302 就能带去任意站
         allowedDomains: httpDomains.length ? httpDomains : null
       });
@@ -329,6 +330,7 @@ export function createCapabilities({
         truncated: Boolean(result?.truncated),
         body: String(result?.body ?? '').slice(0, limit)
       };
+      if (redirect === 'manual' && result?.location) out.location = String(result.location);
       if (Array.isArray(result?.setCookies) && result.setCookies.length) {
         out.setCookies = result.setCookies.map(String).slice(0, 20);
         log(`[plugin:${pluginId}] 收到 Set-Cookie 响应头（${result.setCookies.length} 条，凭据类，只交给声明 secrets 的插件）`);

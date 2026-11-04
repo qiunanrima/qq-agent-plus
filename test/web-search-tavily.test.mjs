@@ -161,7 +161,7 @@ test('aggregateSearch：保留页面身份 query，只忽略 tracking 参数与�
   assert.equal(r.results[0].title, 'ID one', '返回原 URL、标题与靠前来源');
 });
 
-test('aggregateSearch：非法或相对 URL 不抛错，仍按原字符串保守去重', async () => {
+test('aggregateSearch：非法或相对 URL 不抛错，过滤后不进入模型结果', async () => {
   setWebSearch({
     provider: 'aggregate',
     aggregate: { sources: ['tavily'], count: 4 },
@@ -174,7 +174,7 @@ test('aggregateSearch：非法或相对 URL 不抛错，仍按原字符串保守
   ] }) });
   const { aggregateSearch } = await import('../src/llm/web-search.js');
   const r = await aggregateSearch('测试');
-  assert.deepEqual(r.results.map((x) => x.url), ['relative/path', 'not a url']);
+  assert.deepEqual(r.results.map((x) => x.url), []);
 });
 
 test('aggregateSearch：同名参数顺序可能表示有序列表，不能交换后误合并', async () => {
@@ -228,14 +228,14 @@ test('searchResultDedupeKey：tracking、hash 路由、参数顺序与坏 URL �
     ['https://x.example/a?q=a%2Bb', 'https://x.example/a?q=a+b'],
     ['https://x.example/a', 'http://x.example/a'],
     ['https://x.example/a', 'https://x.example/a/'],
-    ['relative/path', 'relative/other'],
-    ['ftp://x.example/a?utm_source=1', 'ftp://x.example/a?utm_source=2']
   ];
   for (const [left, right] of different) {
     assert.notEqual(key(left), key(right), `${left} 不能与 ${right} 合并`);
   }
   assert.equal(key(''), '');
-  assert.equal(key('relative/path'), 'relative/path');
+  assert.equal(key('relative/path'), '');
+  assert.equal(key('ftp://x.example/a'), '');
+  assert.equal(key('javascript:alert(1)'), '');
 });
 
 test('aggregateSearch：全部源失败才报错，错误信息带各源原因', async () => {

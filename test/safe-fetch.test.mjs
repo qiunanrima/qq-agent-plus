@@ -70,6 +70,28 @@ function listen(server) {
   });
 }
 
+test('manual redirect returns intermediate cookies only on opt-in, never follows target (HTTP/1 and HTTP/2)', async t => {
+  for (const h2 of [false, true]) {
+    let hits = 0;
+    const handler = (req, res) => {
+      hits++;
+      res.writeHead(302, { location: 'https://untrusted.invalid/ticket', 'set-cookie': ['session=secret; Secure'] });
+      res.end();
+    };
+    const server = h2 ? http2.createSecureServer({ key: TLS_KEY, cert: TLS_CERT }, handler) : http.createServer(handler);
+    const port = await listen(server);
+    t.after(() => closeServer(server));
+    const url = `${h2 ? 'https://pinned.test' : 'http://127.0.0.1'}:${port}/start`;
+    const result = await safeFetchRequest(url, { redirect: 'manual', allowPrivate: true, withSetCookies: true });
+    assert.equal(result.statusCode, 302);
+    assert.equal(result.location, 'https://untrusted.invalid/ticket');
+    assert.deepEqual(result.setCookies, ['session=secret; Secure']);
+    const plain = await safeFetchRequest(url, { redirect: 'manual', allowPrivate: true });
+    assert.equal('setCookies' in plain, false);
+    assert.equal(hits, 2);
+  }
+});
+
 function closeServer(server) {
   server.close();
   server.closeAllConnections?.();

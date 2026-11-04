@@ -14,6 +14,7 @@ import path from 'node:path';
 import { parsePluginManifest, qualifiedToolName } from './manifest.js';
 import { readPluginInstallInfo, listPluginBackups } from './install.js';
 import { PluginHost } from './host.js';
+import { explicitHealthRead } from './health-read-consent.js';
 import { isolationSummary, probeIsolation } from './isolation.js';
 import { sanitizeUserText } from '../core/util.js';
 import { sanitizeDeep } from '../tools/tools-core.js';
@@ -1094,6 +1095,9 @@ export class PluginRegistry {
         const last = [...(ctx?.triggerEntries || [])].reverse()
           .find((message) => !message?.self && message?.senderId !== undefined && message?.senderId !== null);
         context.senderIsOwner = Boolean(owner && last && String(last.senderId) === String(owner));
+        if (host.id === 'xiaomi-health' && context.senderIsOwner && context.chatKey.startsWith('private:')) {
+          context.explicitHealthRead = explicitHealthRead(last.text);
+        }
       }
       // approved：写操作已过宿主三层门，插件不必（也不应）再走自己的 cap.approval.check
       if (gate?.proceed === true) context.approved = { action: gate.action, target: gate.target };

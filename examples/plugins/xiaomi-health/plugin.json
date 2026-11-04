@@ -1,0 +1,105 @@
+{
+  "id": "xiaomi-health",
+  "apiVersion": 2,
+  "name": "小米运动健康",
+  "version": "1.0.7",
+  "description": "非官方中国区健康数据接入：控制台扫码登录，管理员私聊查询步数、睡眠、心率；凭据加密保存。",
+  "entry": "index.mjs",
+  "capabilities": [
+    "tools",
+    "http",
+    "config",
+    "secrets",
+    "send"
+  ],
+  "httpDomains": [
+    "account.xiaomi.com",
+    "sts-hlth.io.mi.com",
+    "hlth.io.mi.com"
+  ],
+  "httpMaxBytes": 512000,
+  "engines": {
+    "minVersion": "0.9.13"
+  },
+  "settings": {
+    "groups": [
+      {
+        "key": "account",
+        "title": "小米运动健康（中国区，非官方）",
+        "description": "使用 App 非公开接口，可能随时失效。扫码建立账号登录态，并非官方细粒度授权。仅连接本人的账号；查询限管理员私聊或控制台，不自动播报、不写入长期记忆。",
+        "fields": [
+          {
+            "key": "acceptUnofficial",
+            "label": "已了解并启用非官方接口",
+            "type": "boolean",
+            "default": false
+          },
+          {
+            "key": "allowAgentRead",
+            "label": "允许 Agent 读取健康数据",
+            "type": "boolean",
+            "default": false,
+            "help": "默认禁止。开启后，管理员当前消息明确要求的查询不另发提示；Agent 自行读取时，插件先私聊通知管理员，不含健康数值，通知失败则不读取。扫码和控制台登录检测不受影响。需配套新版宿主识别明确请求。"
+          },
+          {
+            "key": "session",
+            "label": "加密登录会话（扫码自动保存）",
+            "type": "secret",
+            "help": "无需手动填写。点击清除可移除已保存的凭据；不会撤销小米端账号登录，也不会删除其他数据。"
+          }
+        ]
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "login",
+      "description": "小米运动健康账号管理，仅限已鉴权控制台。聊天中请提示用户打开控制台→插件→小米运动健康扫码登录。",
+      "timeoutMs": 90000,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "poll",
+              "status",
+              "logout"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "query",
+      "description": "查询本人健康：metric=steps（步数）/sleep（睡眠）/heart_rate（心率）/all，days=1至7整数，均可省略。仅管理员私聊；云端同步记录，非实时、不用于诊断。",
+      "timeoutMs": 180000,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "metric": {
+            "type": "string",
+            "enum": [
+              "steps",
+              "sleep",
+              "heart_rate",
+              "all"
+            ]
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  ],
+  "schedule": []
+}

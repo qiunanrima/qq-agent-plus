@@ -8,6 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { assertTimeAllowed, watchTimeWindow } from '../core/time-gate.js';
 import { readJsonBounded, readTextBounded } from '../core/http-body.js';
 import { createLogger } from '../core/logger.js';
+import { usesAntigravity } from '../antigravity-cli/config.js';
+import { antigravityCompletion } from '../antigravity-cli/index.js';
 
 const log = createLogger('llm');
 
@@ -112,6 +114,7 @@ function effectiveApi() {
  *   - 主动中止（abort）
  */
 export function isRetryableError(error) {
+  if (error?.code === 'ANTIGRAVITY_NO_RETRY') return false;
   if (error?.code === 'TIME_CONTROL_INACTIVE') return false;
   const msg = String(error?.message ?? error ?? '');
 
@@ -341,6 +344,11 @@ function pickFallback(args) {
  */
 export async function chatCompletionWithRetry(args, retries = 2) {
   llmRuntimeStats.requests += 1;
+  // CLI outcomes are never replayed or sent to an HTTP fallback.
+  if (usesAntigravity(getConfig(), args)) {
+    try { return await chatCompletion(args); }
+    catch (error) { llmRuntimeStats.failures += 1; throw error; }
+  }
   let response = null;
   let primaryError = null;
   try {
@@ -412,9 +420,24 @@ export async function chatCompletion({
   maxTokens = null,
   purpose = '',
   usageTracked = false,
-  thinkingIntent = null
+  thinkingIntent = null,
+  mcpRun = null
 }) {
   assertTimeAllowed();
+  if (usesAntigravity(getConfig(), { purpose, overrides })) {
+    llmRuntimeStats.attempts += 1;
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const release = watchTimeWindow(error => controller.abort(error));
+    try {
+      const result = await antigravityCompletion({ config: getConfig().antigravityCli, messages, tools, toolChoice,
+        signal: controller.signal, isEnabled: () => getConfig().antigravityCli?.enabled === true, mcpRun });
+      if (!usageTracked) recordUntracked(result, purpose);
+      return result;
+    } finally { release(); signal?.removeEventListener('abort', abort); }
+  }
   const api = overrides || effectiveApi();
   // 默认遵守渠道/用途设置；感知与背景提词可单次请求关闭思考，不改持久配置。
   const thinking = thinkingFor(purpose, overrides, thinkingIntent);
