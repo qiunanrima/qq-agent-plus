@@ -3,6 +3,9 @@ import { describe, it } from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-orchestrator-'));
 process.env.QQ_AGENT_DATA_DIR = root;
@@ -161,6 +164,33 @@ describe('Orchestrator', () => {
     });
     return { cfg, runner, store, sessions, memory, handoffs, append };
   }
+
+  it('MCP uses the normal send/audit/finish gates without replaying model text or launching another CLI', async (t) => {
+    const { cfg, runner, append, sessions } = fixture(t);
+    const workspace = fs.mkdtempSync(path.join(root, 'mcp-workspace-'));
+    cfg.antigravityCli = { ...cfg.antigravityCli, enabled: true, transport: 'mcp', agent: 'qq-mcp', workspace, executable: 'test-agy', timeoutMs: 10000 };
+    const originalSpawn = childProcess.spawn;
+    let cliCalls = 0;
+    childProcess.spawn = (exe, args, options) => {
+      if (exe !== 'test-agy') return originalSpawn(exe, args, options);
+      cliCalls += 1;
+      return originalSpawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-mcp-cli.mjs', import.meta.url))], options);
+    };
+    syncBuiltinESMExports();
+    t.after(() => { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); });
+    globalThis.fetch = async () => Response.json({ choices: [{ message: { content: '{}' } }], usage: { total_tokens: 1 } });
+    append(1, '@bot 测试 MCP');
+    await runner.wake('group:1');
+    const detail = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(detail.error, null);
+    assert.equal(cliCalls, 1);
+    assert.equal(detail.sent.length, 1, 'MCP send must not execute again from final model text');
+    assert.equal(detail.sent[0].text, 'MCP pong');
+    const sends = detail.messages.filter(message => message.toolCall?.name === 'send_message');
+    assert.equal(sends.filter(message => !message.toolCall.isError).length, 1);
+    assert.ok(sends.some(message => message.toolCall.isError), 'finish must block a later send');
+    assert.deepEqual(fs.readdirSync(workspace), [], 'run MCP config and token must be removed');
+  });
 
   it('感知专用模型缺失时不回退主模型，明确回复可直接唤醒', async (t) => {
     const { runner, cfg, append, sessions } = fixture(t);

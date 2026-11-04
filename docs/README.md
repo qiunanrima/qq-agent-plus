@@ -13,6 +13,8 @@
 | [CONFIG-EXAMPLES.md](CONFIG-EXAMPLES.md) | 常用配置片段：思考模式、兜底模型、视觉、主动发言、表情包、节奏、拟人化表达、QQ 空间来源与周期提醒 |
 | [HUMANIZE.md](HUMANIZE.md) | 拟人化表达：运行时实现（气泡整形、角色声音、few-shot、诚实边界）、客观指标、盲评量表与调参顺序 |
 | [MCP.md](MCP.md) | MCP：客户端配置（stdio server、工具挂载）、只读资源服务（人物记忆/梗库/提醒）、安全边界与运维接口 |
+| [ANTIGRAVITY_CLI.md](ANTIGRAVITY_CLI.md) | Antigravity CLI 实验接入：Debian 服务用户安装、认证、配置与回滚 |
+| [ANTIGRAVITY_MCP.md](ANTIGRAVITY_MCP.md) | 将单次会话授权工具通过本地 MCP 暴露给 CLI，含隔离边界与离线验证 |
 | [MODERATION.md](MODERATION.md) | 群管理动作：管理员门槛、禁言/踢人/撤回/设管理员 |
 | [KNOWLEDGE.md](KNOWLEDGE.md) | 轻量知识库：目录、切片、关键词检索与边界（不是完整 RAG） |
 | [LIVING-MEMORY.md](LIVING-MEMORY.md) | 长期向量记忆：主进程内 SQLite 存储、语义召回、Embedding 环境变量与隐私边界 |
@@ -26,6 +28,13 @@
 | [DAILY_MOMENTS.md](DAILY_MOMENTS.md) | QQ 空间动态：来源（人设自己 / 群聊 / 混合）、默认草稿与编辑、去重、计划与时间口径 |
 | [QZONE_INTERACTIONS.md](QZONE_INTERACTIONS.md) | 好友动态与评论回复的巡检节奏与退避 |
 | [MEMORY.md](MEMORY.md) | 人物印象与会话交接、FTS5 + 中文二元组检索、可见性、容量/保留期与召回基准 |
+| [HIPPOCAMPUS.md](HIPPOCAMPUS.md) | 海马与跨会话记忆：记录、摘要和记忆检索 |
+| [PERSONALITY_MEMORY.md](PERSONALITY_MEMORY.md) | 人格成长记忆的配置、审核与运行边界 |
+| [PERSONA_BACKGROUND.md](PERSONA_BACKGROUND.md) | 角色背景知识的配置与按需召回 |
+| [ROLEPLAY.md](ROLEPLAY.md) | 角色扮演与真实感的提示词约定 |
+| [IMAGE-LINKS.md](IMAGE-LINKS.md) | 聊天中图片链接的识别与处理 |
+| [SUBAGENTS.md](SUBAGENTS.md) | 受限子代理的授权、调用和运行限制 |
+| [WEB_SEARCH.md](WEB_SEARCH.md) | 搜索工具的参数与结果契约 |
 | [SKILLS.md](SKILLS.md) | 技能包：只读 Markdown 流程、工具白名单、按群启用、安全边界与内置示例 |
 | [SKILL-SUBMISSION.md](SKILL-SUBMISSION.md) | 向官方技能市场提交技能：打包脚本、托管、哈希与审核标准 |
 | [model-prices.md](model-prices.md) | 价格体系：模型 id 归一化与别名、渠道价、账户口径三选一、实付/估算/未定价 |

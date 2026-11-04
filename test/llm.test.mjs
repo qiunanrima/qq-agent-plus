@@ -20,6 +20,28 @@ const {
 const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js');
 
 describe('LLM client', () => {
+  it('routes chat to CLI without HTTP retries or fallback on failure', async (t) => {
+    const { getConfig } = await import('../src/core/config.js');
+    const previous = structuredClone(getConfig());
+    const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; setRuntimeConfig(previous); });
+    let httpCalls = 0;
+    globalThis.fetch = async () => { httpCalls += 1; throw new Error('Unexpected HTTP fallback'); };
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.antigravityCli = { ...config.antigravityCli, enabled: true, workspace: __dir, executable: path.join(__dir, 'missing-agy') };
+    config.api.fallback = { enabled: true, model: 'fallback', baseUrl: 'https://fallback.example/v1', apiKey: 'test' };
+    setRuntimeConfig(config);
+    const { llmRuntimeStats } = await import('../src/llm/llm.js');
+    const attempts = llmRuntimeStats.attempts;
+    await assert.rejects(chatCompletionWithRetry({ purpose: 'chat', messages: [{ role: 'user', content: 'hello' }] }, 3), error => {
+      assert.equal(error.code, 'ANTIGRAVITY_NO_RETRY');
+      assert.equal(isRetryableError(error), false);
+      return true;
+    });
+    assert.equal(llmRuntimeStats.attempts - attempts, 1);
+    assert.equal(httpCalls, 0);
+  });
+
   it('reads cached input tokens from supported provider response shapes', () => {
     assert.equal(cachedTokensOfUsage({
       prompt_tokens_details: { cached_tokens: 120 }
