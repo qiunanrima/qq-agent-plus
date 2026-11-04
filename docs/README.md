@@ -28,6 +28,13 @@
 | [DAILY_MOMENTS.md](DAILY_MOMENTS.md) | QQ 空间动态：来源（人设自己 / 群聊 / 混合）、默认草稿与编辑、去重、计划与时间口径 |
 | [QZONE_INTERACTIONS.md](QZONE_INTERACTIONS.md) | 好友动态与评论回复的巡检节奏与退避 |
 | [MEMORY.md](MEMORY.md) | 人物印象与会话交接、FTS5 + 中文二元组检索、可见性、容量/保留期与召回基准 |
+| [HIPPOCAMPUS.md](HIPPOCAMPUS.md) | 海马与跨会话记忆：记录、摘要和记忆检索 |
+| [PERSONALITY_MEMORY.md](PERSONALITY_MEMORY.md) | 人格成长记忆的配置、审核与运行边界 |
+| [PERSONA_BACKGROUND.md](PERSONA_BACKGROUND.md) | 角色背景知识的配置与按需召回 |
+| [ROLEPLAY.md](ROLEPLAY.md) | 角色扮演与真实感的提示词约定 |
+| [IMAGE-LINKS.md](IMAGE-LINKS.md) | 聊天中图片链接的识别与处理 |
+| [SUBAGENTS.md](SUBAGENTS.md) | 受限子代理的授权、调用和运行限制 |
+| [WEB_SEARCH.md](WEB_SEARCH.md) | 搜索工具的参数与结果契约 |
 | [SKILLS.md](SKILLS.md) | 技能包：只读 Markdown 流程、工具白名单、按群启用、安全边界与内置示例 |
 | [SKILL-SUBMISSION.md](SKILL-SUBMISSION.md) | 向官方技能市场提交技能：打包脚本、托管、哈希与审核标准 |
 | [model-prices.md](model-prices.md) | 价格体系：模型 id 归一化与别名、渠道价、账户口径三选一、实付/估算/未定价 |
