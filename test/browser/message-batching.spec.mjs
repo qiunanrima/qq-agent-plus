@@ -1,0 +1,20 @@
+import { test, expect } from '@playwright/test';
+import { login, switchTo } from './helpers.mjs';
+test('分段等待可手调，零值及刷新后保存不丢失', async ({ page }) => {
+  await login(page); await page.goto('/'); await switchTo(page, 'settings');
+  await page.click('.settings-menu-item[data-section="chat"]');
+  await page.locator('#cfg-wakedelay-min').fill('5000');
+  await page.locator('#cfg-wakedelay-max').fill('20000');
+  await page.locator('#cfg-direct-wakedelay').fill('5000');
+  await page.locator('#cfg-max-batch-wait').fill('20000');
+  await page.click('#save-cfg-btn');
+  await expect(page.locator('#cfg-save-result')).toHaveText('已保存 ✓');
+  await page.reload(); await switchTo(page, 'settings');
+  await page.click('.settings-menu-item[data-section="chat"]');
+  await expect(page.locator('#cfg-direct-wakedelay')).toHaveValue('5000');
+  await expect(page.locator('#cfg-max-batch-wait')).toHaveValue('20000');
+  await page.locator('#cfg-direct-wakedelay').fill('0');
+  await page.click('#save-cfg-btn');
+  await expect(page.locator('#cfg-save-result')).toHaveText('已保存 ✓');
+  expect((await (await page.request.get('/api/config')).json()).directWakeDelayMs).toBe(0);
+});

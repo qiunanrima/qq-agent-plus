@@ -256,11 +256,15 @@ return `
 
     <h3>所有模式 · 运行节奏</h3>
     <div class="field-row">
-      <div class="field"><label>未思考等待最短值（毫秒）</label><input type="number" id="cfg-wakedelay-min" min="0" max="20000" value="${esc(c.wakeDelayMinMs ?? c.wakeDelayMs ?? 8000)}" /></div>
-      <div class="field"><label>未思考等待最长值（毫秒）</label><input type="number" id="cfg-wakedelay-max" min="0" max="20000" value="${esc(c.wakeDelayMaxMs ?? c.wakeDelayMs ?? 12000)}" /></div>
+      <div class="field"><label>群聊聚合最短等待（毫秒）</label><input type="number" id="cfg-wakedelay-min" min="0" max="20000" value="${esc(c.wakeDelayMinMs ?? c.wakeDelayMs ?? 8000)}" /></div>
+      <div class="field"><label>群聊聚合最长等待（毫秒）</label><input type="number" id="cfg-wakedelay-max" min="0" max="20000" value="${esc(c.wakeDelayMaxMs ?? c.wakeDelayMs ?? 12000)}" /></div>
+      <div class="field"><label for="cfg-direct-wakedelay">私聊 / @ 聚合等待（毫秒）</label><input type="number" id="cfg-direct-wakedelay" min="0" max="20000" value="${esc(c.directWakeDelayMs ?? 300)}" /></div>
+      <div class="field"><label for="cfg-max-batch-wait">连续分段最多等待（毫秒）</label><input type="number" id="cfg-max-batch-wait" min="100" max="20000" value="${esc(c.maxBatchWaitMs ?? 20000)}" /></div>
       <div class="field"><label>批次间隔（毫秒）—— 上轮结束到下轮处理的间隔</label><input type="number" id="cfg-draindelay" min="0" value="${esc(c.drainDelayMs)}" /></div>
       <div class="field"><label>同时处理几个会话</label><input type="number" id="cfg-maxruns" min="1" max="8" value="${esc(c.maxConcurrentRuns)}" /></div>
     </div>
+
+    <div class="hint">想把分段发送的话一起处理，可将群聊等待设为5000～20000、私聊 / @ 设为5000、连续分段最多等待设为20000。新消息会延后开始处理，但从第一条起不超过总等待上限；这是模型调用前的聚合时间，不包含思考和发送耗时。保存后生效。</div>
 
     <h3>所有模式 · 发送保护</h3>
     <div class="field-row">

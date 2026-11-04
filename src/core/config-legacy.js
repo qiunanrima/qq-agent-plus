@@ -2208,6 +2208,8 @@ export function updateConfig(patch, { force = false } = {}) {
   next.wakeDelayMinMs = wakeMin;
   next.wakeDelayMaxMs = wakeMax;
   next.wakeDelayMs = Math.round((wakeMin + wakeMax) / 2);
+  next.directWakeDelayMs = Math.min(20000, Math.max(0, Math.round(Number(next.directWakeDelayMs) || 0)));
+  next.maxBatchWaitMs = Math.min(20000, Math.max(100, Math.round(Number(next.maxBatchWaitMs) || 20000)));
   next.conversation.lifecycleRolloverInputTokens = Math.min(
     500000,
     Math.max(
