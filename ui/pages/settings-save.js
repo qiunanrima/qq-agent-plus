@@ -835,6 +835,8 @@ async function saveConfig({ quiet = false } = {}) {
     patch.wakeDelayMinMs = wakeDelayMinMs;
     patch.wakeDelayMaxMs = wakeDelayMaxMs;
     patch.wakeDelayMs = Math.round((wakeDelayMinMs + wakeDelayMaxMs) / 2);
+    patch.directWakeDelayMs = clampInt(val('#cfg-direct-wakedelay', c.directWakeDelayMs ?? 300), 0, 20000, 300);
+    patch.maxBatchWaitMs = clampInt(val('#cfg-max-batch-wait', c.maxBatchWaitMs ?? 20000), 100, 20000, 20000);
     patch.drainDelayMs = numKeep(val('#cfg-draindelay', c.drainDelayMs), c.drainDelayMs, 0, 600000, 1200);
     patch.maxConcurrentRuns = Number(val('#cfg-maxruns', c.maxConcurrentRuns)) || 2;
     patch.conversation = {

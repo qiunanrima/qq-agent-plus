@@ -192,6 +192,22 @@ describe('Orchestrator', () => {
     assert.deepEqual(fs.readdirSync(workspace), [], 'run MCP config and token must be removed');
   });
 
+  it('分段聚合保留一次概率判定，明确互动允许等待五秒', async (t) => {
+    const { runner, cfg, append } = fixture(t);
+    cfg.wakeDelayMinMs = 5000; cfg.wakeDelayMaxMs = 20000; cfg.directWakeDelayMs = 5000;
+    let rolls = 0;
+    runner.random = () => (++rolls === 1 ? 0.05 : 0.9);
+    append('fragment-one', '前半句'); runner.onIncoming('group:1');
+    const firstRoll = runner.pendingRolls.get('group:1').roll;
+    append('fragment-two', '后半句'); runner.onIncoming('group:1');
+    assert.equal(runner.pendingRolls.get('group:1').roll, firstRoll);
+    let delay;
+    runner.scheduleWake = (_key, value) => { delay = value; };
+    runner.onIncoming('group:1', { mentionsSelf: true });
+    assert.equal(delay, 5000);
+  });
+
+
   it('感知专用模型缺失时不回退主模型，明确回复可直接唤醒', async (t) => {
     const { runner, cfg, append, sessions } = fixture(t);
     const { PerceptionWake } = await import('../src/memory/perception.js');

@@ -252,3 +252,21 @@ test('缺少正式摘要时保留聊天事实，今日不提前消化，次日3�
   assert.equal(calls, 1);
   assert.equal(memory.inspectionPersonCards().entries.length, 1);
 });
+
+test('不同角色分批消化，短编号映射真实来源，下一批继续处理其余角色', async (t) => {
+  const f = fixture(t);
+  f.capture('甲喜欢红豆', { role: persona });
+  f.capture('甲喜欢芋泥', { role: { ...persona, roleText: '其他角色' } });
+  f.setTime('2026-11-02T03:00:00');
+  const complete = async (messages) => {
+    const { episodes } = JSON.parse(messages[1].content);
+    assert.equal(new Set(episodes.map((r) => r.persona)).size, 1);
+    assert.equal(episodes[0].id, 'e1');
+    return { cards: [{ episodeIds: ['e1'], kind: 'person', subject: '12345', title: '印象', content: '甲喜欢甜食' }] };
+  };
+  await f.memory.maintain({ complete });
+  assert.equal(f.memory.episodes().filter((r) => r.digested).length, 1);
+  f.setTime('2026-11-02T03:02:00');
+  await f.memory.maintain({ complete });
+  assert.equal(f.memory.episodes().filter((r) => r.digested).length, 2);
+});

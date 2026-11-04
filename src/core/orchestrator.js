@@ -780,7 +780,7 @@ export class Orchestrator {
         return;
       }
     }
-    const directDelay = Math.max(0, Math.min(2000, Number(getConfig().directWakeDelayMs) || 300));
+    const directDelay = Math.max(0, Math.min(20000, Number(getConfig().directWakeDelayMs ?? 300) || 0));
     this.scheduleWake(chatKey, direct ? directDelay : null, { direct });
   }
 
@@ -1057,7 +1057,7 @@ export class Orchestrator {
       // 概率档下"要不要回"是随机的：预判与实跑必须是同一次掷骰，
       // 否则会出现"会话页显示等待中、随后又干净消失"或者反过来的自相矛盾
       // （2026-09-22 审查发现）。这里掷一次存起来，wake 时取走。
-      const roll = this.random() * 100;
+      const roll = this.pendingRolls.get(chatKey)?.roll ?? this.random() * 100;
       this.pendingRolls.set(chatKey, { roll, at: Date.now() });
       // 这一段里有 store 读（#predictTier 的档位判定、#applyWaitingConversation 的写回）：
       // 中间抛出去就会留下上面 #abortSchedule 注释里那两笔烂账，所以整体兜住（2026-10-08 审查）。
@@ -2281,9 +2281,7 @@ export class Orchestrator {
           .filter((m) => m.eventKind !== 'game-secret')
           .slice(-8).map((m) => String(m.text || '').slice(0, 1500)).join('\n');
         backgroundRecall = await personaBackground.recall(persona, { text: scanText, signal,
-          scanCacheKey: conversationCfg.mode === 'lifecycle' && kind === 'group'
-            && !this.#isReplyToSelf(chatKey, triggerEntries)
-            && !triggerEntries.some((m) => mentionsOrPokesBot(m, cfg.onebot?.selfId || this.onebot.selfId)) ? chatKey : '',
+          scanCacheKey: `${chatKey}:${cfg.memory?.provider || ''}:${cfg.memory?.model || ''}:${cfg.memory?.useChatModel}`,
           complete: async (messages) => {
             const response = await this.#memoryChat(messages, { signal, timeoutMs: 8000, session, usageSource: 'background-scan', thinkingIntent: 'off' });
             return extractJsonObject(String(response?.message?.content ?? ''));
@@ -3036,7 +3034,7 @@ export class Orchestrator {
         const pending = this.store.peekUnread(chatKey, this.#unreadScanLimit()) || [];
         const direct = chatKey.startsWith('private:')
           || pending.some((m) => mentionsOrPokesBot(m, this.onebot.selfId));
-        const directDelay = Math.max(0, Math.min(2000, Number(cfgNow.directWakeDelayMs) || 300));
+        const directDelay = Math.max(0, Math.min(20000, Number(cfgNow.directWakeDelayMs ?? 300) || 0));
         log.info(`[wake] ${chatKey} 已有未读，主动唤醒改为普通回复`);
         this.scheduleWake(chatKey, direct ? directDelay : null, { direct });
         continue;
