@@ -1735,7 +1735,19 @@ function bindPluginsSection() {
         setStatus(`正在读取 ${file.name}…`, { busy: true });
         const base64 = await fileToBase64(file);
         setStatus('正在校验并换入…', { busy: true });
-        const result = await post('/api/plugins/install-file', { fileName: file.name, base64 });
+        let result;
+        try {
+          result = await post('/api/plugins/install-file', { fileName: file.name, base64 });
+        } catch (error) {
+          const diff = error?.data?.diff;
+          if (error?.code !== 'E_UPGRADE_CONFIRM' || !diff?.diffHash) throw error;
+          const lines = (diff.summary || []).join('\n') || '插件权限发生变化';
+          if (!await askForConfirmation(`升级本地插件会改变权限：\n\n${lines}\n\n升级后相关写开关与批准会重置。确认升级？`)) {
+            setStatus('已取消升级', { tone: 'info' });
+            return;
+          }
+          result = await post('/api/plugins/install-file', { fileName: file.name, base64, expectedDiffHash: diff.diffHash });
+        }
         setStatus(`已装 ${result.id} v${result.version}（来源：本地文件：${result.fileName}）`
           + `｜包内容 sha256 ${String(result.sha256 || '').slice(0, 16)}…`, { tone: 'success' });
         // 装完直接问要不要启用：小白最容易卡在"装完了以为就好了"
