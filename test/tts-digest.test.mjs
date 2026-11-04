@@ -56,6 +56,64 @@ test('synthesizeSpeech：请求形状正确、空音频/非 200 报错、未配�
   assert.equal(ttsConfigured({ tts: { enabled: true, provider: 'mimo' } }), true);
 });
 
+test('硅基流动启用二进制流式音频，其他兼容端点不添加 stream 参数', async () => {
+  for (const baseUrl of ['https://api.siliconflow.cn/v1', 'https://api.openai.com/v1',
+    'https://custom.example/v1', 'https://api.siliconflow.cn.example/v1']) {
+    let request;
+    const chunks = [Buffer.from('ID3'), Buffer.from('audio-one'), Buffer.from('audio-two')];
+    const result = await synthesizeSpeech({
+      cfg: { baseUrl, model: 'fnlp/MOSS-TTSD-v0.5', voice: 'fnlp/MOSS-TTSD-v0.5:claire' },
+      text: '你好',
+      fetchFn: async (_url, req) => {
+        request = JSON.parse(req.body);
+        return new Response(new ReadableStream({ start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+          controller.close();
+        } }), { headers: { 'content-type': 'audio/mpeg' } });
+      }
+    });
+    assert.equal(request.stream, baseUrl === 'https://api.siliconflow.cn/v1' ? true : undefined);
+    assert.deepEqual(result.buffer, Buffer.concat(chunks), '完整合并音频块，不能只返回首块');
+    assert.equal(result.format, 'mp3');
+  }
+});
+
+test('硅基流动流式音频超过 4MB 中止读取，不返回截断音频', async () => {
+  let cancelled = false;
+  await assert.rejects(synthesizeSpeech({
+    cfg: { baseUrl: 'https://api.siliconflow.cn/v1', model: 'm' }, text: '你好',
+    fetchFn: async () => new Response(new ReadableStream({
+      pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); },
+      cancel() { cancelled = true; }
+    }))
+  }), /语音合成结果过大/);
+  assert.equal(cancelled, true);
+});
+
+test('流式音频已开始后仍遵守总超时和调用方取消，不返回半截语音', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const external of [false, true]) {
+    const parent = new AbortController();
+    const reason = new Error('用户取消');
+    let started;
+    const ready = new Promise(resolve => { started = resolve; });
+    const task = synthesizeSpeech({
+      cfg: { baseUrl: 'https://api.siliconflow.cn/v1', model: 'm', timeoutMs: 5000 },
+      text: '你好', signal: parent.signal,
+      fetchFn: async (_url, req) => new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(Buffer.from('ID3partial'));
+        req.signal.addEventListener('abort', () => controller.error(req.signal.reason), { once: true });
+        started();
+      } }))
+    });
+    const rejected = assert.rejects(task, error => external ? error === reason : /语音合成超时/.test(error.message));
+    await ready;
+    if (external) parent.abort(reason);
+    else t.mock.timers.tick(5000);
+    await rejected;
+  }
+});
+
 test('GroupDigestManager：消息够时生成一条并发送；不够时跳过', async () => {
   const store = new ChatStore(0, { dataDir, filename: 'digest-test.sqlite' });
   const now = Date.now();

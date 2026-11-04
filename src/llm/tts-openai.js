@@ -43,6 +43,8 @@ export async function synthesizeSpeech({
   const speed = Number(cfg?.speed);
   const gain = Number(cfg?.gain);
   const extras = {};
+  // SiliconFlow returns raw audio chunks, not SSE. Other compatible endpoints may reject stream.
+  if (ttsServiceOfBaseUrl(base)?.id === 'siliconflow') extras.stream = true;
   if (Number.isFinite(speed) && speed !== 1) extras.speed = Math.min(4, Math.max(0.25, speed));
   if (Number.isFinite(gain) && gain !== 0) extras.gain = Math.min(10, Math.max(-10, gain));
   if (!base) throw new Error('未配置语音合成的 Base URL（设置 → 语音回复）');
@@ -73,7 +75,7 @@ export async function synthesizeSpeech({
       try { detail = String(await readTextBounded(res, 4096)).slice(0, 200); } catch { /* 忽略 */ }
       throw new Error(`语音合成失败 HTTP ${res.status}${detail ? `：${detail}` : ''}`);
     }
-    // 有界读取：上游返回超大/畸形响应时中途取消，而不是先整包读入再判长度（2026-10-09 审查）
+    // 按块收集（含硅基流动流式音频），完整接收后才交给 QQ；4MB 上限和总超时仍覆盖下载。
     let buffer;
     try {
       buffer = await readBytesBounded(res, 4 * 1024 * 1024);
