@@ -9,6 +9,7 @@ import { requestCliApproval, listCliApprovals, decideCliApproval } from '../src/
 import { prepareMcpInvocation } from '../src/antigravity-cli/mcp-invocation.js';
 import { normalizeAntigravityConfig } from '../src/antigravity-cli/config.js';
 import { McpStdioClient } from '../src/mcp/client.js';
+import { verifyNativeHooks } from '../src/antigravity-cli/verify-native-hooks.js';
 
 const waitPending = async category => {
   for (let i = 0; i < 150; i++) {
@@ -49,6 +50,7 @@ test('native hook asks before returning auto_approve; denial executes nothing an
     tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }],
     mcpRun: { chatKey: 'private:test', runId: 'approval-run', allowed: () => true, execute: async () => { executed++; return { content: 'ok' }; } } });
   t.after(() => invocation.close());
+  assert.match(fs.readFileSync(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8'), /inheritCustomizations: true/);
   const hook = name => {
     const child = spawn(process.execPath, [fileURLToPath(new URL('../src/antigravity-cli/native-hook.js', import.meta.url))], { cwd: invocation.workspace, stdio: ['pipe', 'pipe', 'pipe'] });
     let output = '';
@@ -81,4 +83,24 @@ test('native hook asks before returning auto_approve; denial executes nothing an
   entry = await waitPending('native'); invocation.revoke();
   assert.equal((await pending).decision, 'deny');
   assert.equal(decideCliApproval(entry.id, true), false);
+});
+
+test('native hook verification rejects inherited customization files, unexpected hooks and old CLI before model work', async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-hook-verify-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const invocation = { workspace: home, hookCommand: 'trusted command', settings: {} };
+  const config = { executable: 'fake-agy', agent: 'qq-mcp' };
+  let extra = false;
+  const run = async (_exe, args) => ({ stdout: args[0] === '--version' ? '1.4.12' : JSON.stringify({ status: 'SUCCESS', num_turns: 0, command: { name: 'hooks', data: { hooks: [
+    { name: 'qq-run-approval', enabled: true, source: path.join(home, '.agents/hooks.json'), actions: [{ event: 'PreToolUse', matcher: '*', command: 'trusted command' }] },
+    ...(extra ? [{ name: 'unexpected', enabled: true }] : [])
+  ] } } }) });
+  await verifyNativeHooks(config, invocation, { home, run });
+  extra = true;
+  await assert.rejects(verifyNativeHooks(config, invocation, { home, run }), /Unexpected inherited hooks/);
+  const oldCalls = [];
+  await assert.rejects(verifyNativeHooks(config, invocation, { home, run: async (_exe, args) => { oldCalls.push(args); return { stdout: '1.0.0' }; } }), /supported CLI/);
+  assert.deepEqual(oldCalls, [['--version']]);
+  const dir = path.join(home, '.gemini/config/rules'); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'private.md'), 'private context');
+  await assert.rejects(verifyNativeHooks(config, invocation, { home, run: () => { throw new Error('must not run CLI'); } }), /isolated CLI customizations/);
 });

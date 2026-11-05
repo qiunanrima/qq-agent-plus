@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { normalizeAntigravityConfig } from './config.js';
 import { prepareMcpInvocation } from './mcp-invocation.js';
+import { verifyNativeHooks } from './verify-native-hooks.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const active = new Set();
@@ -95,6 +96,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
   try {
     if (cfg.transport === 'mcp') {
       invocation = await prepareMcpInvocation({ config: cfg, tools, toolChoice, mcpRun, signal, isEnabled });
+      if (cfg.nativeApproval) await verifyNativeHooks(cfg, invocation);
       args.splice(args.indexOf('--json-schema'), 2);
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
       prompt = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '

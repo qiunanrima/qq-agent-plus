@@ -18,7 +18,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     if (path.dirname(target) !== path.resolve(config.workspace) || !path.basename(target).startsWith('qq-run-')) throw new Error('Invalid MCP workspace cleanup target');
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
-  let bridge;
+  let bridge, hookCommand;
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
     const approve = async (category, name, args, callSignal) => requestCliApproval({ category,
@@ -46,17 +46,19 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
     await fs.mkdir(agentDir, { recursive: true });
     const template = await fs.readFile(new URL('../../examples/antigravity/qq-mcp/agent.md', import.meta.url), 'utf8');
-    const agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/, '') : template;
+    const agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/, '').replace('inheritCustomizations: false', 'inheritCustomizations: true') : template;
     await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { qq_run: bridge.serverConfig } }), { mode: 0o600 });
     if (config.nativeApproval) {
       await fs.writeFile(path.join(workspace, '.agents', 'qq-approval.json'), JSON.stringify(bridge.serverConfig.env), { mode: 0o600 });
       const quote = value => process.platform === 'win32' ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
       const command = `${quote(process.execPath)} ${quote(fileURLToPath(new URL('./native-hook.js', import.meta.url)))} ${quote(path.join(workspace, '.agents', 'qq-approval.json'))}`;
+      hookCommand = command;
       await fs.writeFile(path.join(workspace, '.agents', 'hooks.json'), JSON.stringify({ 'qq-run-approval': { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 60 }] }] } }), { mode: 0o600 });
     }
     return {
       workspace,
+      hookCommand,
       settings: { toolPermission: 'request-review', allowNonWorkspaceAccess: false, useG1Credits: false,
         permissions: { allow: ['mcp(qq_run/*)'], ask: config.nativeApproval ? ['read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)'] : [], deny: config.nativeApproval ? ['unsandboxed(*)', `read_file(${workspace}/.agents/)`, `write_file(${workspace}/.agents/)`] : [
           'read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)', 'unsandboxed(*)'
