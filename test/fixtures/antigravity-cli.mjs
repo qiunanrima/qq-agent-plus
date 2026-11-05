@@ -11,8 +11,12 @@ await new Promise(resolve => {
 });
 const prompt = JSON.parse(input).message.content;
 if (!prompt.includes('messages')) process.exit(3);
+if (mode === 'preinit') process.stdout.write(JSON.stringify({ event: 'step_update' }) + '\n');
 process.stdout.write(JSON.stringify({ event: 'init', init: { tools: ['run_command'], permission_mode: mode === 'unsafe' ? 'always-proceed' : 'strict' } }) + '\n');
 if (mode === 'tool') process.stdout.write(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'run_command' } }) + '\n');
+if (mode === 'private-tool') process.stdout.write(JSON.stringify({ event: 'step_update', step_update: {
+  step_type: 'tool', tool_name: 'secret diagnostic with spaces', tool_info: { parameters: { secret: 'credential' } }
+} }) + '\n');
 if (mode === 'hang') setInterval(() => {}, 1000);
 else if (mode === 'bad') process.stdout.write('not json\n');
 else if (mode === 'exit') { process.stderr.write('secret diagnostic'); process.exit(7); }

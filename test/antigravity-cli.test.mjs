@@ -50,6 +50,21 @@ test('invalid streams, exit failures and output limits are not retryable', async
   }
 });
 
+test('tool rejection reports only a safe identifier and remains non-retryable', async () => {
+  await assert.rejects(antigravityCompletion(request, double('tool')), error => {
+    assert.match(error.message, /rejected tool: run_command/);
+    assert.equal(error.code, 'ANTIGRAVITY_NO_RETRY');
+    return true;
+  });
+  await assert.rejects(antigravityCompletion(request, double('private-tool')), error => {
+    assert.match(error.message, /rejected tool: unrecognized/);
+    assert.ok(!error.message.includes('secret'));
+    assert.ok(!error.message.includes('credential'));
+    return true;
+  });
+  await assert.rejects(antigravityCompletion(request, double('preinit')), /event received before init/);
+});
+
 test('abort, runtime disable, timeout and concurrency release children', async () => {
   const controller = new AbortController();
   const pending = antigravityCompletion({ ...request, signal: controller.signal }, double('hang'));

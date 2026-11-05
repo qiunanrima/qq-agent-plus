@@ -141,9 +141,15 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
                   stop(new Error('Antigravity must confirm restricted native tool permissions'));
                 }
                 initialized = true;
-              } else if (!initialized || (event.event === 'step_update' && event.step_update?.step_type === 'tool'
-                && !invocation?.allowToolEvent(event.step_update))) {
-                stop(new Error('Unexpected Antigravity native tool execution or missing init'));
+              } else if (!initialized) {
+                stop(new Error('Antigravity event received before init'));
+              } else if (event.event === 'step_update' && event.step_update?.step_type === 'tool'
+                && !invocation?.allowToolEvent(event.step_update)) {
+                // Never expose event bodies, parameters, prompts or CLI diagnostics.
+                const candidate = event.step_update.tool_name || event.step_update.tool_info?.name;
+                const name = typeof candidate === 'string' && /^[a-zA-Z_][a-zA-Z0-9_:/.-]{0,79}$/.test(candidate)
+                  ? candidate : 'unrecognized';
+                stop(new Error(`Antigravity rejected tool: ${name}`));
               } else if (event.event === 'result') {
                 // stream-json is a conversation transport. Keep stdin alive until
                 // this turn finishes, then request a clean process exit via EOF.
