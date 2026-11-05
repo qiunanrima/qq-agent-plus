@@ -3,11 +3,23 @@ import { normalizeAntigravityConfig } from './config.js';
 import { antigravityStatus } from './index.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createQuotaReader } from './quota.js';
 
 const runFile = promisify(execFile);
 
 /** Local status only: polling must never spawn the CLI or contact Google. */
 export function registerAntigravityRoutes(router, { json, getConfig }) {
+  const readQuota = createQuotaReader();
+  router.add('GET', '/api/antigravity-cli/quota', async (_req, res) => {
+    const cfg = getConfig().antigravityCli;
+    return json(res, 200, readQuota.peek(cfg?.executable || 'agy'));
+  });
+  router.add('POST', '/api/antigravity-cli/quota', async (_req, res) => {
+    try {
+      const cfg = normalizeAntigravityConfig(getConfig().antigravityCli);
+      return json(res, 200, await readQuota(cfg.executable));
+    } catch { return json(res, 503, { error: '额度查询失败，请检查 CLI 版本、登录状态和网络；一分钟后可重试' }); }
+  });
   let catalog, fetching = false;
   router.add('POST', '/api/antigravity-cli/models', async (_req, res) => {
     const cfg = normalizeAntigravityConfig(getConfig().antigravityCli);

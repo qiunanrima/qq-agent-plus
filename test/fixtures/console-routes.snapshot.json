@@ -12,6 +12,18 @@
     "keyEndpoint": false
   },
   {
+    "method": "GET",
+    "path": "/api/antigravity-cli/quota",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/antigravity-cli/quota",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "POST",
     "path": "/api/antigravity-cli/models",
     "auth": true,

@@ -5,6 +5,41 @@ import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { login, switchTo, collectPageErrors } from './helpers.mjs';
 
+test('quota card queries only on click and displays quota, reset and separate credits on mobile', async ({ page }) => {
+  expect((await page.request.post('/api/antigravity-cli/quota')).status()).toBe(401);
+  await login(page);
+  let queries = 0;
+  const fixture = { checkedAt: '2026-11-05T12:00:00Z', remainingCredits: 0, groups: [{ name: 'Gemini Models', buckets: [
+    { window: 'weekly', remainingFraction: 0.8, resetTime: '2026-11-12T12:00:00Z' },
+    { window: '5h', remainingFraction: null, resetTime: null }
+  ] }] };
+  await page.route('**/api/antigravity-cli/quota', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: queries ? { ...fixture, cached: true } : { available: false } });
+    queries++;
+    return route.fulfill({ json: fixture });
+  });
+  await page.goto('/'); await switchTo(page, 'overview');
+  await expect(page.locator('#agy-quota-result')).toContainText('尚未查询');
+  expect(queries).toBe(0);
+  await page.click('#agy-quota-fetch');
+  await expect(page.locator('#agy-quota-result')).toContainText('80.0%');
+  await expect(page.locator('#agy-quota-result')).toContainText('剩余 未知');
+  await expect(page.locator('#agy-quota-result')).toContainText('额外 AI 积分：0');
+  await expect(page.locator('#agy-quota-result')).toContainText('重置');
+  fs.mkdirSync('.codex/antigravity-ui', { recursive: true });
+  await page.locator('#agy-quota-fetch').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '.codex/antigravity-ui/quota-desktop.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#agy-quota-fetch').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '.codex/antigravity-ui/quota-mobile.png' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+  expect(queries).toBe(1);
+  await page.reload();
+  await expect(page.locator('#agy-quota-result')).toContainText('80.0%');
+  await expect(page.locator('#agy-quota-result')).toContainText('缓存结果');
+  expect(queries).toBe(1);
+});
+
 test('CLI settings save only their module; lifecycle and displayed route agree without model calls', async ({ page }) => {
   const errors = collectPageErrors(page);
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-ui-'));

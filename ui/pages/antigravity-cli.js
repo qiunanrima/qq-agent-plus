@@ -119,4 +119,41 @@ function bindAntigravitySettings() {
   void loadAntigravityStatus();
 }
 
-export { bindAntigravitySettings, loadAntigravityStatus, renderAntigravityExperiment, renderAntigravitySection };
+function renderQuotaDetails(data) {
+  if (!data?.checkedAt) return '尚未查询';
+  const date = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  return `<p>查询时间：${esc(date(data.checkedAt))}${data.stale ? '（已过期，请手动刷新）' : data.cached ? '（缓存结果）' : ''}</p>`
+    + data.groups.map(group => `<section><strong>${esc(group.name)}</strong>${group.buckets.map(bucket => {
+      const percent = typeof bucket.remainingFraction === 'number' ? `${(bucket.remainingFraction * 100).toFixed(1)}%` : '未知';
+      const label = bucket.window === 'weekly' ? '周额度' : bucket.window === '5h' ? '5 小时额度' : bucket.name;
+      return `<p>${esc(label)}：剩余 ${esc(percent)}${bucket.resetTime ? ` · 重置：${esc(date(bucket.resetTime))}` : ''}</p>`;
+    }).join('')}</section>`).join('')
+    + `<p>额外 AI 积分：${typeof data.remainingCredits === 'number' ? esc(String(data.remainingCredits)) : '未知（未取得积分余额）'}</p>`;
+}
+
+function renderQuotaCard(data) {
+  return `<section class="panel" id="antigravity-quota-card"><div class="panel-head"><div class="panel-titles"><h3>反重力剩余额度</h3></div>
+    <div class="panel-actions"><button type="button" class="btn btn-small" id="agy-quota-fetch">查询 / 刷新额度</button></div></div>
+    <div class="panel-body"><p class="hint">手动查询，不发起模型回合；结果缓存 5 分钟。AI 积分为 0 不代表模型额度耗尽。时间为北京时间。</p>
+    <div id="agy-quota-result" role="status">${renderQuotaDetails(data)}</div></div></section>`;
+}
+
+function bindQuotaCard() {
+  const button = $('#agy-quota-fetch');
+  if (!button) return;
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    const node = $('#agy-quota-result');
+    node.textContent = '正在查询…';
+    try {
+      const data = await api('/api/antigravity-cli/quota', { method: 'POST' });
+      const current = $('#agy-quota-result');
+      if (current) current.innerHTML = renderQuotaDetails(data);
+    } catch (e) {
+      const current = $('#agy-quota-result');
+      if (current) current.textContent = e.message;
+    } finally { button.disabled = false; }
+  });
+}
+
+export { bindAntigravitySettings, bindQuotaCard, loadAntigravityStatus, renderAntigravityExperiment, renderAntigravitySection, renderQuotaCard };

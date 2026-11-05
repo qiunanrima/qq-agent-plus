@@ -109,6 +109,20 @@ Debian 13 和 systemd 用户服务仍需现场验收。
 输出协议错误时核对实际版本是否支持 stream-json、--agent 和 --json-schema。
 不要通过放开工具权限来修复输出格式问题。
 
+## 查询剩余额度
+
+主页「总览」直接提供「反重力剩余额度」卡片，分别显示模型分组的周额度、5 小时额度、
+重置时间及额外 AI 积分。积分为零不表示模型额度耗尽；缺失数据显示未知。
+仅点击时运行官方只读 `agy -p /usage --output-format json` 和 `/credits`，
+不会启动模型回合、购买积分或开启额外积分消费。要求 CLI >= 1.1.12，
+并验证响应为对应命令且 `num_turns: 0`；不回传原始诊断或账号信息。
+成功结果缓存 5 分钟并显示查询时间；失败冷却 1 分钟；并发点击共享一次查询。
+刷新页面或后台状态轮询只读取服务器缓存，不自动查询账号额度；过期缓存明确标记，需手动刷新。
+接口为已认证的 `POST /api/antigravity-cli/quota`（主动查询）和 `GET /api/antigravity-cli/quota`（只读缓存）。
+
+官方依据：[Model quotas](https://antigravity.google/docs/cli/commands/usage/)、
+[CLI changelog](https://antigravity.google/docs/changelog)。
+
 ## 回滚
 
 将 enabled 改为 false 并重启服务，即恢复原 API 聊天链路。保留 Agent 文件、配置与 CLI 凭据。

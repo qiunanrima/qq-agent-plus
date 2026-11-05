@@ -6,6 +6,7 @@
 'use strict';
 
 import { api } from '../core/api.js';
+import { bindQuotaCard, renderQuotaCard } from './antigravity-cli.js';
 import { esc } from '../core/dom.js';
 import { applyIcons, iconSvg } from '../core/icons.js';
 // switchTab 是 app.js 的模块导出（**不是** window 上的全局）。以前这里写 window.switchTab，
@@ -116,14 +117,15 @@ async function loadOverview() {
     box.innerHTML = '<div class="hint" style="padding:24px">正在读取总览…</div>';
   }
   // 六个数据源各自独立：任何一个失败都不该让整页空着
-  const [status, usage, incidents, snowluma, host, config, health] = await Promise.all([
+  const [status, usage, incidents, snowluma, host, config, health, quota] = await Promise.all([
     api('/api/status').catch(() => null),
     api('/api/usage/stats?range=7d').catch(() => null),
     api('/api/incidents?limit=5').catch(() => null),
     api('/api/snowluma/version').catch(() => null),
     api('/api/host').catch(() => null),
     api('/api/config').catch(() => null),
-    api('/api/health').catch(() => null)
+    api('/api/health').catch(() => null),
+    api('/api/antigravity-cli/quota').catch(() => null) // Cache only; never launches CLI.
   ]);
 
   const onebot = status?.onebot || {};
@@ -289,6 +291,8 @@ async function loadOverview() {
       <button class="btn btn-small" id="overview-refresh">${iconSvg('refresh', { size: 15 })}<span>刷新</span></button>
     </div>
 
+    ${renderQuotaCard(quota)}
+
     ${setupPanel}
 
     ${healthPanel}
@@ -378,6 +382,7 @@ async function loadOverview() {
   box.querySelectorAll('[data-setup-tab]').forEach((el) => {
     el.addEventListener('click', () => switchTab(el.dataset.setupTab));
   });
+  bindQuotaCard();
   document.getElementById('overview-refresh')?.addEventListener('click', () => { delete box.dataset.ready; loadOverview(); });
   // 「去更新 / 看详情」不在这里绑定：它带 data-open-settings="onebot"，由 app.js 里那**一个**
   // 全局委托处理（老写法是自己 switchTab + 派发一个 qa-settings-section 事件，而那个事件全仓
