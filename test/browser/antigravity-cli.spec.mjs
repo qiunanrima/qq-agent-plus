@@ -22,7 +22,10 @@ test('CLI settings save only their module; lifecycle and displayed route agree w
     await page.click('button[data-section="experiments"]');
     await page.click('#agy-open');
     await expect(page.locator('#agy-save')).toBeVisible();
-    await page.fill('#agy-model', 'test-model');
+    await page.route('**/api/antigravity-cli/models', route => route.fulfill({ json: { models: [{ id: 'test-model', name: 'Offline model' }] } }));
+    await page.click('#agy-model-fetch');
+    await page.selectOption('#agy-model-list', 'test-model');
+    await expect(page.locator('#agy-model')).toHaveValue('test-model');
     await page.fill('#agy-maxToolCalls', '7');
     await page.click('#agy-save');
     await expect(page.locator('#agy-save-result')).toContainText('已保存');

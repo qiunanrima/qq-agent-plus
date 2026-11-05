@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createRunToolMcp, contextWithToolSignal } from '../src/antigravity-cli/mcp-run.js';
+import { createRunToolMcp, contextWithToolSignal, normalizeHostToolArguments } from '../src/antigravity-cli/mcp-run.js';
 import { McpStdioClient } from '../src/mcp/client.js';
 import net from 'node:net';
 
 const tools = [{ name: 'probe', description: 'Offline test only', parameters: {
   type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false
 } }];
+
+test('send text alias preserves content and targeting but never overrides explicit messages', () => {
+  assert.deepEqual(normalizeHostToolArguments('send_message', { text: 'hello', replyToMessageId: '12' }), { messages: ['hello'], replyToMessageId: '12' });
+  const explicit = { messages: [], text: 'must not send' };
+  assert.equal(normalizeHostToolArguments('send_message', explicit), explicit);
+  const other = { text: 'query' };
+  assert.equal(normalizeHostToolArguments('search', other), other);
+  assert.deepEqual(normalizeHostToolArguments('send_message', { text: ' ' }), { text: ' ' });
+});
 
 test('scoped tool cancellation stays aborted while mutable skill state reaches the host', () => {
   const parent = new AbortController(), scoped = new AbortController();

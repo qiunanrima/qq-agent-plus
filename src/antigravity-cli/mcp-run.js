@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url';
 
 const LIMIT = 1024 * 1024;
 
+export function normalizeHostToolArguments(name, args) {
+  // Only bridge the legacy text alias when the canonical field was omitted.
+  // An explicitly empty messages list must never trigger an unintended send.
+  if (name === 'send_message' && args && !Object.hasOwn(args, 'messages')
+    && typeof args.text === 'string' && args.text.trim()) {
+    const { text, ...rest } = args;
+    return { ...rest, messages: [text] };
+  }
+  return args;
+}
+
 // Preserve mutable host state while giving an in-flight tool its own immutable
 // cancellation signal. A cancelled task must never see a later tool's signal.
 export function contextWithToolSignal(ctx, signal) {
@@ -25,6 +36,7 @@ export function createMcpHostRun({ chatKey, runId, signal, allowed, execute, tra
     chatKey, runId, allowed,
     isFinished: () => finished,
     execute: async (name, args, callSignal) => {
+      args = normalizeHostToolArguments(name, args);
       const scopedSignal = AbortSignal.any([signal, callSignal]);
       scopedSignal.throwIfAborted();
       const call = { id: `mcp_${randomUUID()}`, type: 'function', function: { name, arguments: JSON.stringify(args) } };
@@ -50,7 +62,7 @@ export async function createQqRunToolMcp({ toolDefs, ctx, authorize, ...options 
     chatKey: ctx.chatKey, runId: ctx.session.id, signal: ctx.signal, authorize,
     execute: ({ name, arguments: args, signal }) => {
       runCtx.signal = signal;
-      return executeTool(toolDefs, runCtx, name, JSON.stringify(args));
+      return executeTool(toolDefs, runCtx, name, JSON.stringify(normalizeHostToolArguments(name, args)));
     } });
 }
 

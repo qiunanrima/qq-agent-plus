@@ -12,6 +12,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "POST",
+    "path": "/api/antigravity-cli/models",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "GET",
     "path": "/api/antigravity-cli/status",
     "auth": true,

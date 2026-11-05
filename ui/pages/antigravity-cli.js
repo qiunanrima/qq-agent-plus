@@ -19,6 +19,8 @@ function renderAntigravitySection(c = {}) {
     <div class="hint">先以服务用户创建目录并完成 CLI 登录。不要使用源码、数据或凭据目录。</div>
     ${field('agent', '自定义 Agent 名称', a.agent || 'qq-mcp')}
     ${field('model', 'CLI 模型 ID（留空使用 CLI 默认模型）', a.model || '')}
+    <div class="field"><label for="agy-model-list">从账号可用模型中选择</label><select id="agy-model-list"><option value="">请先获取模型列表</option></select></div>
+    <p><button type="button" class="btn" id="agy-model-fetch">获取模型列表</button><span id="agy-model-result" role="status"></span></p>
     <div class="field"><label for="agy-transport">工具传输</label><select id="agy-transport">${['mcp', 'json'].map(v => `<option value="${v}" ${a.transport === v || (!a.transport && v === 'mcp') ? 'selected' : ''}>${v === 'mcp' ? 'MCP（推荐）' : 'JSON（兼容）'}</option>`).join('')}</select></div>
     <div class="field"><label for="agy-effort">思考档位</label><select id="agy-effort">${['low', 'medium', 'high'].map(v => `<option value="${v}" ${(a.effort || 'low') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
     ${field('timeoutMs', 'CLI 超时（毫秒，最多 60 秒）', Math.min(a.timeoutMs ?? 60000, 60000), 'number', 'min="1000" max="60000" step="1000"')}
@@ -73,6 +75,24 @@ function bindAntigravitySettings() {
   bind('#agy-toggle', toggle);
   bind('#agy-experiment-toggle', toggle);
   bind('#agy-refresh', loadAntigravityStatus);
+  bind('#agy-model-fetch', async () => {
+    const select = $('#agy-model-list'), note = $('#agy-model-result');
+    const executable = $('#agy-executable')?.value.trim();
+    if (executable !== state.config?.antigravityCli?.executable) throw new Error('请先保存 CLI 路径，再获取模型列表');
+    note.textContent = '获取中…';
+    try {
+      const { models } = await api('/api/antigravity-cli/models', { method: 'POST' });
+      if ($('#agy-model-list') !== select) return;
+      select.innerHTML = '<option value="">请选择模型</option>' + models.map(model => `<option value="${esc(model.id)}">${esc(model.name)} · ${esc(model.id)}</option>`).join('');
+      select.value = $('#agy-model').value;
+      note.textContent = `已获取 ${models.length} 个模型，选好后保存生效`;
+    } catch (e) { if ($('#agy-model-result') === note) note.textContent = '获取失败'; throw e; }
+  });
+  $('#agy-model-list')?.addEventListener('change', event => {
+    if (!event.target.value) return;
+    $('#agy-model').value = event.target.value;
+    $('#agy-model').dispatchEvent(new Event('input', { bubbles: true }));
+  });
   bind('#agy-open', async () => { state.settingsSection = 'antigravity-cli'; await loadSettings(); });
   bind('#agy-graduate', async () => {
     const graduated = state.config?.antigravityCli?.graduated !== true;
