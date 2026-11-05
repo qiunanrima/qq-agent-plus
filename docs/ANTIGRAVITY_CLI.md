@@ -65,7 +65,7 @@ agy -p '只回复 pong，不调用工具' --output-format json
     "agent": "qq-mcp",
     "model": "",
     "effort": "low",
-    "timeoutMs": 120000,
+    "timeoutMs": 60000,
     "maxConcurrent": 1,
     "maxToolCalls": 16
   }
@@ -92,7 +92,9 @@ Debian 13 和 systemd 用户服务仍需现场验收。
 - 禁用斜杠命令扩展及自动使用额外 AI credits；不依赖提示词作为执行权限边界。
 - 只接受成功退出且恰好一个 SUCCESS result 的运行；工具请求不是工具执行成功的证明。
 - 首版只接受文本；图片/音频输入明确报错，不会静默丢失。maxTokens、temperature 与 HTTP thinking 设置暂不映射到 CLI。
-- 并发上限 1..4，默认 1；每次 CLI 最多执行 maxToolCalls 个工具（默认 16）；满载直接报 busy，不积压后台任务。
+- 每个私聊/群聊同时最多一个 CLI；全局并发上限 1..4，默认 1。不同会话隔离，不复用 CLI 历史。
+  每次调用最多 60 秒（旧配置更大的值按 60 秒执行），超时撤销工具权限并终止进程，不自动重试。
+  每次 CLI 最多执行 maxToolCalls 个工具（默认 16）；满载直接报 busy，不积压后台任务。
 - 超时、取消、时间控制关闭或运行开关关闭会终止子进程；Linux 按进程组 TERM，再 KILL。
 - stdout/stderr 各限 8 MiB。诊断内容可能包含敏感信息，因此不回传 CLI stderr 或上游错误正文。
 - CLI 路径不走 shell，聊天内容不放命令行；不自动重试、不自动切 HTTP 兜底。

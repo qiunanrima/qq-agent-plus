@@ -5,6 +5,7 @@ import { prepareMcpInvocation } from './mcp-invocation.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const active = new Set();
+const activeChats = new Set();
 // Session-only settings override user auto-approval without changing their profile.
 // tools: [] in agent frontmatter does not remove built-ins in CLI 1.4.12.
 const SESSION_SETTINGS = {
@@ -65,6 +66,12 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
   const cfg = normalizeAntigravityConfig(config);
   signal?.throwIfAborted();
   if (!cfg.enabled || !isEnabled()) throw new Error('Antigravity CLI disabled');
+  const chatKey = mcpRun?.chatKey;
+  if (chatKey && activeChats.has(chatKey)) {
+    const error = new Error('Antigravity CLI conversation busy');
+    error.code = 'ANTIGRAVITY_NO_RETRY';
+    throw error;
+  }
   if (active.size >= cfg.maxConcurrent) throw new Error('Antigravity CLI busy');
   // Text-only first version: never silently discard image/audio input.
   for (const message of messages || []) {
@@ -83,6 +90,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
   if (cfg.model) args.push('--model', cfg.model);
   const token = {};
   active.add(token);
+  if (chatKey) activeChats.add(chatKey);
   let invocation;
   try {
     if (cfg.transport === 'mcp') {
@@ -92,6 +100,8 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       prompt = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
         + 'Use only the qq_run MCP server tools (each host tool is prefixed qq_). '
         + 'Native send_message is NOT a QQ tool; never call native tools, task management, shell or browser. '
+        + 'Unprefixed tool names mentioned in the supplied context refer ONLY to matching qq_ host tools. '
+        + 'Never use native view_file/read_file to inspect skills, persona or memory; use authorized qq_ tools only. '
         + 'All QQ replies must use the authorized MCP sending tool. Tools are already bound to this conversation. '
         + 'Never repeat successful or unknown external writes. Stop after qq_finish succeeds. '
         + 'Do not emit JSON tool requests as text. Context:\n' + JSON.stringify({ messages, toolChoice });
@@ -222,6 +232,6 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       const error = new Error('Antigravity workspace cleanup failed; capability revoked', { cause });
       error.code = 'ANTIGRAVITY_NO_RETRY';
       throw error;
-    } finally { active.delete(token); }
+    } finally { active.delete(token); if (chatKey) activeChats.delete(chatKey); }
   }
 }

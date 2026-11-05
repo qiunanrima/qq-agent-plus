@@ -89,6 +89,8 @@ test('rejects unknown tools, invalid arguments, missing required tools and multi
 });
 
 test('defaults, lifecycle independence and routing boundaries', () => {
+  assert.equal(ANTIGRAVITY_DEFAULTS.timeoutMs, 60000);
+  assert.equal(normalizeAntigravityConfig({ timeoutMs: 120000 }).timeoutMs, 60000);
   assert.equal(ANTIGRAVITY_DEFAULTS.enabled, false);
   assert.equal(normalizeAntigravityConfig({ graduated: true }).enabled, false);
   assert.throws(() => normalizeAntigravityConfig({ enabled: true }), /absolute workspace/);
@@ -101,4 +103,26 @@ test('defaults, lifecycle independence and routing boundaries', () => {
   assert.equal(usesAntigravity(cfg, { purpose: 'chat' }), true);
   assert.equal(usesAntigravity(cfg, { purpose: 'judge' }), false);
   assert.equal(usesAntigravity(cfg, { purpose: 'chat', overrides: {} }), false);
+});
+
+test('one CLI per conversation, independent chats and lock release after cancellation', async () => {
+  const first = new AbortController(), second = new AbortController();
+  const scoped = { ...request, config: { ...config, maxConcurrent: 2 }, mcpRun: { chatKey: 'private:1' } };
+  const one = antigravityCompletion({ ...scoped, signal: first.signal }, double('hang'));
+  const two = antigravityCompletion({ ...scoped, signal: second.signal, mcpRun: { chatKey: 'group:1' } }, double('hang'));
+  // Attach handlers before cancellation to avoid unhandled rejection races.
+  const ended = Promise.allSettled([one, two]);
+  try {
+    await assert.rejects(antigravityCompletion(scoped, double()), error => {
+      assert.match(error.message, /conversation busy/);
+      assert.equal(error.code, 'ANTIGRAVITY_NO_RETRY');
+      return true;
+    });
+    assert.equal(antigravityStatus().active, 2);
+  } finally {
+    first.abort(); second.abort();
+    await ended;
+  }
+  await antigravityCompletion(scoped, double());
+  assert.equal(antigravityStatus().active, 0);
 });
