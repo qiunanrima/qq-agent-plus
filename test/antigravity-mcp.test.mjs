@@ -15,6 +15,11 @@ test('send text alias preserves content and targeting but never overrides explic
   const other = { text: 'query' };
   assert.equal(normalizeHostToolArguments('search', other), other);
   assert.deepEqual(normalizeHostToolArguments('send_message', { text: ' ' }), { text: ' ' });
+  assert.deepEqual(normalizeHostToolArguments('send_message', { content: ['hello', 'world'] }), { messages: ['hello', 'world'] });
+  assert.deepEqual(normalizeHostToolArguments('send_message', { content: 'hello' }), { messages: ['hello'] });
+  for (const bad of [{ messages: [], content: ['never'] }, { content: [{ text: 'never' }] }, { content: [''] }, { text: '', content: ['never'] }]) {
+    assert.equal(normalizeHostToolArguments('send_message', bad), bad);
+  }
 });
 
 test('scoped tool cancellation stays aborted while mutable skill state reaches the host', () => {

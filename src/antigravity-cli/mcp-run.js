@@ -15,6 +15,14 @@ export function normalizeHostToolArguments(name, args) {
     const { text, ...rest } = args;
     return { ...rest, messages: [text] };
   }
+  if (name === 'send_message' && args && !Object.hasOwn(args, 'messages') && !Object.hasOwn(args, 'text')) {
+    const value = args.content;
+    const list = typeof value === 'string' ? [value] : value;
+    if (Array.isArray(list) && list.length && list.every(item => typeof item === 'string' && item.trim())) {
+      const { content: _content, ...rest } = args;
+      return { ...rest, messages: [...list] };
+    }
+  }
   return args;
 }
 
