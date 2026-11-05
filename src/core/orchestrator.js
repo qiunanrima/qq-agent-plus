@@ -74,6 +74,7 @@ import { ZONE_OFFSET_MS, randInt, createEventBus, todayKey, sanitizeUserText } f
 import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts, writePrivateInitiative } from './proactive-state.js';
 import { buildSystemPrompt, buildUserPrompt, isAtMe, resolveContextTier } from '../llm/prompt.js';
 import { createMcpHostRun, contextWithToolSignal } from '../antigravity-cli/mcp-run.js';
+import { bindRunApprovalPolicy, requiresQqApproval } from '../antigravity-cli/approvals.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool, platformToolAllowed } from '../tools/tools.js';
 import { normalizeMid } from '../tools/tools-core.js';
@@ -1002,6 +1003,7 @@ export class Orchestrator {
     triggerEntries = [], sentCount = 0, proactive = false, manual = false, timeClosed = false
   } = {}) {
     if (proactive || manual || timeClosed || sentCount > 0) return;
+    if (requiresQqApproval(getConfig())) return;
     const cfg = getConfig().failureNotice || {};
     if (cfg.enabled === false) return;
     const direct = chatKey.startsWith('private:')
@@ -1788,7 +1790,7 @@ export class Orchestrator {
     session, messages, ctx, toolDefs, persona, kind, triggerEntries,
     proactive, manual, signal, runLimits, roundsExhausted
   }) {
-    if (getConfig().conversation?.replyGuardEnabled === false) {
+    if (getConfig().conversation?.replyGuardEnabled === false || requiresQqApproval(getConfig())) {
       session.replyCorrection = 'skipped';
       return;
     }
@@ -2579,6 +2581,7 @@ export class Orchestrator {
         execute: executeOneTool,
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
+      bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,

@@ -181,6 +181,27 @@ describe('Orchestrator', () => {
     assert.equal(delay, 5000);
   });
 
+  it('denied CLI send approval cannot be bypassed by failure notices or reply fallback', async t => {
+    const { listCliApprovals, decideCliApproval } = await import('../src/antigravity-cli/approvals.js');
+    let sends = 0;
+    const { cfg, runner, store } = fixture(t, { sender: { sendTextBatch: async () => { sends++; return { sent: [], failed: [] }; } } });
+    cfg.allow.private = ['1']; cfg.admin = { ...cfg.admin, ownerUin: '' };
+    cfg.conversation.replyGuardEnabled = true;
+    const workspace = fs.mkdtempSync(path.join(root, 'approval-workspace-'));
+    cfg.antigravityCli = { ...cfg.antigravityCli, enabled: true, qqApproval: true, nativeApproval: false, transport: 'mcp', workspace, executable: 'approval-test-agy', timeoutMs: 5000 };
+    const originalSpawn = childProcess.spawn;
+    childProcess.spawn = (exe, args, options) => exe === 'approval-test-agy'
+      ? originalSpawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-mcp-cli.mjs', import.meta.url))], options)
+      : originalSpawn(exe, args, options);
+    syncBuiltinESMExports();
+    const monitor = setInterval(() => { for (const item of listCliApprovals()) decideCliApproval(item.id, false); }, 10);
+    t.after(() => { clearInterval(monitor); childProcess.spawn = originalSpawn; syncBuiltinESMExports(); });
+    store.appendIncoming('private:1', { mid: 1, text: 'hello', senderId: '1', senderName: 'test' });
+    await runner.wake('private:1');
+    assert.equal(sends, 0);
+    assert.deepEqual(listCliApprovals(), []);
+  });
+
   it('MCP uses the normal send/audit/finish gates without replaying model text or launching another CLI', async (t) => {
     const { cfg, runner, append, sessions } = fixture(t);
     const workspace = fs.mkdtempSync(path.join(root, 'mcp-workspace-'));

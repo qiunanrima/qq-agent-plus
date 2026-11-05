@@ -13,6 +13,13 @@ function renderAntigravitySection(c = {}) {
     <div class="hint" id="agy-runtime-status">正在读取本机状态…</div>
     <p><button type="button" class="btn" id="agy-toggle">${a.enabled ? '停用 CLI，切回 API' : '启用 CLI 聊天'}</button>
     <button type="button" class="btn" id="agy-refresh">刷新状态</button></p>
+    <h3>工具审批</h3>
+    <div class="checkbox-row"><input type="checkbox" id="agy-qq-approval" ${a.qqApproval ? 'checked' : ''}><label for="agy-qq-approval">QQ 宿主工具使用前逐次审批（finish 除外）</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="agy-native-approval" ${a.nativeApproval ? 'checked' : ''}><label for="agy-native-approval">允许请求原生文件 / 命令工具，但每次执行前必须批准</label></div>
+    <p class="hint">两类开关分开生效，仅支持 MCP。原生工具默认禁止；开放后也不允许永久授权。审批绑定当前会话、工具与完整参数；等待计入本轮 60 秒，关闭、结束、超时后批准失效。管理员 QQ 私聊收到提醒，可在这里批准或拒绝。</p>
+    ${c.admin?.ownerUin ? '' : '<p class="hint">尚未配置管理员 QQ，暂时只在控制台显示待批；私聊提醒需先在模型 API 页设置管理员 QQ。</p>'}
+    <p><button type="button" class="btn" id="agy-approvals-refresh">刷新待批</button></p>
+    <div id="agy-approvals" role="status" data-independent-save>正在读取待批…</div>
     <h3>调用设置</h3>
     ${field('executable', 'CLI 可执行文件路径', a.executable || 'agy')}
     ${field('workspace', '独立工作目录（绝对路径）', a.workspace || '')}
@@ -46,6 +53,7 @@ async function saveAntigravityPatch(patch) {
 }
 
 async function loadAntigravityStatus() {
+  void loadCliApprovals();
   const node = $('#agy-runtime-status');
   if (!node) return;
   try {
@@ -75,6 +83,7 @@ function bindAntigravitySettings() {
   bind('#agy-toggle', toggle);
   bind('#agy-experiment-toggle', toggle);
   bind('#agy-refresh', loadAntigravityStatus);
+  bind('#agy-approvals-refresh', loadCliApprovals);
   bind('#agy-model-fetch', async () => {
     const select = $('#agy-model-list'), note = $('#agy-model-result');
     const executable = $('#agy-executable')?.value.trim();
@@ -102,6 +111,8 @@ function bindAntigravitySettings() {
   });
   bind('#agy-save', async () => {
     const patch = {};
+    patch.qqApproval = $('#agy-qq-approval').checked;
+    patch.nativeApproval = $('#agy-native-approval').checked;
     for (const key of ['executable', 'workspace', 'agent', 'model', 'transport', 'effort']) patch[key] = $(`#agy-${key}`).value.trim();
     for (const key of ['timeoutMs', 'maxConcurrent', 'maxToolCalls']) {
       const input = $(`#agy-${key}`);
@@ -117,6 +128,34 @@ function bindAntigravitySettings() {
     await loadAntigravityStatus();
   });
   void loadAntigravityStatus();
+}
+
+async function loadCliApprovals() {
+  const node = $('#agy-approvals');
+  if (!node) return;
+  try {
+    const { pending } = await api('/api/antigravity-cli/approvals');
+    if ($('#agy-approvals') !== node) return;
+    const snapshot = JSON.stringify(pending);
+    if (node.dataset.snapshot === snapshot) return;
+    node.dataset.snapshot = snapshot;
+    node.innerHTML = pending.length ? pending.map(item => `<section class="settings-card"><strong>${item.category === 'native' ? 'CLI 原生工具' : 'QQ 宿主工具'}：${esc(item.tool)}</strong>
+      <p>会话：${esc(item.chatKey)} · 本轮：${esc(item.runId)}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(item.preview)}</pre>
+      <p>到期：${esc(new Date(item.expiresAt).toLocaleTimeString())}</p>
+      <button type="button" class="btn btn-primary" data-cli-approve="${esc(item.id)}">仅批准这一次</button>
+      <button type="button" class="btn" data-cli-reject="${esc(item.id)}">拒绝</button></section>`).join('') : '没有待审批工具';
+    for (const button of node.querySelectorAll('[data-cli-approve], [data-cli-reject]')) {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        const id = button.dataset.cliApprove || button.dataset.cliReject;
+        try {
+          await api(`/api/antigravity-cli/approvals/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ approved: Boolean(button.dataset.cliApprove) }) });
+          await loadCliApprovals();
+        } catch (e) { alert(e.message); await loadCliApprovals(); }
+        finally { button.disabled = false; }
+      });
+    }
+  } catch { if ($('#agy-approvals') === node) node.textContent = '待批读取失败，请确认后端已更新'; }
 }
 
 function renderQuotaDetails(data) {

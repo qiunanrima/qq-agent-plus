@@ -5,6 +5,40 @@ import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { login, switchTo, collectPageErrors } from './helpers.mjs';
 
+test('QQ and native approvals are separate, previews are escaped and each decision is explicit', async ({ page }) => {
+  await login(page);
+  expect((await page.request.post('/api/config', { data: { antigravityCli: { enabled: false, nativeApproval: false, qqApproval: false, transport: 'mcp' } } })).ok()).toBe(true);
+  let pending = [{ id: 'test-approval-id', category: 'native', chatKey: 'private:test', runId: 'test-run', tool: 'view_file', preview: '{"AbsolutePath":"<img src=x onerror=alert(1)>"}', expiresAt: Date.now() + 60000 }];
+  let approved;
+  await page.route('**/api/antigravity-cli/approvals', route => route.fulfill({ json: { pending } }));
+  await page.route('**/api/antigravity-cli/approvals/test-approval-id', route => {
+    approved = route.request().postDataJSON().approved;
+    pending = [];
+    return route.fulfill({ json: { ok: true } });
+  });
+  try {
+    await page.goto('/'); await switchTo(page, 'settings');
+    await page.click('button[data-section="experiments"]'); await page.click('#agy-open');
+    await page.check('#agy-native-approval');
+    await page.click('#agy-save');
+    await expect(page.locator('#agy-save-result')).toContainText('已保存');
+    const cfg = (await (await page.request.get('/api/config')).json()).antigravityCli;
+    expect(cfg.nativeApproval).toBe(true); expect(cfg.qqApproval).toBe(false); expect(cfg.enabled).toBe(false);
+    await expect(page.locator('#agy-approvals')).toContainText('view_file');
+    await expect(page.locator('#agy-approvals img')).toHaveCount(0);
+    await page.click('[data-cli-approve="test-approval-id"]');
+    await expect(page.locator('#agy-approvals')).toContainText('没有待审批工具');
+    expect(approved).toBe(true);
+    fs.mkdirSync('.codex/antigravity-ui', { recursive: true });
+    await page.screenshot({ path: '.codex/antigravity-ui/approval-desktop.png' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    await page.screenshot({ path: '.codex/antigravity-ui/approval-mobile.png' });
+  } finally {
+    await page.request.post('/api/config', { data: { antigravityCli: { enabled: false, nativeApproval: false, qqApproval: false } } });
+  }
+});
+
 test('quota card queries only on click and displays quota, reset and separate credits on mobile', async ({ page }) => {
   expect((await page.request.post('/api/antigravity-cli/quota')).status()).toBe(401);
   await login(page);

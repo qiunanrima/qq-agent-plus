@@ -3,13 +3,15 @@ import path from 'node:path';
 export const ANTIGRAVITY_DEFAULTS = Object.freeze({
   enabled: false, graduated: false, executable: 'agy', workspace: '',
   agent: 'qq-mcp', model: '', effort: 'low', timeoutMs: 60000, maxConcurrent: 1,
-  transport: 'mcp', maxToolCalls: 16
+  transport: 'mcp', maxToolCalls: 16, qqApproval: false, nativeApproval: false
 });
 
 export function normalizeAntigravityConfig(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Antigravity config must be an object');
   const cfg = { ...ANTIGRAVITY_DEFAULTS, ...raw };
   if (typeof cfg.enabled !== 'boolean' || typeof cfg.graduated !== 'boolean') throw new Error('Antigravity lifecycle flags must be boolean');
+  if (typeof cfg.qqApproval !== 'boolean' || typeof cfg.nativeApproval !== 'boolean') throw new Error('Antigravity approval flags must be boolean');
+  if ((cfg.qqApproval || cfg.nativeApproval) && cfg.transport !== 'mcp') throw new Error('Tool approval requires MCP transport');
   for (const key of ['executable', 'workspace', 'agent', 'model']) {
     if (typeof cfg[key] !== 'string' || /[\r\n\0]/.test(cfg[key])) throw new Error(`Invalid Antigravity ${key}`);
     cfg[key] = cfg[key].trim();

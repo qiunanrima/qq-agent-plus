@@ -2365,7 +2365,7 @@ function buildApp({
   // 存储占用接口（/api/storage、/api/storage/compress）。按领域拆在 console/storage.js，
   // 这里只注册，不再往本文件里加 handler。
   registerStorageRoutes(router, { json, sessions });
-  registerAntigravityRoutes(router, { json, getConfig });
+  registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
 
   router.add('GET', '/healthz', async (req, res) => {
     // 给拨测/uptime 监控用：无鉴权，但只含版本与连接状态，不带任何配置

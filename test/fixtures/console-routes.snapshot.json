@@ -13,6 +13,18 @@
   },
   {
     "method": "GET",
+    "path": "/api/antigravity-cli/approvals",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/antigravity-cli/approvals/:id",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
     "path": "/api/antigravity-cli/quota",
     "auth": true,
     "keyEndpoint": false
