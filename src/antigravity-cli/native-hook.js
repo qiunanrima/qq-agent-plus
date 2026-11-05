@@ -13,6 +13,8 @@ try {
   }
   const proposed = JSON.parse(input).toolCall;
   if (!proposed?.name || !proposed.args) throw new Error('Invalid hook request');
+  if (typeof proposed.args === 'string') proposed.args = JSON.parse(proposed.args);
+  if (!proposed.args || typeof proposed.args !== 'object' || Array.isArray(proposed.args)) throw new Error('Invalid hook arguments');
   // MCP permissions are enforced by the broker, including QQ approval if enabled.
   if (proposed.name === 'call_mcp_tool' || /^(?:mcp[:_])?qq_run(?:\/|_)/.test(proposed.name)) {
     if (proposed.name === 'call_mcp_tool') {

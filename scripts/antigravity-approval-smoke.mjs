@@ -13,6 +13,7 @@ if (!process.argv.includes('--live')) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-approval-live-'));
   const secret = `probe-${randomUUID()}`;
   let expectedFile, approvals = 0, probes = 0, matched = false;
+  const requests = [];
   const controller = new AbortController();
   try {
     const result = await antigravityCompletion({ config: {
@@ -25,7 +26,10 @@ if (!process.argv.includes('--live')) {
       notifyApproval: id => {
         const entry = listCliApprovals().find(item => item.id === id);
         const args = entry ? JSON.parse(entry.preview) : {};
-        const approved = entry?.category === 'native' && entry.tool === 'view_file' && args.AbsolutePath === expectedFile && approvals === 0;
+        let target = args.AbsolutePath;
+        try { const decoded = JSON.parse(target); if (typeof decoded === 'string') target = decoded; } catch { /* plain path */ }
+        requests.push({ category: entry?.category, tool: entry?.tool, argumentKeys: Object.keys(args), pathMatched: target === expectedFile });
+        const approved = entry?.category === 'native' && entry.tool === 'view_file' && target === expectedFile && approvals === 0;
         if (approved) approvals++;
         decideCliApproval(id, approved);
       },
@@ -39,7 +43,10 @@ if (!process.argv.includes('--live')) {
       fs.writeFileSync(expectedFile, secret);
       return spawn(exe, args, options);
     } });
-    if (!matched || approvals !== 1 || probes !== 1) throw new Error('Approval smoke did not verify one approved read');
+    if (!matched || approvals !== 1 || probes !== 1) {
+      console.log(JSON.stringify({ ok: false, approvals, probes, matched, requests }));
+      throw new Error('Approval smoke did not verify one approved read');
+    }
     console.log(JSON.stringify({ ok: true, status: result.raw.status, approvals, probes }));
   } finally {
     controller.abort();
