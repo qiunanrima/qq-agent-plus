@@ -20,8 +20,10 @@ export function contextWithToolSignal(ctx, signal) {
 /** Adapt the host's existing audited executor; never replay MCP calls as text. */
 export function createMcpHostRun({ chatKey, runId, signal, allowed, execute, transcript }) {
   const { messages, auditMessages, toolResults, imageUserMessages } = transcript;
+  let finished = false;
   return {
     chatKey, runId, allowed,
+    isFinished: () => finished,
     execute: async (name, args, callSignal) => {
       const scopedSignal = AbortSignal.any([signal, callSignal]);
       scopedSignal.throwIfAborted();
@@ -33,6 +35,7 @@ export function createMcpHostRun({ chatKey, runId, signal, allowed, execute, tra
       const result = await execute(call, scopedSignal);
       const { role, tool_call_id, content } = toolResults.at(-1);
       messages.push({ role, tool_call_id, name, content }, ...imageUserMessages.slice(imageStart));
+      if (name === 'finish' && result && !result.isError) finished = true;
       return result;
     }
   };

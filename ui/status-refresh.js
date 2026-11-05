@@ -15,17 +15,19 @@ import {
 import { api } from './core/api.js';
 import { setStatusLabel, updateOnebotStatusLine } from './core/dom-util.js';
 import { $, esc } from './core/dom.js';
-import { fmtTokens, mulOf, onebotIssueText } from './core/format.js';
+import { chatModelLabel, fmtTokens, mulOf, onebotIssueText } from './core/format.js';
 import { lifecycleStateOf } from './core/lifecycle-labels.js';
 import { QARegistry } from './core/registry.js';
 import { state } from './core/state.js';
 import { loadExperimentalFeatureStatuses } from './pages/features.js';
 import { loadDailyMomentsStatus, loadQzoneInteractionStatus } from './pages/moments.js';
 import { lifecycleAggregate, loadTimeControlStatus } from './pages/status.js';
+import { loadAntigravityStatus } from './pages/antigravity-cli.js';
 QARegistry.override('refreshStatus', async function refreshStatus() {
   try {
     state.status = await api('/api/status');
     const s = state.status;
+    if (state.tab === 'settings' && state.settingsSection === 'antigravity-cli') void loadAntigravityStatus();
     // 版本号（package.json 的 version）：侧栏一直显示，控制页的版本徽标也用它。
     // 之前只显示部署提交号（sha），用户看不出"这是哪个版本"。
     if (s.version) {
@@ -75,7 +77,7 @@ QARegistry.override('refreshStatus', async function refreshStatus() {
     label.textContent = s.onebot.connected
       ? `OneBot 已连接${s.onebot.self ? `（${s.onebot.self.nickname}）` : ''}`
       : 'OneBot 未连接';
-    setStatusLabel('#model-label', `模型：${s.orchestrator.model || '未设置'}`);
+    setStatusLabel('#model-label', chatModelLabel(state.config, s.orchestrator));
     const u = s.usage;
     const c = s.cost;
     // 优先台账口径（含记忆整理等后台调用）；旧后端没有 ledgerCost、或改价后台账

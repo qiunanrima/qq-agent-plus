@@ -29,6 +29,7 @@ try {
     const after = await client.callTool(name, args);
     if (!after.isError) throw new Error('Finish barrier was bypassed');
   }
+  if (process.argv[2] === 'hang-after-finish') await new Promise(() => setInterval(() => {}, 1000));
   emit({ event: 'result', result: { status: 'SUCCESS', response: '{"tool_calls":[{"name":"send_message","arguments":{"messages":["must not replay"]}}]}',
     usage: { input_tokens: 30, output_tokens: 10, total_tokens: 40 } } });
 } catch {

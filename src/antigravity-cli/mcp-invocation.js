@@ -53,6 +53,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         return false;
       },
       calls: () => bridge.ledger().length,
+      finished: () => mcpRun.isFinished?.() === true,
       revoke: () => bridge.close(),
       async close() {
         bridge.close();

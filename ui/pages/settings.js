@@ -16,10 +16,11 @@ import {
 import { askForConfirmation, extraBodyText, splitRowsHtml } from '../core/dom-util.js';
 import { $, $$, esc } from '../core/dom.js';
 import {
-  effectivePriceFor, hostOfUrl, initialServiceNote, onebotIssueText, onebotStatusLineHtml, parseList,
+  chatModelLabel, effectivePriceFor, hostOfUrl, initialServiceNote, onebotIssueText, onebotStatusLineHtml, parseList,
   uiServiceOfUrl
 } from '../core/format.js';
 import { refreshIntervalMs, state } from '../core/state.js';
+import { bindAntigravitySettings, renderAntigravitySection } from './antigravity-cli.js';
 import { loadChats, renderChatSection } from './chat.js';
 import {
   renderDailyMomentsSection, renderGroupGameSection, renderQzoneInteractionSection, renderRemindersSection
@@ -49,6 +50,7 @@ const SECTION_SEARCH_TERMS = {
   allow: '白名单 群 私聊 屏蔽 黑名单',
   memory: '记忆 印象 交接 人物',
   api: '模型 API Key 温度 上下文 预算 提供商',
+  'antigravity-cli': '反重力 Antigravity CLI Agent MCP 模型 调用',
   search: '搜索 联网 Key',
   asr: '语音 转文字 识别 转写',
   'token-saver': 'Token 节省 上下文 预算',
@@ -102,7 +104,7 @@ function renderSettingsSidebar() {
   // （ui-smoke 断言 .settings-menu-item[data-section=...] 仍在，锚点不受影响）。
   const menu = [
     ['对话与人格', [['persona', '人设'], ['chat', '聊天设置'], ['messageTypes', '消息类型'], ['allow', '聊天白名单'], ['memory', '记忆']]],
-    ['模型与服务', [['api', '模型 API'], ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
+    ['模型与服务', [['api', '模型 API'], ...(state.config?.antigravityCli?.graduated ? [['antigravity-cli', 'Antigravity CLI']] : []), ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
     ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['life-feed', '见闻'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
     ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
     ['系统', [['appearance', '外观'], ['desktop', '系统']]]
@@ -111,7 +113,7 @@ function renderSettingsSidebar() {
     <div class="settings-runstate">
       <div class="rs-title">机器人运行状态</div>
       <div class="rs-row" ${s?.onebot?.connected ? '' : `title="${esc(onebotIssueText(s?.onebot) || '正在等待首次连接')}"`}><span class="dot ${s?.onebot?.connected ? 'dot-on' : 'dot-off'}"></span><span>${s?.onebot?.connected ? '运行中' : '未就绪'}</span></div>
-      <div class="rs-row muted">${state.paused ? '已暂停' : (s?.orchestrator?.model ? `模型：${esc(s.orchestrator.model)}` : '模型：未设置')}</div>
+      <div class="rs-row muted">${state.paused ? '已暂停' : esc(chatModelLabel(state.config, s?.orchestrator))}</div>
     </div>
     <div class="settings-search">
       <input type="search" id="settings-search" placeholder="搜索设置…" aria-label="搜索设置" value="${esc(state.settingsQuery || '')}" />
@@ -324,6 +326,7 @@ function renderSettingsImpl() {
   enhanceSeg(box);
   bindAppearanceControls();
   bindSettingsEvents(c);
+  bindAntigravitySettings();
   bindCrossSectionControls();
   bindExtensionSettings();
   hydrateExtensionStatus();
@@ -338,6 +341,7 @@ function renderSettingsImpl() {
 
 function renderSettingsSection(c) {
   const sec = state.settingsSection || 'api';
+  if (sec === 'antigravity-cli') return renderAntigravitySection(c);
   const sections = {
     api: () => renderApiSection(c),
     search: () => renderSearchSection(c),

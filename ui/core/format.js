@@ -787,7 +787,18 @@ function ioProfileOf(store = {}) {
 }
 
 
+function chatModelLabel(config = {}, summary = {}) {
+  config ||= {};
+  summary ||= {};
+  const cli = config.antigravityCli;
+  if (summary.chatBackend === 'antigravity-cli' || (!summary.chatBackend && cli?.enabled === true)) {
+    return `反重力 CLI：${summary.chatModel || cli?.model || 'CLI 默认模型'}`;
+  }
+  return `模型：${summary.model || config.api?.model || '未设置'}`;
+}
+
 export {
+  chatModelLabel,
   IO_PROFILES, ioProfileOf,
   asrHostOf, asrServiceOf, asrServiceOptions, asrSlotOf, chatNameOf, clampInt, effectivePriceFor, fmtClock, fmtRate,
   fmtRemainingMs, fmtTime, fmtTok, fmtTokens, fmtWaitRemain, fmtYuan, formatChatTitle, formatElapsed,

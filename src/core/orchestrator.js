@@ -4043,6 +4043,8 @@ export class Orchestrator {
       hippocampusDigesting: this.memory.hippocampus?.active === true,
       onebotConnected: this.onebot.connected,
       model: cfg.api.model,
+      chatBackend: cfg.antigravityCli?.enabled === true ? 'antigravity-cli' : 'api',
+      chatModel: cfg.antigravityCli?.enabled === true ? cfg.antigravityCli.model || '' : cfg.api.model,
       maxConcurrentRuns: cfg.maxConcurrentRuns
     };
   }

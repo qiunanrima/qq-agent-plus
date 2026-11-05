@@ -13,7 +13,7 @@ import { THREAD_STATE_LABEL } from '../core/constants.js';
 import { askForConfirmation, closeDialog, setStatusLabel, updateOnebotStatusLine } from '../core/dom-util.js';
 import { $, esc } from '../core/dom.js';
 import {
-  chatNameOf, fmtRemainingMs, fmtTime, fmtTok, fmtTokens, fmtYuan, formatChatTitle, mulOf, onebotIssueText
+  chatModelLabel, chatNameOf, fmtRemainingMs, fmtTime, fmtTok, fmtTokens, fmtYuan, formatChatTitle, mulOf, onebotIssueText
 } from '../core/format.js';
 import {
   lifecycleRemainingText, lifecycleRunsFor, lifecycleStateOf, triggerKindLabel
@@ -263,7 +263,7 @@ async function refreshStatusImpl() {
     label.textContent = s.onebot.connected
       ? `OneBot 已连接${s.onebot.self ? `（${s.onebot.self.nickname}）` : ''}`
       : 'OneBot 未连接';
-    setStatusLabel('#model-label', `模型：${s.orchestrator.model || '未设置'}`);
+    setStatusLabel('#model-label', chatModelLabel(state.config, s.orchestrator));
     const u = s.usage;
     // 成本：查得到价就显示；查不到（未定价，转站/新模型常见）就不显示金额，
     // 只提示"含未定价调用"，避免让 ¥0 被读成"免费"。

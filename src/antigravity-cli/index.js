@@ -97,7 +97,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
         + 'Do not emit JSON tool requests as text. Context:\n' + JSON.stringify({ messages, toolChoice });
     }
     const result = await new Promise((resolve, reject) => {
-      let child, timer, guard, killTimer, failure, bytes = 0, stderrBytes = 0, stdout = '', lineBuffer = '', initialized = false;
+      let child, timer, guard, killTimer, failure, hostResult, bytes = 0, stderrBytes = 0, stdout = '', lineBuffer = '', initialized = false, hostFinished = false;
       const stop = error => {
         failure ||= error;
         invocation?.revoke();
@@ -135,6 +135,12 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
             if (!line) continue;
             try {
               const event = JSON.parse(line);
+              if (invocation?.finished()) {
+                hostFinished = true;
+                if (event.event === 'result' && event.result?.status === 'SUCCESS' && !event.result.denied_actions?.length) hostResult = event.result;
+                stop();
+                continue;
+              }
               if (event.event === 'init') {
                 const expected = invocation ? 'request-review' : 'strict';
                 if (initialized || !Array.isArray(event.init?.tools) || event.init.permission_mode !== expected) {
@@ -164,13 +170,18 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
         stderrBytes += chunk.length;
         if (stderrBytes > MAX_BYTES) stop(new Error('Antigravity diagnostics exceed limit'));
       });
-      child.stdin.on('error', () => stop(new Error('Antigravity input closed')));
+      child.stdin.on('error', () => { if (!hostFinished) stop(new Error('Antigravity input closed')); });
       child.on('close', code => {
-        if (failure && child.pid && process.platform !== 'win32') {
+        if ((failure || hostFinished) && child.pid && process.platform !== 'win32') {
           try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exited */ }
         }
         cleanup();
         if (failure) return reject(failure);
+        // A successful audited host finish is terminal. The CLI is deliberately
+        // stopped; its missing final usage must not be invented as zero usage.
+        if (hostFinished && initialized) {
+          return resolve(hostResult || { status: 'HOST_FINISHED', response: '', usage_unavailable: true });
+        }
         if (code !== 0) return reject(new Error(`Antigravity CLI exited (${code})`));
         try {
           const results = stdout.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)).filter(event => event.event === 'result');
@@ -179,20 +190,25 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
         } catch { reject(new Error('Invalid Antigravity result stream')); }
       });
       timer = setTimeout(() => stop(new Error('Antigravity CLI timed out')), cfg.timeoutMs);
-      guard = setInterval(() => { if (!isEnabled()) stop(new Error('Antigravity CLI disabled')); }, 100);
+      guard = setInterval(() => {
+        if (!isEnabled()) stop(new Error('Antigravity CLI disabled'));
+        else if (invocation?.finished()) { hostFinished = true; stop(); }
+      }, 100);
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) abort();
       child.stdin.write(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
     });
     if (invocation) {
-      if (result?.status !== 'SUCCESS' || result.denied_actions?.length) throw new Error('Antigravity MCP run did not succeed');
+      if (!['SUCCESS', 'HOST_FINISHED'].includes(result?.status) || result.denied_actions?.length) throw new Error('Antigravity MCP run did not succeed');
+      if (result.status === 'HOST_FINISHED' && !invocation.finished()) throw new Error('Antigravity host finish was not confirmed');
       if ((toolChoice === 'required' || toolChoice?.function?.name) && !invocation.calls()) throw new Error('Antigravity omitted required MCP tool');
       const count = key => Number.isFinite(Number(result.usage?.[key])) ? Math.max(0, Number(result.usage[key])) : 0;
       return { message: { role: 'assistant', content: String(result.response || '') }, finishReason: 'stop',
         toolsExecutedViaMcp: true, model: cfg.model || 'antigravity-default', originBaseUrl: 'antigravity-cli://local',
-        usage: { prompt_tokens: count('input_tokens'), completion_tokens: count('output_tokens'), total_tokens: count('total_tokens'),
+        usage: result.usage_unavailable ? undefined : { prompt_tokens: count('input_tokens'), completion_tokens: count('output_tokens'), total_tokens: count('total_tokens'),
           prompt_tokens_details: { cached_tokens: count('cache_read_tokens') } },
-        raw: { status: result.status, conversation_id: result.conversation_id, mcpCalls: invocation.calls() } };
+        raw: { status: result.status, conversation_id: result.conversation_id, mcpCalls: invocation.calls(),
+          ...(result.usage_unavailable ? { usageUnavailable: true } : {}) } };
     }
     return { ...parseAntigravityResult(result, tools, toolChoice), model: cfg.model || 'antigravity-default' };
   } catch (cause) {

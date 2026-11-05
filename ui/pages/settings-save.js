@@ -14,7 +14,7 @@ import {
 } from '../core/dom-util.js';
 import { $, $$ } from '../core/dom.js';
 import {
-  IO_PROFILES, asrHostOf, clampInt, hasOwnPrice, hostOfUrl, memThreshold, mulOf, normalizeAsrMax, normalizeImageGenMax,
+  IO_PROFILES, asrHostOf, chatModelLabel, clampInt, hasOwnPrice, hostOfUrl, memThreshold, mulOf, normalizeAsrMax, normalizeImageGenMax,
   normalizeStickerCollectMax, normalizeStickerMax, parseList, sliderToTierUI
 } from '../core/format.js';
 import { state } from '../core/state.js';
@@ -1264,7 +1264,7 @@ async function saveConfig({ quiet = false } = {}) {
     syncThinkingUi(val('#cfg-baseurl', state.config?.api?.baseUrl) || state.config?.api?.baseUrl || '');
   }
   syncGraduatedFeatureNavigation(state.config);
-  if (!quiet) setStatusLabel('#model-label', `模型：${state.config.api.model || '未设置'}`);
+  if (!quiet) setStatusLabel('#model-label', chatModelLabel(state.config));
   return data;
 }
 
