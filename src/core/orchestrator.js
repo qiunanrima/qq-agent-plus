@@ -75,6 +75,7 @@ import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowU
 import { buildSystemPrompt, buildUserPrompt, isAtMe, resolveContextTier } from '../llm/prompt.js';
 import { createMcpHostRun, contextWithToolSignal } from '../antigravity-cli/mcp-run.js';
 import { bindRunApprovalPolicy, requiresQqApproval } from '../antigravity-cli/approvals.js';
+import { createCliFinishRecovery } from '../antigravity-cli/finish-recovery.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool, platformToolAllowed } from '../tools/tools.js';
 import { normalizeMid } from '../tools/tools-core.js';
@@ -2483,6 +2484,7 @@ export class Orchestrator {
       const toolResults = [];
       const imageUserMessages = [];
       let priorFailure = false;
+      const cliFinishRecovery = createCliFinishRecovery();
       const executeOneTool = async (call, toolSignal = signal) => {
         toolSignal.throwIfAborted();
         if (!canRun(chatKey)) throw new Error('Run cancelled');
@@ -2495,6 +2497,8 @@ export class Orchestrator {
         // send_message 永远放行：模型可能只是想“看看有哪些技能，然后正常回一句”；
         // 不能因为列过一次技能就把正常回复也堵死。
         const skillGate = skillGateMessage(ctx.activeSkill, ctx.pendingSkillUse, name, safeParse(argsRaw));
+        if (name === 'finish' && getConfig().antigravityCli?.enabled && getConfig().antigravityCli.transport === 'mcp'
+          && cliFinishRecovery.canAcknowledge(safeParse(argsRaw), { visibleReply: session.sent.length > 0 || session.visibleReply === true, uncertain: this.store.hasUncertainEffects?.(session.leaseId) === true })) priorFailure = false;
         const blocked = finishBarrierBlock(name, {
           finished: finish,
           priorFailure,
@@ -2503,6 +2507,7 @@ export class Orchestrator {
         const result = blocked
           ? { content: blocked, isError: true, reportIncident: false, skillBlocked: Boolean(skillGate) }
           : await executeTool(toolDefs, contextWithToolSignal(ctx, toolSignal), name, argsRaw);
+        cliFinishRecovery.observe(name, result, Boolean(blocked));
         if (
           result.isError
           && result.incidentCaptured !== true

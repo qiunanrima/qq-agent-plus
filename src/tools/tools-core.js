@@ -3375,6 +3375,7 @@ export function buildToolDefs() {
             description: '交接状态有效分钟数，默认使用管理端配置'
           },
           episodeSummary: { type: 'string', maxLength: 100, description: '海马简记：结合本周期前文与本轮，将确实发生的人事/事件/话题/感受概括在100字内；无依据的感受不写。不是任务执行日志。' },
+          errorAcknowledged: { type: 'boolean', description: 'CLI 中已回复后，可明确确认只读工具的已知失败并结束；不能跳过发送失败、部分发送或未知写入。' },
           clearHandoff: {
             type: 'boolean',
             description: '当前话题已完成时设为 true，清除旧交接状态'
