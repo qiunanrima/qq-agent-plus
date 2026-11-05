@@ -15,6 +15,7 @@ export function decideCliApproval(id, approved) {
   return true;
 }
 export function requestCliApproval({ category, chatKey, runId, tool, args, signal, timeoutMs = 60000, allowed = () => true, notify }) {
+  if (category !== 'qq') return Promise.resolve(false);
   const canApprove = () => { try { return !signal?.aborted && allowed() === true; } catch { return false; } };
   if (!canApprove() || pending.size >= 32) return Promise.resolve(false);
   const preview = JSON.stringify(args);
@@ -40,7 +41,7 @@ export function requestCliApproval({ category, chatKey, runId, tool, args, signa
 }
 
 export function bindRunApprovalPolicy(run, { getConfig, sender }) {
-  run.approvalAllowed = category => getConfig().antigravityCli?.[category === 'native' ? 'nativeApproval' : 'qqApproval'] === true;
+  run.approvalAllowed = category => category === 'qq' && getConfig().antigravityCli?.qqApproval === true;
   run.notifyApproval = async id => {
     const owner = String(getConfig().admin?.ownerUin || '');
     if (!/^\d{5,15}$/.test(owner)) return;

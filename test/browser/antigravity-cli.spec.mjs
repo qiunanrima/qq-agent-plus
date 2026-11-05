@@ -5,10 +5,10 @@ import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { login, switchTo, collectPageErrors } from './helpers.mjs';
 
-test('QQ and native approvals are separate, previews are escaped and each decision is explicit', async ({ page }) => {
+test('QQ-only approvals have no native switch, escaped previews and explicit decisions', async ({ page }) => {
   await login(page);
   expect((await page.request.post('/api/config', { data: { antigravityCli: { enabled: false, nativeApproval: false, qqApproval: false, transport: 'mcp' } } })).ok()).toBe(true);
-  let pending = [{ id: 'test-approval-id', category: 'native', chatKey: 'private:test', runId: 'test-run', tool: 'view_file', preview: '{"AbsolutePath":"<img src=x onerror=alert(1)>"}', expiresAt: Date.now() + 60000 }];
+  let pending = [{ id: 'test-approval-id', category: 'qq', chatKey: 'private:test', runId: 'test-run', tool: 'send_message', preview: '{"AbsolutePath":"<img src=x onerror=alert(1)>"}', expiresAt: Date.now() + 60000 }];
   let approved;
   await page.route('**/api/antigravity-cli/approvals', route => route.fulfill({ json: { pending } }));
   await page.route('**/api/antigravity-cli/approvals/test-approval-id', route => {
@@ -19,12 +19,13 @@ test('QQ and native approvals are separate, previews are escaped and each decisi
   try {
     await page.goto('/'); await switchTo(page, 'settings');
     await page.click('button[data-section="experiments"]'); await page.click('#agy-open');
-    await page.check('#agy-native-approval');
+    await expect(page.locator('#agy-native-approval')).toHaveCount(0);
+    await page.check('#agy-qq-approval');
     await page.click('#agy-save');
     await expect(page.locator('#agy-save-result')).toContainText('已保存');
     const cfg = (await (await page.request.get('/api/config')).json()).antigravityCli;
-    expect(cfg.nativeApproval).toBe(true); expect(cfg.qqApproval).toBe(false); expect(cfg.enabled).toBe(false);
-    await expect(page.locator('#agy-approvals')).toContainText('view_file');
+    expect(cfg.nativeApproval).toBe(false); expect(cfg.qqApproval).toBe(true); expect(cfg.enabled).toBe(false);
+    await expect(page.locator('#agy-approvals')).toContainText('send_message');
     await expect(page.locator('#agy-approvals img')).toHaveCount(0);
     await page.click('[data-cli-approve="test-approval-id"]');
     await expect(page.locator('#agy-approvals')).toContainText('没有待审批工具');

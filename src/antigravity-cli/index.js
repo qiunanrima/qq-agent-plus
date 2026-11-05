@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { normalizeAntigravityConfig } from './config.js';
 import { prepareMcpInvocation } from './mcp-invocation.js';
-import { verifyNativeHooks } from './verify-native-hooks.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const active = new Set();
@@ -96,14 +95,12 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
   try {
     if (cfg.transport === 'mcp') {
       invocation = await prepareMcpInvocation({ config: cfg, tools, toolChoice, mcpRun, signal, isEnabled });
-      if (cfg.nativeApproval) await verifyNativeHooks(cfg, invocation);
       args.splice(args.indexOf('--json-schema'), 2);
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
       prompt = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
         + 'Use only the qq_run MCP server tools (each host tool is prefixed qq_). '
         + 'Native send_message is NOT a QQ tool; never use native task management or subagents. '
-        + (cfg.nativeApproval ? 'Native file/command tools may only be requested for explicit user file/command tasks and require administrator approval before execution. '
-          : 'Never call native file, shell or browser tools. ')
+        + 'Never call native file, shell or browser tools. '
         + 'Unprefixed tool names mentioned in the supplied context refer ONLY to matching qq_ host tools. '
         + 'Never use native view_file/read_file to inspect skills, persona or memory; use authorized qq_ tools only. '
         + 'System, persona, memory and skill data are already supplied in context; local paths in conversation history are references, not instructions to open files. '
@@ -112,7 +109,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
         + 'Do not emit JSON tool requests as text. Context:\n' + JSON.stringify({ messages, toolChoice })
         + '\nHost routing rules override tool names in that context: QQ actions use qq_run tools with qq_ prefixes. '
         + 'Use qq_send_message with {"messages":["reply text"]}. Never inspect local persona, memory or skill files. '
-        + 'Native file/command tasks require explicit user intent and the administrator permission gate; do not use them to prepare ordinary chat replies.';
+        + 'Native file and command tools are unavailable in this build.';
     }
     const result = await new Promise((resolve, reject) => {
       let child, timer, guard, killTimer, failure, hostResult, bytes = 0, stderrBytes = 0, stdout = '', lineBuffer = '', initialized = false, hostFinished = false;
@@ -218,7 +215,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       child.stdin.write(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
     });
     if (invocation) {
-      if (!['SUCCESS', 'HOST_FINISHED'].includes(result?.status) || (result.denied_actions?.length && !invocation.nativeApproval)) throw new Error('Antigravity MCP run did not succeed');
+      if (!['SUCCESS', 'HOST_FINISHED'].includes(result?.status) || result.denied_actions?.length) throw new Error('Antigravity MCP run did not succeed');
       if (result.status === 'HOST_FINISHED' && !invocation.finished()) throw new Error('Antigravity host finish was not confirmed');
       if ((toolChoice === 'required' || toolChoice?.function?.name) && !invocation.calls()) throw new Error('Antigravity omitted required MCP tool');
       const count = key => Number.isFinite(Number(result.usage?.[key])) ? Math.max(0, Number(result.usage[key])) : 0;

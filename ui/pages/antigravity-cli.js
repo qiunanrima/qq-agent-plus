@@ -15,8 +15,7 @@ function renderAntigravitySection(c = {}) {
     <button type="button" class="btn" id="agy-refresh">刷新状态</button></p>
     <h3>工具审批</h3>
     <div class="checkbox-row"><input type="checkbox" id="agy-qq-approval" ${a.qqApproval ? 'checked' : ''}><label for="agy-qq-approval">QQ 宿主工具使用前逐次审批（finish 除外）</label></div>
-    <div class="checkbox-row"><input type="checkbox" id="agy-native-approval" ${a.nativeApproval ? 'checked' : ''}><label for="agy-native-approval">允许请求原生文件 / 命令工具，但每次执行前必须批准</label></div>
-    <p class="hint">两类开关分开生效，仅支持 MCP。原生工具默认禁止；开放后也不允许永久授权。审批绑定当前会话、工具与完整参数；等待计入本轮 60 秒，关闭、结束、超时后批准失效。管理员 QQ 私聊收到提醒，可在这里批准或拒绝。</p>
+    <p class="hint">本版本不开放 CLI 原生文件、命令工具，仅支持 QQ 宿主工具审批。审批绑定当前会话、工具与完整参数；等待计入本轮 60 秒，关闭、结束、超时后批准失效。管理员 QQ 私聊收到提醒，可在这里批准或拒绝。</p>
     ${c.admin?.ownerUin ? '' : '<p class="hint">尚未配置管理员 QQ，暂时只在控制台显示待批；私聊提醒需先在模型 API 页设置管理员 QQ。</p>'}
     <p><button type="button" class="btn" id="agy-approvals-refresh">刷新待批</button></p>
     <div id="agy-approvals" role="status" data-independent-save>正在读取待批…</div>
@@ -112,7 +111,6 @@ function bindAntigravitySettings() {
   bind('#agy-save', async () => {
     const patch = {};
     patch.qqApproval = $('#agy-qq-approval').checked;
-    patch.nativeApproval = $('#agy-native-approval').checked;
     for (const key of ['executable', 'workspace', 'agent', 'model', 'transport', 'effort']) patch[key] = $(`#agy-${key}`).value.trim();
     for (const key of ['timeoutMs', 'maxConcurrent', 'maxToolCalls']) {
       const input = $(`#agy-${key}`);
@@ -139,7 +137,7 @@ async function loadCliApprovals() {
     const snapshot = JSON.stringify(pending);
     if (node.dataset.snapshot === snapshot) return;
     node.dataset.snapshot = snapshot;
-    node.innerHTML = pending.length ? pending.map(item => `<section class="settings-card"><strong>${item.category === 'native' ? 'CLI 原生工具' : 'QQ 宿主工具'}：${esc(item.tool)}</strong>
+    node.innerHTML = pending.length ? pending.map(item => `<section class="settings-card"><strong>QQ 宿主工具：${esc(item.tool)}</strong>
       <p>会话：${esc(item.chatKey)} · 本轮：${esc(item.runId)}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(item.preview)}</pre>
       <p>到期：${esc(new Date(item.expiresAt).toLocaleTimeString())}</p>
       <button type="button" class="btn btn-primary" data-cli-approve="${esc(item.id)}">仅批准这一次</button>

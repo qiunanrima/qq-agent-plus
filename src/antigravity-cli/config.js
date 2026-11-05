@@ -11,6 +11,7 @@ export function normalizeAntigravityConfig(raw = {}) {
   const cfg = { ...ANTIGRAVITY_DEFAULTS, ...raw };
   if (typeof cfg.enabled !== 'boolean' || typeof cfg.graduated !== 'boolean') throw new Error('Antigravity lifecycle flags must be boolean');
   if (typeof cfg.qqApproval !== 'boolean' || typeof cfg.nativeApproval !== 'boolean') throw new Error('Antigravity approval flags must be boolean');
+  if (cfg.nativeApproval) throw new Error('Native CLI tools are unavailable in this build');
   if ((cfg.qqApproval || cfg.nativeApproval) && cfg.transport !== 'mcp') throw new Error('Tool approval requires MCP transport');
   for (const key of ['executable', 'workspace', 'agent', 'model']) {
     if (typeof cfg[key] !== 'string' || /[\r\n\0]/.test(cfg[key])) throw new Error(`Invalid Antigravity ${key}`);

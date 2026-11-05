@@ -1,10 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createRunToolMcp } from './mcp-run.js';
 import { requestCliApproval } from './approvals.js';
 
-const nativeTools = new Set(['view_file', 'list_dir', 'find_by_name', 'grep_search', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command', 'read_url_content', 'search_web']);
 
 /** Per-process workspace avoids sharing MCP tokens or catalogs across chats. */
 export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, signal, isEnabled = () => true }) {
@@ -18,7 +16,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     if (path.dirname(target) !== path.resolve(config.workspace) || !path.basename(target).startsWith('qq-run-')) throw new Error('Invalid MCP workspace cleanup target');
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
-  let bridge, hookCommand;
+  let bridge;
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
     const approve = async (category, name, args, callSignal) => requestCliApproval({ category,
@@ -30,11 +28,6 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
       name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters
     })), chatKey: mcpRun.chatKey, runId: mcpRun.runId, signal,
     maxCalls: config.maxToolCalls, timeoutMs: config.timeoutMs,
-    approveNative: config.nativeApproval ? call => {
-      if (!nativeTools.has(call.name) || !call.arguments || typeof call.arguments !== 'object' || Array.isArray(call.arguments)) return false;
-      if (call.arguments.RunPersistent === true) return false;
-      return approve('native', call.name, call.arguments, call.signal);
-    } : undefined,
     authorize: () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true,
     execute: async call => {
       if (config.qqApproval && call.name !== 'finish' && !await approve('qq', call.name, call.arguments, call.signal)) {
@@ -46,28 +39,18 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
     await fs.mkdir(agentDir, { recursive: true });
     const template = await fs.readFile(new URL('../../examples/antigravity/qq-mcp/agent.md', import.meta.url), 'utf8');
-    const agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/, '').replace('inheritCustomizations: false', 'inheritCustomizations: true') : template;
-    await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
+    await fs.writeFile(path.join(agentDir, 'agent.md'), template.replace('name: qq-mcp', `name: ${config.agent}`));
     await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { qq_run: bridge.serverConfig } }), { mode: 0o600 });
-    if (config.nativeApproval) {
-      await fs.writeFile(path.join(workspace, '.agents', 'qq-approval.json'), JSON.stringify(bridge.serverConfig.env), { mode: 0o600 });
-      const quote = value => process.platform === 'win32' ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
-      const command = `${quote(process.execPath)} ${quote(fileURLToPath(new URL('./native-hook.js', import.meta.url)))} ${quote(path.join(workspace, '.agents', 'qq-approval.json'))}`;
-      hookCommand = command;
-      await fs.writeFile(path.join(workspace, '.agents', 'hooks.json'), JSON.stringify({ 'qq-run-approval': { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 60 }] }] } }), { mode: 0o600 });
-    }
     return {
       workspace,
-      hookCommand,
       settings: { toolPermission: 'request-review', allowNonWorkspaceAccess: false, useG1Credits: false,
-        permissions: { allow: ['mcp(qq_run/*)'], ask: config.nativeApproval ? ['read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)'] : [], deny: config.nativeApproval ? ['unsandboxed(*)', `read_file(${workspace}/.agents/)`, `write_file(${workspace}/.agents/)`] : [
+        permissions: { allow: ['mcp(qq_run/*)'], ask: [], deny: [
           'read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)', 'unsandboxed(*)'
         ] } },
       // Namespaced MCP calls and its discovery dispatcher only. Any native
       // execution still ends this run; the permission engine denies writes first.
       allowToolEvent: event => {
         const name = String(event.tool_name || event.tool_info?.name || '');
-        if (config.nativeApproval && nativeTools.has(name)) return true;
         if (/^(?:mcp[:_])?qq_run(?:\/|_)/.test(name)) return true;
         if (name === 'call_mcp_tool') {
           const params = event.tool_info?.parameters || {};
@@ -80,8 +63,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
       },
       calls: () => bridge.ledger().length,
       finished: () => mcpRun.isFinished?.() === true,
-      nativeApproval: config.nativeApproval,
-      policyChanged: () => typeof mcpRun.approvalAllowed === 'function' && (mcpRun.approvalAllowed('qq') !== config.qqApproval || mcpRun.approvalAllowed('native') !== config.nativeApproval),
+      policyChanged: () => typeof mcpRun.approvalAllowed === 'function' && mcpRun.approvalAllowed('qq') !== config.qqApproval,
       revoke: () => bridge.close(),
       async close() {
         bridge.close();

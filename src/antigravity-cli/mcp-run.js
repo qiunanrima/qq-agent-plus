@@ -75,7 +75,7 @@ export async function createQqRunToolMcp({ toolDefs, ctx, authorize, ...options 
 }
 
 export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
-  authorize, approveNative, timeoutMs = 120000, maxCalls = 16 }) {
+  authorize, timeoutMs = 120000, maxCalls = 16 }) {
   if (!chatKey || !runId || typeof execute !== 'function' || typeof authorize !== 'function') throw new Error('MCP run requires scope, executor and authorization');
   if (!Array.isArray(tools) || tools.length > 128 || !Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 128
     || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 600000) throw new Error('Invalid MCP limits');
@@ -92,7 +92,7 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
   const controller = new AbortController();
   const scope = Object.freeze({ chatKey: String(chatKey), runId: String(runId), signal: controller.signal });
   const sockets = new Set(), ledger = [], requests = new Map();
-  let closed = false, tail = Promise.resolve(), nativeCalls = 0;
+  let closed = false, tail = Promise.resolve();
   const reply = (request, result) => ({ jsonrpc: '2.0', id: request.id, result });
   const error = (request, code, message) => ({ jsonrpc: '2.0', id: request?.id ?? null, error: { code, message } });
   const available = () => !closed && !controller.signal.aborted;
@@ -106,13 +106,6 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
       return reply(request, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'qq-agent-run-tools', version: '0.1.0' } });
     }
     if (!state.initialized) return error(request, -32000, 'Initialize first');
-    if (request.method === 'qq/native-approval') {
-      state.nativeHook = true;
-      if (!approveNative || nativeCalls++ >= maxCalls) return reply(request, { approved: false });
-      const approved = await approveNative({ ...scope, name: request.params?.name, arguments: request.params?.arguments });
-      return reply(request, { approved: approved === true && available() });
-    }
-    if (state.nativeHook) return error(request, -32601, 'Approval channel only');
     if (request.method === 'ping') return reply(request, {});
     if (request.method === 'tools/list') return reply(request, { tools: [...catalog].map(([name, tool]) => ({ name, description: tool.description || '', inputSchema: tool.parameters || { type: 'object' } })) });
     if (request.method !== 'tools/call') return error(request, -32601, 'Method not supported');
@@ -162,7 +155,7 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
     socket.on('error', () => {});
     socket.on('close', () => {
       sockets.delete(socket);
-      if (state.authenticated && !state.nativeHook) close(); // Read-only approval channels are short-lived.
+      if (state.authenticated) close(); // No reconnect/replay after losing a run transport.
     });
     socket.on('data', chunk => {
       buffer += chunk;
