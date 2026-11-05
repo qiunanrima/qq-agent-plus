@@ -132,7 +132,7 @@ function renderQuotaDetails(data) {
 }
 
 function renderQuotaCard(data) {
-  return `<section class="panel" id="antigravity-quota-card"><div class="panel-head"><div class="panel-titles"><h3>反重力剩余额度</h3></div>
+  return `<section class="panel" id="antigravity-quota-card" style="margin-bottom:20px"><div class="panel-head"><div class="panel-titles"><h3>反重力剩余额度</h3></div>
     <div class="panel-actions"><button type="button" class="btn btn-small" id="agy-quota-fetch">查询 / 刷新额度</button></div></div>
     <div class="panel-body"><p class="hint">手动查询，不发起模型回合；结果缓存 5 分钟。AI 积分为 0 不代表模型额度耗尽。时间为北京时间。</p>
     <div id="agy-quota-result" role="status">${renderQuotaDetails(data)}</div></div></section>`;
