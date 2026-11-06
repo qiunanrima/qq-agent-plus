@@ -44,6 +44,8 @@ test('host argument aliases never replace explicit canonical plugin, image or po
   assert.equal(normalizeHostToolArguments('get_message_images', { messageIds: ['12', '13'] }).messageId, undefined);
   assert.equal(normalizeHostToolArguments('get_message_images', { messageId: '', id: '12' }).messageId, '');
   assert.equal(normalizeHostToolArguments('send_poke', { userId: '12345' }).targetUserId, '12345');
+  assert.equal(normalizeHostToolArguments('send_poke', { user_id: 12345 }).targetUserId, '12345');
+  assert.equal(normalizeHostToolArguments('send_poke', { user_id: '12345', userId: '99999' }).targetUserId, undefined);
   assert.equal(normalizeHostToolArguments('send_poke', { targetUserId: '', userId: '12345' }).targetUserId, '');
 });
 

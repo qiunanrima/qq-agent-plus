@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { toMcpContent } from './mcp-content.js';
+import { normalizeToolArgumentAliases } from '../tools/argument-aliases.js';
 
 const LIMIT = 8 * 1024 * 1024;
 
@@ -26,8 +27,7 @@ export function normalizeHostToolArguments(name, args) {
     const id = args.message_id ?? args.id ?? (Array.isArray(args.messageIds) && args.messageIds.length === 1 ? args.messageIds[0] : undefined);
     if (/^-?\d+$/.test(String(id ?? ''))) args = { ...args, messageId: String(id) };
   }
-  if (name === 'send_poke' && args && !Object.hasOwn(args, 'targetUserId') && /^\d+$/.test(String(args.userId ?? '')))
-    args = { ...args, targetUserId: String(args.userId) };
+  args = normalizeToolArgumentAliases(name, args);
   // An explicitly empty messages list must never trigger an unintended send.
   if (name === 'send_message' && args && !Object.hasOwn(args, 'messages')
     && typeof args.text === 'string' && args.text.trim()) {

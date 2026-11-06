@@ -47,8 +47,8 @@ test('ACP grants only once after explicit decision, binds session and prevents r
 });
 test('protected files, unknown native tools and persistent commands cannot be approved', async () => {
   const permit = createAcpPermissionHandler({ sessionId: () => 'session', mcpRun: run, workspace: os.tmpdir(), signal: new AbortController().signal, isEnabled: () => true, maxCalls: 8 });
-  for (const [name, rawInput] of [['unknown', { CommandLine: 'echo x' }], ['view_file', { AbsolutePath: path.join(os.homedir(), '.ssh') }], ['run_command', { CommandLine: 'echo x', RunPersistent: true }]]) {
-    assert.equal((await permit({ ...params(name), toolCall: { toolCallId: name, name, rawInput } })).outcome.outcome, 'cancelled');
+  for (const [name, rawInput] of [['unknown', { CommandLine: 'echo x' }], ['view_file', { AbsolutePath: path.join(os.homedir(), '.ssh') }], ['run_command', { CommandLine: 'echo x', RunPersistent: true }], ['run_command', { CommandLine: 'echo x', IsDaemon: true }]]) {
+    assert.equal((await permit({ ...params(name), toolCall: { toolCallId: `${name}:${JSON.stringify(rawInput)}`, name, rawInput } })).outcome.outcome, 'cancelled');
   }
 });
 test('real offline ACP subprocess waits for approval, rejection produces no effect', async () => {
@@ -128,6 +128,8 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
     verifyNative: async (_config, invocation) => {
       const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
       assert.match(agent, /inheritCustomizations: true/); assert.doesNotMatch(agent, /commandExecutionPolicy: off/);
+      assert.match(agent, /commandExecutionPolicy: sandbox/);
+      for (const tool of ['run_command', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
       const hooks = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/hooks.json'), 'utf8'));
       assert.equal(hooks['qq-run-approval'].PreToolUse[0].hooks[0].command, invocation.hookCommand);
       checked = true;

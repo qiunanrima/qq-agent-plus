@@ -58,7 +58,7 @@ export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signa
         if (inside(target, path.join(workspace, '.agents')) || inside(target, path.join(os.homedir(), '.ssh'))
           || inside(target, path.join(os.homedir(), '.gemini'))) return cancelled;
       }
-      if (decode(description.args.RunPersistent) === true || description.args.RequestedTerminalID) return cancelled;
+      if (decode(description.args.RunPersistent) === true || decode(description.args.IsDaemon) === true || description.args.RequestedTerminalID) return cancelled;
       const approved = await requestCliApproval({ ...description, chatKey: mcpRun.chatKey, runId: mcpRun.runId,
         signal, allowed, notify: mcpRun.notifyApproval });
       return approved && allowed() ? { outcome: { outcome: 'selected', optionId: option.optionId } } : cancelled;

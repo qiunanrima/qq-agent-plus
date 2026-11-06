@@ -1,7 +1,7 @@
 import { normalizeMid, stripMemorySources, sanitizeDeep } from './result-sanitize.js';
+import { normalizeToolArgumentAliases } from './argument-aliases.js';
 export { normalizeMid, sanitizeDeep } from './result-sanitize.js';
-// 原生工具集（OpenAI function calling 格式）。
-// 与原版 MCP 工具的关键区别：每个工具自动绑定本次运行对应的会话（chatKey），
+// 工具自动绑定本次运行对应的会话（chatKey），
 // 不再需要 key/token 参数 —— 模型物理上无法把消息发到别的群/私聊，安全性反而更强。
 //
 // 工具命名去掉了 qq_ 前缀（更短，省 token）。
@@ -2309,7 +2309,7 @@ export function buildToolDefs() {
             ? ''
             : String(args.targetUserId).trim();
           if (ctx.kind === 'group' && rawText === '') {
-            return err(`群聊拍一拍必须传 targetUserId（数字 QQ 号）。${memberHint(ctx)}`);
+            return err(`群聊拍一拍必须传 targetUserId（数字 QQ 号）。${memberHint(ctx)}`, { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
           }
 
           let target = null;
@@ -2320,27 +2320,27 @@ export function buildToolDefs() {
             let targetText = normalizeTarget(nameText);
             if (ctx.kind === 'private') {
               if (!targetText || String(ctx.chatId) !== targetText) {
-                return err('私聊只能拍当前聊天对象，省略 targetUserId 即可');
+                return err('私聊只能拍当前聊天对象，省略 targetUserId 即可', { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
               }
             } else {
               if (!targetText) {
                 // 纯数字但位数不合法（如 16 位占位）也直接拒绝，不要再拿去做名字匹配。
                 if (/^\d+$/.test(nameText)) {
-                  return err(`targetUserId 必须是 1-15 位数字 QQ 号（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`);
+                  return err(`targetUserId 必须是 1-15 位数字 QQ 号（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`, { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
                 }
                 const resolved = resolvePokeTarget(ctx, nameText);
                 if (resolved.error) {
-                  return err(`${resolved.error}${resolved.hint ? memberHint(ctx) : ''}`);
+                  return err(`${resolved.error}${resolved.hint ? memberHint(ctx) : ''}`, { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
                 }
                 targetText = normalizeTarget(resolved.userId);
                 if (!targetText) {
-                  return err(`按名字反查到的 QQ 号不合法（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`);
+                  return err(`按名字反查到的 QQ 号不合法（收到：${JSON.stringify(args.targetUserId)}）。${memberHint(ctx)}`, { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
                 }
               }
               if (!hasParticipant(ctx, targetText)) {
                 const looksLikeMessageId = modelVisible(ctx.store?.findByMid?.(ctx.chatKey, targetText));
                 return err(`${targetText} 不是当前群中已出现的成员 QQ 号`
-                  + `${looksLikeMessageId ? '，它是消息 id' : ''}。${memberHint(ctx)}`);
+                  + `${looksLikeMessageId ? '，它是消息 id' : ''}。${memberHint(ctx)}`, { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
               }
             }
             target = Number(targetText);
@@ -3498,7 +3498,7 @@ export async function executeTool(defs, ctx, name, argsJson) {
       reportIncident: false
     };
   }
-  const args = parsed.args ?? {};
+  const args = normalizeToolArgumentAliases(def.name, parsed.args ?? {});
   try {
     ctx.signal?.throwIfAborted();
     const task = def.execute(ctx, args ?? {});
@@ -3514,7 +3514,7 @@ export async function executeTool(defs, ctx, name, argsJson) {
     return {
       ...(result || {}),
       parsedArgs: args,
-      ...(parsed.repaired ? { argumentsRepaired: true } : {})
+      ...(parsed.repaired || args !== parsed.args ? { argumentsRepaired: true } : {})
     };
   } catch (error) {
     return { content: `错误：${error?.message ?? error}`, isError: true };

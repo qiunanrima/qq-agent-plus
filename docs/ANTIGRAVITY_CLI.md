@@ -114,6 +114,8 @@ Debian 13 和 systemd 用户服务仍需现场验收。
 默认仅使用 QQ 宿主工具，原生审批 nativeApproval 默认关闭。独立设置页可分别配置
 QQ 宿主工具审批（qqApproval）与原生文件、前台命令审批（nativeApproval）。
 开启原生审批时改用 ACP，CLI ≥ 1.4.12；每轮建立独立会话，不复用永久授权。
+原生模式的自定义 Agent 显式列出允许的五类文件/命令工具并使用 sandbox 命令策略，
+避免依赖 CLI 对省略 tools / commandExecutionPolicy 的默认行为；PreToolUse 仍强制逐次审批。
 创建 ACP 会话时显式传入本轮 qq_run stdio 服务，环境变量使用 ACP 的 name/value 数组格式。
 必须观察到本轮服务完成 tools/list，才发送 session/prompt；未发现工具时在模型调用前失败。
 启动前只读验证专用 PreToolUse 钩子，原生工具强制 force_ask，客户端只接受 allow_once。
@@ -131,6 +133,8 @@ terminal/create 请求分别绑定当前会话、完整路径/内容或 command/
 CLI 设置页可开启 QQ 工具逐次审批（finish 除外），每次绑定当前会话、运行、工具和完整参数。
 管理员 QQ 私聊收到工具、会话和参数，可回复 `批准CLI <完整审批编号>` / `拒绝CLI <完整审批编号>`；
 只接受配置中的管理员本人发来的私聊纯文本，不接受群聊、转发或机器人回显。
+拍一拍的 user_id / userId / target_user_id 在 API 与 CLI 的统一工具入口归一为 targetUserId；
+显式规范字段优先，多别名目标冲突时拒绝归一，不替模型选择目标，也不跳过群成员校验。
 命令在入站入口处理，不排在当前模型回合后；审批决定先落审计再放行，重复或过期编号不执行。
 超过 1500 字符的参数必须在控制台查看完整内容后批准，私聊仍可拒绝。
 没有配置管理员 QQ 时仍可在控制台审批。

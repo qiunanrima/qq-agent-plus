@@ -26,6 +26,21 @@ test('finish accepts a supplied episode summary, and missing summary is a correc
   assert.ok(!fixed.isError); assert.equal(f.ctx.session.finishReason, '旁听群友闲聊');
 });
 
+test('API tool entry accepts OneBot poke aliases once and keeps target validation', async () => {
+  for (const alias of ['user_id', 'userId', 'target_user_id']) {
+    const f = context();
+    const result = await executeTool(buildToolDefs(), f.ctx, 'send_poke', JSON.stringify({ [alias]: 42 }));
+    assert.ok(!result.isError); assert.equal(result.parsedArgs.targetUserId, '42');
+    assert.equal(result.argumentsRepaired, true); assert.equal(f.sends.length, 1);
+    assert.equal(f.sends[0][0], 'poke'); assert.equal(f.sends[0][2], 42);
+  }
+  for (const args of [{ user_id: 43 }, { user_id: 42, userId: 43 }, { targetUserId: '', user_id: 42 }]) {
+    const f = context();
+    const result = await executeTool(buildToolDefs(), f.ctx, 'send_poke', JSON.stringify(args));
+    assert.equal(result.isError, true); assert.equal(result.noEffect, true); assert.equal(f.sends.length, 0);
+  }
+});
+
 function context(patch = {}) {
   const sends = [];
   const store = {
