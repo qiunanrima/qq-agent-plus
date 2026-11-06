@@ -1,4 +1,5 @@
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
+import { ensureCliSummary } from '../antigravity-cli/summary.js';
 export { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate } from './orchestrator-helpers.js';
 import { randomWakeDelay } from './orchestrator-helpers.js';
 export { randomWakeDelay } from './orchestrator-helpers.js';
@@ -2662,6 +2663,7 @@ export class Orchestrator {
       session.rounds = round + 1;
       markActivity('');
 
+      if (response.toolsExecutedViaMcp) session.cliMcpCompleted = true;
       let toolCalls = normalizedToolCalls;
       // 兼容：少数模型把工具调用写成文本而不是原生 tool_calls。解析成功后需要把
       // 该 assistant 消息改成 tool_calls 形态回填 messages，并追加真正的 tool 结果。
@@ -2758,6 +2760,7 @@ export class Orchestrator {
         ? '已发送内容，因本轮模型轮数用尽安全结束'
         : '本轮模型轮数用尽，已安全结束';
     }
+    if (session.cliMcpCompleted) ensureCliSummary(session, triggerEntries, lastSentText(session));
     const providerTranscriptDelta = conversationCfg.mode === 'lifecycle'
       ? structuredClone(messages.slice(transcriptStart))
       : [];

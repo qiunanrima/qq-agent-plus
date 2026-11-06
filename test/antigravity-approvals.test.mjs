@@ -43,7 +43,8 @@ test('QQ tool waits for single-use approval; native tools stay denied and no hoo
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-approval-only-'));
  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
  let executed = 0;
- assert.throws(() => normalizeAntigravityConfig({ nativeApproval: true }), /unavailable/);
+ assert.equal(normalizeAntigravityConfig({ nativeApproval: true }).nativeApproval, true);
+ assert.throws(() => normalizeAntigravityConfig({ nativeApproval: true, transport: 'json' }), /MCP/);
  const invocation = await prepareMcpInvocation({ config: normalizeAntigravityConfig({ enabled: true, qqApproval: true, workspace: root }), tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }], mcpRun: { chatKey: 'private:test', runId: 'run', allowed: () => true, execute: async () => { executed++; return { content: 'ok' }; } } });
  t.after(() => invocation.close());
  assert.equal(fs.existsSync(path.join(invocation.workspace, '.agents/hooks.json')), false);

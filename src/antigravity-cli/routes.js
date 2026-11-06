@@ -58,7 +58,7 @@ export function registerAntigravityRoutes(router, { json, getConfig, readBody, a
     let workspaceReady = false;
     try { workspaceReady = (await fs.stat(cfg.workspace)).isDirectory(); } catch { /* not prepared */ }
     return json(res, 200, { enabled: cfg.enabled, valid: true, workspaceReady,
-      active: antigravityStatus().active, transport: cfg.transport,
+      ...antigravityStatus(), transport: cfg.transport, driver: cfg.nativeApproval ? 'acp' : 'headless',
       pendingApprovals: listCliApprovals().length,
       model: cfg.model || '', agent: cfg.agent });
   });

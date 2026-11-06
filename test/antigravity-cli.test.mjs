@@ -68,7 +68,11 @@ test('tool rejection reports only a safe identifier and remains non-retryable', 
 test('abort, runtime disable, timeout and concurrency release children', async () => {
   const controller = new AbortController();
   const pending = antigravityCompletion({ ...request, signal: controller.signal }, double('hang'));
-  await assert.rejects(antigravityCompletion(request, double()), /busy/);
+  const queuedController = new AbortController();
+  const queued = antigravityCompletion({ ...request, signal: queuedController.signal }, double());
+  assert.equal(antigravityStatus().queued, 1);
+  queuedController.abort();
+  await assert.rejects(queued, /cancelled/);
   controller.abort(new Error('cancelled'));
   await assert.rejects(pending, /cancelled/);
   let enabled = true;
@@ -113,8 +117,12 @@ test('one CLI per conversation, independent chats and lock release after cancell
   // Attach handlers before cancellation to avoid unhandled rejection races.
   const ended = Promise.allSettled([one, two]);
   try {
-    await assert.rejects(antigravityCompletion(scoped, double()), error => {
-      assert.match(error.message, /conversation busy/);
+    const queuedController = new AbortController();
+    const queued = antigravityCompletion({ ...scoped, signal: queuedController.signal }, double());
+    assert.equal(antigravityStatus().queued, 1);
+    queuedController.abort();
+    await assert.rejects(queued, error => {
+      assert.match(error.message, /cancelled/);
       assert.equal(error.code, 'ANTIGRAVITY_NO_RETRY');
       return true;
     });
