@@ -2,10 +2,12 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { normalizeAntigravityConfig } from './config.js';
 import { prepareMcpInvocation } from './mcp-invocation.js';
+import { createCliQueue } from './queue.js';
+import { acpCompletion } from './acp-completion.js';
+import { verifyNativeHooks } from './verify-native-hooks.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
-const active = new Set();
-const activeChats = new Set();
+const queue = createCliQueue();
 // Session-only settings override user auto-approval without changing their profile.
 // tools: [] in agent frontmatter does not remove built-ins in CLI 1.4.12.
 const SESSION_SETTINGS = {
@@ -16,7 +18,7 @@ const SESSION_SETTINGS = {
   ] }
 };
 
-export function antigravityStatus() { return { active: active.size }; }
+export function antigravityStatus() { return queue.status(); }
 
 function schemaFor(tools, toolChoice) {
   const names = toolChoice === 'none' ? [] : (tools || []).map(t => t.function?.name).filter(Boolean);
@@ -62,17 +64,11 @@ export function parseAntigravityResult(result, tools = [], toolChoice = 'auto') 
 }
 
 /** One isolated process per model turn. No retries, session resume or shell. */
-export async function antigravityCompletion({ config, messages, tools, toolChoice = 'auto', signal, isEnabled = () => true, mcpRun }, { spawnProcess = spawn } = {}) {
+export async function antigravityCompletion({ config, messages, tools, toolChoice = 'auto', signal, isEnabled = () => true, mcpRun }, { spawnProcess = spawn, verifyNative = verifyNativeHooks } = {}) {
   const cfg = normalizeAntigravityConfig(config);
   signal?.throwIfAborted();
   if (!cfg.enabled || !isEnabled()) throw new Error('Antigravity CLI disabled');
   const chatKey = mcpRun?.chatKey;
-  if (chatKey && activeChats.has(chatKey)) {
-    const error = new Error('Antigravity CLI conversation busy');
-    error.code = 'ANTIGRAVITY_NO_RETRY';
-    throw error;
-  }
-  if (active.size >= cfg.maxConcurrent) throw new Error('Antigravity CLI busy');
   // Text-only first version: never silently discard image/audio input.
   for (const message of messages || []) {
     if (Array.isArray(message.content) && message.content.some(p => p.type !== 'text')) throw new Error('Antigravity CLI currently supports text only');
@@ -88,9 +84,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
     '--effort', cfg.effort,
     '--json-schema', JSON.stringify(schemaFor(tools, toolChoice)), '--print-timeout', `${cfg.timeoutMs}ms`];
   if (cfg.model) args.push('--model', cfg.model);
-  const token = {};
-  active.add(token);
-  if (chatKey) activeChats.add(chatKey);
+  const release = await queue.acquire({ chatKey, limit: cfg.maxConcurrent, signal, isEnabled });
   let invocation;
   try {
     if (cfg.transport === 'mcp') {
@@ -109,7 +103,15 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
         + 'Do not emit JSON tool requests as text. Context:\n' + JSON.stringify({ messages, toolChoice })
         + '\nHost routing rules override tool names in that context: QQ actions use qq_run tools with qq_ prefixes. '
         + 'Use qq_send_message with {"messages":["reply text"]}. Never inspect local persona, memory or skill files. '
-        + 'Native file and command tools are unavailable in this build.';
+        + (cfg.nativeApproval
+          ? 'Native file and foreground command tools require administrator approval each time through ACP. Use them only for explicit user requests, never to inspect persona/skills/memory. Never use native subagents, browsers or background tasks. After denial stop; never bypass using another tool.'
+          : 'Native file and command tools are unavailable in this build.');
+      if (cfg.nativeApproval) {
+        prompt = prompt.replace('Never call native file, shell or browser tools. ', 'Never call native browser tools. ')
+          .replace('Use only the qq_run MCP server tools (each host tool is prefixed qq_). ',
+            'Use the qq_run MCP server tools for all QQ operations (each host tool is prefixed qq_). ');
+        return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, { verify: verifyNative });
+      }
     }
     const result = await new Promise((resolve, reject) => {
       let child, timer, guard, killTimer, failure, hostResult, bytes = 0, stderrBytes = 0, stdout = '', lineBuffer = '', initialized = false, hostFinished = false;
@@ -238,6 +240,6 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       const error = new Error('Antigravity workspace cleanup failed; capability revoked', { cause });
       error.code = 'ANTIGRAVITY_NO_RETRY';
       throw error;
-    } finally { active.delete(token); if (chatKey) activeChats.delete(chatKey); }
+    } finally { release(); }
   }
 }

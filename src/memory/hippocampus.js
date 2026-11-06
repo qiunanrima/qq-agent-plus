@@ -43,7 +43,9 @@ export class Hippocampus {
           subject TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
           sources TEXT NOT NULL, updated INTEGER NOT NULL,
           UNIQUE(persona,kind,subject,title)
-        );`);
+        );
+        CREATE TABLE IF NOT EXISTS episode_archive AS SELECT * FROM episodes WHERE 0;
+        CREATE UNIQUE INDEX IF NOT EXISTS episode_archive_id ON episode_archive(id);`);
       }
       return fn(db);
     } finally { db.close(); }
@@ -86,15 +88,21 @@ export class Hippocampus {
     // 合并正文可能包含任一来源的事实；只包含当前会话并不能证明整条可见。
     return sources.length > 0 && sources.every((source) => impressionVisible({ sourceChatKeys: [source] }, chatKey, policy));
   }
-  episodes() {
-    return this.withDb(false, (db) => db ? db.prepare('SELECT * FROM episodes ORDER BY updated,id').all() : []);
+  episodes(includeArchived = false) {
+    return this.withDb(false, (db) => {
+      if (!db) return [];
+      const archive = includeArchived && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_archive'").get();
+      return db.prepare(archive ? 'SELECT * FROM episodes UNION ALL SELECT * FROM episode_archive ORDER BY updated,id'
+        : 'SELECT * FROM episodes ORDER BY updated,id').all();
+    });
   }
   status({ offset = 0 } = {}) {
     const episodes = this.episodes();
     return this.withDb(false, (db) => {
       const cards = db ? db.prepare('SELECT * FROM cards ORDER BY updated DESC,id').all() : [];
       return { enabled: this.enabled(), active: this.active, day: memoryDay(this.now()),
-        pendingDigestion: episodes.filter((r) => r.day < memoryDay(this.now()) && !r.digested).length,
+        archivedCount: this.episodes(true).length - episodes.length,
+        pendingDigestion: this.episodes(true).filter((r) => r.day < memoryDay(this.now()) && !r.digested).length,
         episodeCount: episodes.length, cardCount: cards.length,
         episodes: episodes.slice().reverse().slice(offset, offset + 40), cards: cards.slice(offset, offset + 40) };
     });
@@ -183,7 +191,13 @@ export class Hippocampus {
     const generation = this.generation;
     try {
       const today = memoryDay(this.now());
-      const waiting = this.episodes().filter((r) => r.day < today && !r.digested);
+      // Archive expired input before external work; failed digestion keeps it recoverable.
+      if (fs.existsSync(this.file)) this.withDb(true, db => {
+        db.exec('BEGIN IMMEDIATE');
+        try { this.prune(db, today); db.exec('COMMIT'); }
+        catch (error) { db.exec('ROLLBACK'); throw error; }
+      });
+      const waiting = this.episodes(true).filter((r) => r.day < today && !r.digested);
       const pending = waiting.filter((r) => r.persona === waiting[0]?.persona).slice(0, 20);
       const sourceById = new Map(pending.flatMap((r, i) => [[r.id, r], [`e${i + 1}`, r]]));
       if (pending.length) {
@@ -216,7 +230,10 @@ export class Hippocampus {
                 DO UPDATE SET content=excluded.content,sources=excluded.sources,updated=excluded.updated`)
                 .run(crypto.randomUUID(), c.persona, c.kind, c.subject, c.title, c.content, JSON.stringify(sources), this.now());
             }
-            for (const r of pending) db.prepare('UPDATE episodes SET digested=1,closed=1 WHERE id=?').run(r.id);
+            for (const r of pending) {
+              db.prepare('UPDATE episodes SET digested=1,closed=1 WHERE id=?').run(r.id);
+              db.prepare('UPDATE episode_archive SET digested=1,closed=1 WHERE id=?').run(r.id);
+            }
             this.prune(db, today);
             db.exec('COMMIT');
           } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -234,6 +251,10 @@ export class Hippocampus {
     db.prepare('UPDATE episodes SET closed=1 WHERE updated<=?').run(this.now() - 180000);
     db.prepare('DELETE FROM turns WHERE episode IN (SELECT id FROM episodes WHERE day<? AND digested=1)').run(previousDay(today));
     db.prepare('DELETE FROM episodes WHERE day<? AND digested=1').run(previousDay(today));
+    db.prepare('INSERT OR IGNORE INTO episode_archive SELECT * FROM episodes WHERE day<? AND digested=0').run(previousDay(today));
+    db.prepare('DELETE FROM episodes WHERE day<? AND digested=0').run(previousDay(today));
+    db.prepare('DELETE FROM turns WHERE episode IN (SELECT id FROM episode_archive WHERE digested=1)').run();
+    db.prepare('DELETE FROM episode_archive WHERE digested=1').run();
   }
   createResetBackup(file) {
     return this.withDb(false, (db) => { if (!db) return false; db.prepare('VACUUM INTO ?').run(file); fs.chmodSync(file, 0o600); return true; });
@@ -243,7 +264,7 @@ export class Hippocampus {
     this.retryAfter = 0;
     return this.withDb(false, (db) => Boolean(db)) && this.withDb(true, (db) => {
       db.exec('BEGIN IMMEDIATE');
-      try { db.exec('DELETE FROM turns; DELETE FROM episodes; DELETE FROM cards; COMMIT'); return true; }
+      try { db.exec('DELETE FROM turns; DELETE FROM episodes; DELETE FROM episode_archive; DELETE FROM cards; COMMIT'); return true; }
       catch (error) { db.exec('ROLLBACK'); throw error; }
     });
   }

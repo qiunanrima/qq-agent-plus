@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { toMcpContent } from './mcp-content.js';
 
-const LIMIT = 1024 * 1024;
+const LIMIT = 8 * 1024 * 1024;
 
 export function normalizeHostToolArguments(name, args) {
   // Only bridge the legacy text alias when the canonical field was omitted.
@@ -131,12 +132,12 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
         const result = await execute({ ...scope, name: tool.name, arguments: args });
         if (!available()) return error(request, -32000, 'Run revoked; outcome must not be retried');
         entry.state = result?.isError ? 'failed' : 'succeeded';
-        const content = typeof result?.content === 'string' ? result.content : JSON.stringify(result?.content ?? '');
-        if (Buffer.byteLength(content) > LIMIT / 2) {
+        const content = toMcpContent(result?.content);
+        if (Buffer.byteLength(JSON.stringify(content)) > LIMIT / 2) {
           close();
           return error(request, -32000, 'Tool result exceeds limit; do not retry');
         }
-        return reply(request, { content: [{ type: 'text', text: content }], isError: Boolean(result?.isError) });
+        return reply(request, { content, isError: Boolean(result?.isError) });
       } catch {
         close(); // Revoke the whole capability after an ambiguous external write.
         return error(request, -32000, 'Tool outcome unknown; do not retry');

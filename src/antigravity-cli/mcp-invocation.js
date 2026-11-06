@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRunToolMcp } from './mcp-run.js';
 import { requestCliApproval } from './approvals.js';
 
@@ -39,10 +40,28 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
     await fs.mkdir(agentDir, { recursive: true });
     const template = await fs.readFile(new URL('../../examples/antigravity/qq-mcp/agent.md', import.meta.url), 'utf8');
-    await fs.writeFile(path.join(agentDir, 'agent.md'), template.replace('name: qq-mcp', `name: ${config.agent}`));
+    const agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/, '')
+      .replace('inheritCustomizations: false', 'inheritCustomizations: true')
+      .replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
+        '文件和前台命令仅在用户明确要求且管理员逐次批准后使用；禁止浏览器、原生子代理和后台命令。被拒绝后停止，不得换工具绕过。') : template;
+    await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { qq_run: bridge.serverConfig } }), { mode: 0o600 });
+    let hookCommand;
+    if (config.nativeApproval) {
+      const quote = value => {
+        if (process.platform === 'win32') {
+          if (/["%\r\n]/.test(value)) throw new Error('Unsafe approval hook path');
+          return `"${value}"`;
+        }
+        return `'${value.replaceAll("'", "'\\''")}'`;
+      };
+      hookCommand = `${quote(process.execPath)} ${quote(fileURLToPath(new URL('./native-ask-hook.js', import.meta.url)))}`;
+      await fs.writeFile(path.join(workspace, '.agents/hooks.json'), JSON.stringify({ 'qq-run-approval': {
+        PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: hookCommand, timeout: 10 }] }]
+      } }), { mode: 0o600 });
+    }
     return {
-      workspace,
+      workspace, hookCommand,
       settings: { toolPermission: 'request-review', allowNonWorkspaceAccess: false, useG1Credits: false,
         permissions: { allow: ['mcp(qq_run/*)'], ask: [], deny: [
           'read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)', 'unsandboxed(*)'
@@ -63,7 +82,8 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
       },
       calls: () => bridge.ledger().length,
       finished: () => mcpRun.isFinished?.() === true,
-      policyChanged: () => typeof mcpRun.approvalAllowed === 'function' && mcpRun.approvalAllowed('qq') !== config.qqApproval,
+      policyChanged: () => typeof mcpRun.approvalAllowed === 'function'
+        && (mcpRun.approvalAllowed('qq') !== config.qqApproval || mcpRun.approvalAllowed('native') !== config.nativeApproval),
       revoke: () => bridge.close(),
       async close() {
         bridge.close();

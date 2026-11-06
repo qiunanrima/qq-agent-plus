@@ -33,6 +33,20 @@ test('03:00按上海时间换日，覆盖年末和闰日边界', () => {
   assert.equal(memoryDay(at('2028-03-01T02:59:59')), '2028-02-29');
 });
 
+test('expired undigested episodes are archived on failed digestion and remain recoverable', async t => {
+  const f = fixture(t); f.capture('待消化的旧记录');
+  f.setTime('2026-11-04T04:00:00');
+  await assert.rejects(f.memory.maintain({ complete: async () => { throw new Error('offline'); } }), /offline/);
+  assert.equal(f.memory.episodes().length, 0);
+  assert.equal(f.memory.episodes(true).length, 1);
+  assert.equal(f.memory.status().archivedCount, 1);
+  assert.equal(f.memory.status().pendingDigestion, 1);
+  f.setTime('2026-11-04T06:00:00');
+  await f.memory.maintain({ complete: digest() });
+  assert.equal(f.memory.episodes(true).length, 0);
+  assert.equal(f.memory.status().cardCount, 1);
+});
+
 test('清空后新聊天能重新消化成人物印象，控制台只读入口可看到新正文', async (t) => {
   const f = fixture(t);
   assert.deepEqual(f.memory.inspectionPersonCards().entries, []);
@@ -90,6 +104,10 @@ test('今日昨日摘要全局互通、角色隔离，查询分页完整，正�
   f.capture('另一个角色的经历', { role: { ...persona, roleText: '另一个角色' } });
   f.setTime('2026-11-02T03:00:00');
   await f.memory.maintain({ complete: digest('保密的长期印象正文') });
+  // Maintenance deliberately handles one persona per batch; equal timestamps
+  // must not make this assertion depend on random UUID ordering.
+  f.setTime('2026-11-02T03:01:01');
+  await f.memory.maintain({ complete: digest('保密的长期印象正文') });
   f.capture('今天遇到了甲');
   const prompt = f.memory.prompt({ persona, chatKey: 'group:99' });
   assert.match(prompt, /昨日/);
@@ -126,8 +144,8 @@ test('消化失败与非法来源不丢摘要；一小时后重试，合法结�
   f.capture('甲有重要面试');
   f.setTime('2026-11-03T03:00:00');
   await assert.rejects(f.memory.maintain({ complete: async () => ({ cards: [{ kind: 'person', subject: '12345', title: '甲', content: '正文', episodeIds: ['假的id'] }] }) }), /来源无效/);
-  assert.equal(f.memory.episodes().length, 1);
-  assert.equal(f.memory.episodes()[0].digested, 0);
+  assert.equal(f.memory.episodes(true).length, 1);
+  assert.equal(f.memory.episodes(true)[0].digested, 0);
   await f.memory.maintain({ complete: () => assert.fail('退避期间不重复付费') });
   f.setTime('2026-11-03T04:01:00');
   await f.memory.maintain({ complete: digest() });
