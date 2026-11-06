@@ -15,6 +15,8 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     else if (mcpRun.isFinished?.()) { hostFinished = true; controller.abort(new Error('Host finished')); }
   }, 100);
   try {
+    if (!Array.isArray(invocation.acpMcpServers) || invocation.acpMcpServers.length !== 1
+      || invocation.acpMcpServers[0].name !== 'qq_run') throw new Error('ACP requires the run-scoped qq_run MCP server');
     await verify(config, invocation, { signal: scopedSignal });
     scopedSignal.throwIfAborted();
     peer = createAcpPeer(config.executable, ['acp', '--agent', config.agent, '--include-default-customizations=false'], {
@@ -30,9 +32,15 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     });
     const init = await peer.call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
     if (init?.protocolVersion !== 1) throw new Error('Unsupported ACP protocol');
-    const session = await peer.call('session/new', { cwd: invocation.workspace, mcpServers: [] });
+    const session = await peer.call('session/new', { cwd: invocation.workspace, mcpServers: invocation.acpMcpServers });
     if (typeof session?.sessionId !== 'string' || !session.sessionId) throw new Error('Invalid ACP session');
     sessionId = session.sessionId;
+    const discoveryDeadline = Date.now() + 5000;
+    while (!invocation.mcpReady?.()) {
+      scopedSignal.throwIfAborted();
+      if (Date.now() >= discoveryDeadline) throw new Error('ACP qq_run MCP discovery failed before model invocation');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
     if (!session.modes?.availableModes?.some(mode => mode.id === 'default')) throw new Error('ACP restricted mode unavailable');
     await peer.call('session/set_mode', { sessionId, modeId: 'default' });
     if (config.model) {

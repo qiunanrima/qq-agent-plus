@@ -14,6 +14,7 @@ import { antigravityCompletion, antigravityStatus } from '../src/antigravity-cli
 
 const run = { chatKey: 'private:1', runId: 'test', allowed: () => true, approvalAllowed: () => true };
 const options = [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' }];
+const fakeServers = [{ name: 'qq_run', command: 'offline-only', args: [], env: [] }];
 const params = (id = 'call') => ({ sessionId: 'session', toolCall: { toolCallId: id, name: 'run_command', kind: 'execute', rawInput: { CommandLine: 'echo offline' } }, options });
 async function waitPending() {
   for (let i = 0; i < 100; i++) {
@@ -53,7 +54,7 @@ test('protected files, unknown native tools and persistent commands cannot be ap
 test('real offline ACP subprocess waits for approval, rejection produces no effect', async () => {
   for (const approved of [true, false]) {
     const completion = acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8, model: 'fake-model' },
-      invocation: { workspace: os.tmpdir(), calls: () => 0, finished: () => false, policyChanged: () => false },
+      invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
       prompt: 'offline', mcpRun: run, isEnabled: () => true,
       spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url))], opts)
     }, { verify: async () => {} });
@@ -66,7 +67,7 @@ test('real offline ACP subprocess waits for approval, rejection produces no effe
 
 test('ACP deadline revokes unanswered approval and kills the subprocess', async () => {
   const completion = acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 500, maxToolCalls: 8 },
-    invocation: { workspace: os.tmpdir(), calls: () => 0, finished: () => false, policyChanged: () => false },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
     prompt: 'offline', mcpRun: run, isEnabled: () => true,
     spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'hang'], opts)
   }, { verify: async () => {} });
@@ -74,6 +75,22 @@ test('ACP deadline revokes unanswered approval and kills the subprocess', async 
   const entry = await waitPending();
   await rejection; assert.equal(decideCliApproval(entry.id, true), false);
   assert.deepEqual(listCliApprovals(), []);
+});
+
+test('missing MCP discovery never starts a model prompt', async () => {
+  let prompted = false;
+  const completion = acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 400, maxToolCalls: 8 },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => false,
+      calls: () => 0, finished: () => false, policyChanged: () => false }, prompt: 'offline', mcpRun: run, isEnabled: () => true,
+    spawnProcess: (_exe, _args, opts) => {
+      const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url))], opts);
+      const write = child.stdin.write.bind(child.stdin);
+      child.stdin.write = (...args) => { if (String(args[0]).includes('session/prompt')) prompted = true; return write(...args); };
+      return child;
+    }
+  }, { verify: async () => {} });
+  await assert.rejects(completion, /timed out/);
+  assert.equal(prompted, false); assert.deepEqual(listCliApprovals(), []);
 });
 
 test('native hook verification rejects other hooks and paid-credit profile without model calls', async t => {
@@ -103,9 +120,10 @@ test('native hook verification rejects other hooks and paid-credit profile witho
 test('normal adapter selects ACP only on opt-in and cleans isolated workspace and lock', async t => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'native-adapter-'));
   t.after(() => fs.rm(workspace, { recursive: true, force: true }));
-  let checked = false;
+  let checked = false, executed = 0;
   const completion = antigravityCompletion({ config: { enabled: true, nativeApproval: true, workspace, executable: process.execPath },
-    messages: [{ role: 'user', content: 'offline probe' }], tools: [], mcpRun: { ...run, execute: async () => ({ content: 'unused' }),
+    messages: [{ role: 'user', content: 'offline probe' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }], mcpRun: { ...run,
+      execute: async name => { assert.equal(name, 'probe'); executed++; return { content: 'host-probe-ok' }; },
       approvalAllowed: category => category === 'native' } }, {
     verifyNative: async (_config, invocation) => {
       const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
@@ -118,11 +136,13 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       assert.equal(args[0], 'acp');
       assert.ok(args.includes('--include-default-customizations=false'));
       assert.ok(!args.includes('--dangerously-skip-permissions'));
-      return spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url))], opts);
+      return spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'mcp-probe'], opts);
     }
   });
   const entry = await waitPending(); decideCliApproval(entry.id, true);
-  assert.equal((await completion).raw.driver, 'acp'); assert.equal(checked, true);
+  const result = await completion;
+  assert.equal(result.raw.driver, 'acp'); assert.equal(checked, true);
+  assert.equal(result.raw.mcpCalls, 1); assert.equal(executed, 1);
   assert.deepEqual(await fs.readdir(workspace), []);
   assert.deepEqual(antigravityStatus(), { active: 0, queued: 0 });
 });

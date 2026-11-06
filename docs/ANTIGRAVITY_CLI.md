@@ -114,6 +114,8 @@ Debian 13 和 systemd 用户服务仍需现场验收。
 默认仅使用 QQ 宿主工具，原生审批 nativeApproval 默认关闭。独立设置页可分别配置
 QQ 宿主工具审批（qqApproval）与原生文件、前台命令审批（nativeApproval）。
 开启原生审批时改用 ACP，CLI ≥ 1.4.12；每轮建立独立会话，不复用永久授权。
+创建 ACP 会话时显式传入本轮 qq_run stdio 服务，环境变量使用 ACP 的 name/value 数组格式。
+必须观察到本轮服务完成 tools/list，才发送 session/prompt；未发现工具时在模型调用前失败。
 启动前只读验证专用 PreToolUse 钩子，原生工具强制 force_ask，客户端只接受 allow_once。
 没有原始完整参数、会话不符、重复调用 ID、浏览器/原生子代理/后台命令均拒绝。
 批准后的命令以服务用户权限执行；此审批功能不是操作系统沙箱。

@@ -101,7 +101,7 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
   const controller = new AbortController();
   const scope = Object.freeze({ chatKey: String(chatKey), runId: String(runId), signal: controller.signal });
   const sockets = new Set(), ledger = [], requests = new Map();
-  let closed = false, tail = Promise.resolve();
+  let closed = false, discovered = false, tail = Promise.resolve();
   const reply = (request, result) => ({ jsonrpc: '2.0', id: request.id, result });
   const error = (request, code, message) => ({ jsonrpc: '2.0', id: request?.id ?? null, error: { code, message } });
   const available = () => !closed && !controller.signal.aborted;
@@ -116,7 +116,10 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
     }
     if (!state.initialized) return error(request, -32000, 'Initialize first');
     if (request.method === 'ping') return reply(request, {});
-    if (request.method === 'tools/list') return reply(request, { tools: [...catalog].map(([name, tool]) => ({ name, description: tool.description || '', inputSchema: tool.parameters || { type: 'object' } })) });
+    if (request.method === 'tools/list') {
+      discovered = true;
+      return reply(request, { tools: [...catalog].map(([name, tool]) => ({ name, description: tool.description || '', inputSchema: tool.parameters || { type: 'object' } })) });
+    }
     if (request.method !== 'tools/call') return error(request, -32601, 'Method not supported');
     const tool = catalog.get(request.params?.name);
     const args = request.params?.arguments ?? {};
@@ -197,6 +200,6 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
   return {
     serverConfig: { command: process.execPath, args: [fileURLToPath(new URL('./mcp-stdio.js', import.meta.url))],
       env: { QQ_AGENT_RUN_PIPE: endpoint, QQ_AGENT_RUN_TOKEN: token } },
-    close, ledger: () => ledger.map(item => ({ ...item }))
+    close, isDiscovered: () => discovered && available(), ledger: () => ledger.map(item => ({ ...item }))
   };
 }

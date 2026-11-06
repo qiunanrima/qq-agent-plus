@@ -62,6 +62,11 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     }
     return {
       workspace, hookCommand,
+      mcpReady: () => bridge.isDiscovered(),
+      // ACP takes stdio server env as name/value entries, not an object.
+      acpMcpServers: [{ name: 'qq_run', command: bridge.serverConfig.command,
+        args: [...bridge.serverConfig.args],
+        env: Object.entries(bridge.serverConfig.env).map(([name, value]) => ({ name, value })) }],
       settings: { toolPermission: 'request-review', allowNonWorkspaceAccess: false, useG1Credits: false,
         permissions: { allow: ['mcp(qq_run/*)'], ask: [], deny: [
           'read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)', 'unsandboxed(*)'
