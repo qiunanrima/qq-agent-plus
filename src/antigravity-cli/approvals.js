@@ -19,7 +19,7 @@ export function requestCliApproval({ category, chatKey, runId, tool, args, signa
   const canApprove = () => { try { return !signal?.aborted && allowed() === true; } catch { return false; } };
   if (!canApprove() || pending.size >= 32) return Promise.resolve(false);
   const preview = JSON.stringify(args);
-  if (!preview || Buffer.byteLength(preview) > 8192 || redactText(preview) !== preview) return Promise.resolve(false);
+  if (!preview || Buffer.byteLength(preview) > 8192 || redactText(preview, preview.length) !== preview) return Promise.resolve(false);
   return new Promise(resolve => {
     const id = randomUUID();
     let settled = false;
@@ -46,7 +46,15 @@ export function bindRunApprovalPolicy(run, { getConfig, sender }) {
   run.notifyApproval = async id => {
     const owner = String(getConfig().admin?.ownerUin || '');
     if (!/^\d{5,15}$/.test(owner)) return;
-    await sender.sendTextBatch(`private:${owner}`, [`有 CLI 工具等待你确认，请打开控制台 → 设置 → Antigravity CLI 查看。审批编号：${id}。本轮最多等待 60 秒。`], {});
+    const entry = pending.get(id)?.view;
+    if (!entry) return;
+    const short = entry.preview.length <= 1500;
+    const text = [`CLI ${entry.category === 'native' ? '原生' : 'QQ 宿主'}工具待审批：${entry.tool}`,
+      `会话：${entry.chatKey}；本轮：${entry.runId}`,
+      short ? `参数（数据）：${entry.preview}` : '参数较长，请到控制台核对完整参数后批准。',
+      short ? `仅批准本次：批准CLI ${id}` : '', `拒绝本次：拒绝CLI ${id}`,
+      '也可打开控制台 → 设置 → Antigravity CLI。最长等待 60 秒，超时或结束后失效。'].filter(Boolean).join('\n');
+    await sender.sendTextBatch(`private:${owner}`, [text], {});
   };
   return run;
 }

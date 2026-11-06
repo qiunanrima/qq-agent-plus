@@ -22,6 +22,19 @@ test('send text alias preserves content and targeting but never overrides explic
   }
 });
 
+test('exact qq_run dispatcher envelopes are unwrapped without rerouting or overriding explicit fields', () => {
+  const envelope = Arguments => ({ Arguments, ServerName: 'qq_run', ToolName: 'qq_send_message' });
+  assert.deepEqual(normalizeHostToolArguments('send_message', envelope({ messages: ['hello', 'world'] })), { messages: ['hello', 'world'] });
+  assert.deepEqual(normalizeHostToolArguments('send_message', envelope({ message: 'hello' })), { messages: ['hello'] });
+  assert.deepEqual(normalizeHostToolArguments('send_message', envelope('{"messages":["hello"]}')), { messages: ['hello'] });
+  assert.deepEqual(normalizeHostToolArguments('send_message', envelope({ messages: [], message: 'never' })), { messages: [], message: 'never' });
+  for (const args of [{ ...envelope({ messages: ['never'] }), ServerName: 'other' },
+    { ...envelope({ messages: ['never'] }), ToolName: 'qq_other' }, envelope('not JSON'),
+    { ...envelope({ messages: ['never'] }), messages: [] }]) {
+    assert.equal(normalizeHostToolArguments('send_message', args), args);
+  }
+});
+
 test('scoped tool cancellation stays aborted while mutable skill state reaches the host', () => {
   const parent = new AbortController(), scoped = new AbortController();
   const ctx = { signal: parent.signal, activeSkill: null };

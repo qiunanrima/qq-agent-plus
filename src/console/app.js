@@ -40,6 +40,7 @@ import { LifeFeedManager } from '../features/life-feed.js';
 import { QzoneInteractionManager } from '../features/qzone-interactions.js';
 import { GroupDigestManager } from '../features/group-digest.js';
 import { AdminBriefingManager } from '../features/admin-briefing.js';
+import { handlePrivateCliApproval } from '../antigravity-cli/private-approvals.js';
 import { GroupGameManager } from '../features/group-game.js';
 import { ReminderStore } from '../core/reminders.js';
 import { PluginRegistry } from '../plugins/registry.js';
@@ -1973,6 +1974,8 @@ function buildApp({
 
   async function ingestOneBotEvent(event, arrivedInactive) {
     if (!event || typeof event !== 'object') return;
+    if (await handlePrivateCliApproval(event, { getConfig, audit: appendAudit,
+      reply: (owner, text) => sender.sendTextBatch(`private:${owner}`, [text], {}) })) return;
     if (event.post_type === 'message' || event.post_type === 'message_sent') {
       // Echoes are deduplicated by message ID; shared-protocol observe mode also records old-instance replies.
       if (event.message_type === 'group' && event.group_id != null) return ingestMessage('group', String(event.group_id), event, arrivedInactive);

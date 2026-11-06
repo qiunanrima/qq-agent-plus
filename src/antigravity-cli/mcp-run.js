@@ -9,6 +9,14 @@ import { toMcpContent } from './mcp-content.js';
 const LIMIT = 8 * 1024 * 1024;
 
 export function normalizeHostToolArguments(name, args) {
+  // Accept only an exact dispatcher envelope for this already-bound host tool.
+  if (args && typeof args === 'object' && !Array.isArray(args)
+    && Object.hasOwn(args, 'Arguments') && args.ServerName === 'qq_run' && args.ToolName === `qq_${name}`
+    && Object.keys(args).every(key => ['Arguments', 'ServerName', 'ToolName'].includes(key))) {
+    let inner = args.Arguments;
+    if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch { return args; } }
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) args = inner;
+  }
   // Only bridge the legacy text alias when the canonical field was omitted.
   // An explicitly empty messages list must never trigger an unintended send.
   if (name === 'send_message' && args && !Object.hasOwn(args, 'messages')
@@ -17,10 +25,10 @@ export function normalizeHostToolArguments(name, args) {
     return { ...rest, messages: [text] };
   }
   if (name === 'send_message' && args && !Object.hasOwn(args, 'messages') && !Object.hasOwn(args, 'text')) {
-    const value = args.content;
+    const value = args.content ?? args.message;
     const list = typeof value === 'string' ? [value] : value;
     if (Array.isArray(list) && list.length && list.every(item => typeof item === 'string' && item.trim())) {
-      const { content: _content, ...rest } = args;
+      const { content: _content, message: _message, ...rest } = args;
       return { ...rest, messages: [...list] };
     }
   }
