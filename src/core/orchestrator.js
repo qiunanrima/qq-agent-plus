@@ -154,7 +154,7 @@ export function finishBarrierBlock(name, {
     return 'finish 未执行：本轮尝试发送内容但尚未成功送达。请立即改用 send_message 发送文字回复；不要重试表情，也不要只结束本轮。';
   }
   if (name === 'finish' && priorFailure) {
-    return 'finish 未执行：本轮前置工具有失败项，需要先查看错误并重新决定。';
+    return 'finish 未执行：本轮前置工具有失败项，需要先查看错误并重新决定。CLI 中若仅为已知只读失败、已如实回复且无未知写入，可传 errorAcknowledged:true 和事实 summary 再结束；此参数不能跳过发送失败或未知写入。不要用命令读取工具 schema。';
   }
   return '';
 }

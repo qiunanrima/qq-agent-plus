@@ -27,7 +27,7 @@ export function describeAcpPermission(toolCall) {
   return tool ? { category: 'native', tool, args } : null;
 }
 
-export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signal, isEnabled, maxCalls }) {
+export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signal, isEnabled, maxCalls, imageAccess }) {
   let calls = 0;
   const decisions = new Set();
   const allowed = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.()
@@ -45,6 +45,11 @@ export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signa
     if (calls++ >= maxCalls) return cancelled;
     decisions.add(id);
     const promise = (async () => {
+      // CLI offloads MCP image blocks and requests view_file to consume them.
+      // This exact, content-bound read is part of the already authorized MCP tool.
+      if (description.tool === 'view_file'
+        && await imageAccess?.allows(decode(description.args.AbsolutePath), sessionId()) && allowed())
+        return { outcome: { outcome: 'selected', optionId: option.optionId } };
       const field = description.tool === 'view_file' ? 'AbsolutePath' : 'TargetFile';
       if (description.tool !== 'run_command' && !Object.hasOwn(description.args, field)) return cancelled;
       if (description.tool === 'run_command' && (typeof decode(description.args.CommandLine) !== 'string' || !decode(description.args.CommandLine).trim())) return cancelled;

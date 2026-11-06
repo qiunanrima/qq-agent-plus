@@ -9,7 +9,8 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
   const scopedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   let sessionId, response = '', hostFinished = false, peer;
   const permit = createAcpPermissionHandler({ sessionId: () => sessionId, mcpRun,
-    workspace: invocation.workspace, signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls });
+    workspace: invocation.workspace, signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls,
+    imageAccess: invocation.imageAccess });
   const native = createAcpNativeClient({ sessionId: () => sessionId, workspace: invocation.workspace, mcpRun,
     signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls, onUnknownWrite: error => controller.abort(error) });
   const timer = setTimeout(() => controller.abort(new Error('Antigravity CLI timed out')), config.timeoutMs);

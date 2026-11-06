@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRunToolMcp } from './mcp-run.js';
 import { requestCliApproval } from './approvals.js';
+import { createRunImageAccess } from './image-access.js';
 
 
 /** Per-process workspace avoids sharing MCP tokens or catalogs across chats. */
@@ -18,6 +19,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
   let bridge;
+  const imageAccess = createRunImageAccess();
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
     const approve = async (category, name, args, callSignal) => requestCliApproval({ category,
@@ -35,6 +37,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         return { isError: true, content: '工具未获管理员批准或本轮已结束；未执行，不要自动重试。' };
       }
       const result = await mcpRun.execute(call.name, call.arguments, call.signal);
+      if (!result?.isError) imageAccess.observe(result?.content);
       return result;
     } });
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
@@ -63,6 +66,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     }
     return {
       workspace, hookCommand,
+      imageAccess,
       mcpReady: () => bridge.isDiscovered(),
       // ACP takes stdio server env as name/value entries, not an object.
       acpMcpServers: [{ name: 'qq_run', command: bridge.serverConfig.command,
