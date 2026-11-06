@@ -97,6 +97,18 @@ function fixture(t, { group = false, maxRounds = 3, guard = true, stickers = fal
   return { cfg, runner, store, sessions, sent, sender, bodies, responses, textReply, sendReply, append, wake, lastSession };
 }
 
+test('私聊简短确认后正常 finish 保持安静，不发错误兜底且不追加模型调用', async t => {
+  const f = fixture(t);
+  f.responses.push({ choices: [{ message: { tool_calls: [{ id: 'close', type: 'function',
+    function: { name: 'finish', arguments: JSON.stringify({ summary: '收到简短确认，话题自然结束。' }) } }] } }], usage: { total_tokens: 10 } });
+  f.append('ack', '欧克');
+  await f.wake();
+  assert.equal(f.bodies.length, 1);
+  assert.deepEqual(f.sent, []);
+  assert.equal(f.lastSession()?.replyCorrection, 'skipped');
+  assert.equal(f.lastSession()?.status, 'noreply');
+});
+
 test('报告场景：私聊问空间动态、首轮只回正文 → 纠正后发出说明，首轮正文不被转发', async (t) => {
   const f = fixture(t);
   f.responses.push(f.textReply(), f.sendReply());

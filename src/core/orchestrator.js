@@ -3,6 +3,7 @@ import { ensureCliSummary } from '../antigravity-cli/summary.js';
 import { blocksToolFinish } from '../tools/tool-outcome.js';
 import { runCancelled, isIntentionalCancellation } from './run-cancellation.js';
 import { antigravityQuotaTools } from '../antigravity-cli/tools.js';
+import { isAcknowledgedClose } from './reply-guard-close.js';
 export { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate } from './orchestrator-helpers.js';
 import { randomWakeDelay } from './orchestrator-helpers.js';
 export { randomWakeDelay } from './orchestrator-helpers.js';
@@ -1799,6 +1800,11 @@ export class Orchestrator {
     }
     if (proactive || manual) return;
     if (session.sent.length > 0 || session.visibleReply === true) return;
+    if (isAcknowledgedClose(session, triggerEntries)) {
+      session.replyCorrection = 'skipped';
+      log.info(`[reply-guard] ${session.chatKey || ''} 简短确认已正常收尾，不补发错误兜底`);
+      return;
+    }
     if (!Array.isArray(triggerEntries) || !triggerEntries.length) {
       // 触发条目被另一轮 claim 走等场景会走到这里；此前静默 return，会话里
       // replyCorrection=null 与"没走到 guard"分不清（issue #64 附带的私聊现象）
