@@ -76,6 +76,15 @@ test('real offline ACP subprocess waits for approval, rejection produces no effe
   }
 });
 
+test('executor failure banner with end_turn must never be recorded as SUCCESS', async () => {
+  await assert.rejects(acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
+    prompt: 'offline', mcpRun: run, isEnabled: () => true,
+    spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'executor-error'], opts)
+  }, { verify: async () => {} }), { code: 'ANTIGRAVITY_ACP_EXECUTION_FAILED' });
+  assert.deepEqual(listCliApprovals(), []);
+});
+
 test('ACP deadline revokes unanswered approval and kills the subprocess', async () => {
   const completion = acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 500, maxToolCalls: 8 },
     invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
@@ -140,7 +149,8 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
       assert.match(agent, /inheritCustomizations: true/); assert.doesNotMatch(agent, /commandExecutionPolicy: off/);
       assert.match(agent, /commandExecutionPolicy: sandbox/);
-      for (const tool of ['run_command', 'read_file', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
+      for (const tool of ['run_command', 'read_file', 'write_to_file', 'replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
+      for (const obsolete of ['view_file', 'multi_replace_file_content']) assert.ok(!agent.includes(`  - ${obsolete}`));
       const hooks = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/hooks.json'), 'utf8'));
       assert.equal(hooks['qq-run-approval'].PreToolUse[0].hooks[0].command, invocation.hookCommand);
       checked = true;

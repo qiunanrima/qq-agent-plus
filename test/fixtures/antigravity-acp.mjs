@@ -38,6 +38,13 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   }
   else if (method === 'session/prompt') {
     promptId = id;
+    if (mode === 'executor-error') {
+      send({ method: 'session/update', params: { sessionId: 'session', update: {
+        sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Agent execution terminated due to error.' }
+      } } });
+      send({ id, result: { stopReason: 'end_turn' } });
+      continue;
+    }
     send({ id: 900, method: 'session/request_permission', params: { sessionId: 'session',
       toolCall: { toolCallId: 'tool-1', name: 'run_command', kind: 'execute', rawInput: { CommandLine: 'echo offline-probe' } },
       options: [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' }] } });

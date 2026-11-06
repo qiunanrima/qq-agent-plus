@@ -57,6 +57,12 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     const result = await peer.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
     if (scopedSignal.aborted) throw scopedSignal.reason;
     if (result?.stopReason !== 'end_turn') throw new Error('ACP turn did not complete');
+    // CLI may report end_turn even when its executor could not be constructed.
+    if (/^(?:⚠\s*)?Agent execution terminated due to error\.?$/.test(response.trim())) {
+      const error = new Error('Antigravity ACP execution terminated due to error');
+      error.code = 'ANTIGRAVITY_ACP_EXECUTION_FAILED';
+      throw error;
+    }
     if (invocation.finished()) hostFinished = true;
     return completed('SUCCESS');
   } catch (error) {

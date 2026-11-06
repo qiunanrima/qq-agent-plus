@@ -63,6 +63,8 @@ Debian 13 的用户服务凭据、真实 OneBot 和实际会话仍需小范围�
 启用原生审批的 ACP 模式下，CLI 会把 MCP 图像块写入当前会话的
 `.system_generated/steps/<数字>/media_<数字>.<图像扩展名>`，再用 `read_file({Path: ...})` 读取
 （兼容旧名 `view_file({AbsolutePath: ...})`）。hook 与 ACP 审批均识别这两种调用。
+当前 CLI agent 配置仅列出 `read_file`：旧名只在适配层兼容，同时配置两者会被 CLI
+解析为同名工具并导致执行器启动失败。废弃的 `multi_replace_file_content` 同样不再配置。
 宿主只自动放行本轮成功工具返回、当前 CLI 会话目录内、内容 SHA-256 一致且不经过符号链接的图片。
 其他文件读取和命令仍逐次审批；不允许通过命令读取工具 schema 来绕过收尾错误。
 OCR 服务失败不代表图像下载失败。已如实回复后，已知只读失败可用

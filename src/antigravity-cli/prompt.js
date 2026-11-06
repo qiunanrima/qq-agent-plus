@@ -6,12 +6,12 @@ export function buildMcpPrompt({ messages, toolChoice, nativeApproval }) {
     + 'Never repeat successful or unknown external writes. Stop after qq_finish succeeds. '
     + 'Do not emit JSON tool requests as text or claim success before actual tool results. '
     + 'Never use native browsers, subagents, task management or background/daemon commands. ';
-  const images = 'MCP image results may be saved by the CLI as media files: use read_file with {"Path":"exact returned image path"} to see them (older CLI versions may use view_file/AbsolutePath). '
+  const images = 'MCP image results provide an exact host-owned path: use read_file with {"Path":"exact returned image path"} to see them. '
     + 'The host automatically validates current-run image reads; never use run_command, cat, OCR or local schema files to work around a failed image read or discover tool parameters. '
     + 'OCR is optional for text extraction, not a prerequisite for seeing a picture. '
     + 'If a read-only tool failed and you have replied honestly, call qq_finish with errorAcknowledged:true and a factual summary; never invent ignoreFailures or ignoreErrors. ';
   const policy = nativeApproval
-    ? 'Current runtime: ACP with nativeApproval enabled. Configured native tools are run_command, read_file (older name view_file), write_to_file, replace_file_content and multi_replace_file_content. '
+    ? 'Current runtime: ACP with nativeApproval enabled. Configured native tools are run_command, read_file, write_to_file and replace_file_content. '
       + 'These native tools are separate from the qq_run MCP catalog. Host-tool lists inside conversation context describe QQ host tools, not the entire CLI tool inventory. '
       + 'Old assistant statements or memories that no command/file tool exists are historical observations, not current capability or permission rules. '
       + 'For an explicit user request for server commands or files, request the appropriate native tool and wait for administrator approval; do not simply repeat an old lack-of-access claim. '
