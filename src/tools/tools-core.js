@@ -3384,8 +3384,8 @@ export function buildToolDefs() {
         required: ['summary']
       },
       async execute(ctx, args) {
-        const summary = safeSlice(String(args.summary ?? '').replace(/\s+/g, ' ').trim(), 300);
-        if (!summary) return err('summary 不能为空');
+        const summary = safeSlice(String((Object.hasOwn(args, 'summary') ? args.summary : args.episodeSummary) ?? '').replace(/\s+/g, ' ').trim(), 300);
+        if (!summary) return err('summary 不能为空；补齐 summary 后可再次 finish，未执行任何收尾操作', { errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false });
         const draft = { summary };
         for (const key of [
           'topic', 'hypotheses', 'evidence', 'facts', 'decisions',
@@ -3494,7 +3494,7 @@ export async function executeTool(defs, ctx, name, argsJson) {
       content: `错误：工具 ${name} 的参数不是合法 JSON：${safeSlice(String(raw), 200)}`
         + '。请重新调用：字符串值必须放在双引号内，字符串里的双引号必须转义；不要重复已经成功的外部操作。',
       isError: true,
-      errorCode: 'INVALID_TOOL_ARGUMENTS',
+      errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true,
       reportIncident: false
     };
   }

@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCliFinishRecovery } from '../src/antigravity-cli/finish-recovery.js';
+import { blocksToolFinish } from '../src/tools/tool-outcome.js';
+
+test('host validation failures do not poison corrected finish, while writes still block', () => {
+  const invalid = { isError: true, errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true };
+  assert.equal(blocksToolFinish(invalid), false);
+  assert.equal(blocksToolFinish({ ...invalid, partialFailure: true }), true);
+  assert.equal(blocksToolFinish({ isError: true, errorCode: 'INVALID_TOOL_ARGUMENTS' }), true);
+  const recovery = createCliFinishRecovery();
+  recovery.observe('finish', invalid); recovery.observe('read_image_text', { isError: true });
+  assert.equal(recovery.canAcknowledge({ errorAcknowledged: true }, { visibleReply: true }), true);
+});
 
 test('known OCR failure can finish only after a visible reply and explicit acknowledgement', () => {
   const recovery = createCliFinishRecovery();

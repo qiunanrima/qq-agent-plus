@@ -35,6 +35,18 @@ test('exact qq_run dispatcher envelopes are unwrapped without rerouting or overr
   }
 });
 
+test('host argument aliases never replace explicit canonical plugin, image or poke fields', () => {
+  assert.deepEqual(normalizeHostToolArguments('plugin_call', { name: 'health__query', payload: { days: 1 } }), { tool: 'health__query', args: { days: 1 } });
+  const canonical = { tool: 'chosen', args: {}, name: 'other', payload: { days: 2 } };
+  assert.equal(normalizeHostToolArguments('plugin_call', canonical), canonical);
+  assert.equal(normalizeHostToolArguments('get_message_images', { message_id: '-12' }).messageId, '-12');
+  assert.equal(normalizeHostToolArguments('get_message_images', { messageIds: ['-12'] }).messageId, '-12');
+  assert.equal(normalizeHostToolArguments('get_message_images', { messageIds: ['12', '13'] }).messageId, undefined);
+  assert.equal(normalizeHostToolArguments('get_message_images', { messageId: '', id: '12' }).messageId, '');
+  assert.equal(normalizeHostToolArguments('send_poke', { userId: '12345' }).targetUserId, '12345');
+  assert.equal(normalizeHostToolArguments('send_poke', { targetUserId: '', userId: '12345' }).targetUserId, '');
+});
+
 test('scoped tool cancellation stays aborted while mutable skill state reaches the host', () => {
   const parent = new AbortController(), scoped = new AbortController();
   const ctx = { signal: parent.signal, activeSkill: null };

@@ -211,7 +211,7 @@ describe('Orchestrator', () => {
     childProcess.spawn = (exe, args, options) => {
       if (exe !== 'test-agy') return originalSpawn(exe, args, options);
       cliCalls += 1;
-      return originalSpawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-mcp-cli.mjs', import.meta.url))], options);
+      return originalSpawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-mcp-cli.mjs', import.meta.url)), 'correct-finish'], options);
     };
     syncBuiltinESMExports();
     t.after(() => { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); });

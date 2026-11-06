@@ -18,6 +18,16 @@ export function normalizeHostToolArguments(name, args) {
     if (inner && typeof inner === 'object' && !Array.isArray(inner)) args = inner;
   }
   // Only bridge the legacy text alias when the canonical field was omitted.
+  if (name === 'plugin_call' && args && !Object.hasOwn(args, 'tool') && typeof args.name === 'string') {
+    const { name: tool, payload, parameters, ...rest } = args;
+    args = { ...rest, tool, ...(!Object.hasOwn(args, 'args') ? { args: payload ?? parameters ?? {} } : {}) };
+  }
+  if (['get_message_images', 'read_image_text'].includes(name) && args && !Object.hasOwn(args, 'messageId')) {
+    const id = args.message_id ?? args.id ?? (Array.isArray(args.messageIds) && args.messageIds.length === 1 ? args.messageIds[0] : undefined);
+    if (/^-?\d+$/.test(String(id ?? ''))) args = { ...args, messageId: String(id) };
+  }
+  if (name === 'send_poke' && args && !Object.hasOwn(args, 'targetUserId') && /^\d+$/.test(String(args.userId ?? '')))
+    args = { ...args, targetUserId: String(args.userId) };
   // An explicitly empty messages list must never trigger an unintended send.
   if (name === 'send_message' && args && !Object.hasOwn(args, 'messages')
     && typeof args.text === 'string' && args.text.trim()) {

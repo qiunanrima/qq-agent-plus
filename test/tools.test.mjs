@@ -17,6 +17,15 @@ function tool(name) {
   return buildToolDefs().find((entry) => entry.name === name);
 }
 
+test('finish accepts a supplied episode summary, and missing summary is a correctable no-effect error', async () => {
+  const f = context();
+  const empty = await tool('finish').execute(f.ctx, { threadDisposition: 'listening' });
+  assert.equal(empty.errorCode, 'INVALID_TOOL_ARGUMENTS'); assert.equal(empty.noEffect, true);
+  assert.equal(f.ctx.session.finishReason, undefined);
+  const fixed = await tool('finish').execute(f.ctx, { episodeSummary: '旁听群友闲聊', threadDisposition: 'listening' });
+  assert.ok(!fixed.isError); assert.equal(f.ctx.session.finishReason, '旁听群友闲聊');
+});
+
 function context(patch = {}) {
   const sends = [];
   const store = {

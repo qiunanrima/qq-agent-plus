@@ -645,14 +645,14 @@ export class PluginRegistry {
         if (!hit) {
           return {
             content: JSON.stringify({
-              error: `没有这个插件工具：${wanted || '(空)'}`,
+              error: `没有这个插件工具：${wanted || '(空)'}；请使用 {tool: "完整工具名", args: {...}}，未执行插件`,
               available: available.map(({ host, tool }) => ({
                 tool: qualifiedToolName(host.id, tool.name),
                 description: sanitizeUserText(String(tool.description || '')).slice(0, 200),
                 parameters: sanitizeSchemaDeep(tool.parameters || {})
               }))
             }),
-            isError: true
+            isError: true, errorCode: 'INVALID_TOOL_ARGUMENTS', noEffect: true, reportIncident: false
           };
         }
         return this.#callPlugin(hit.host, hit.tool, args?.args ?? {}, ctx);

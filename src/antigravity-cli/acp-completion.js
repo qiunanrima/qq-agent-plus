@@ -1,6 +1,7 @@
 import { createAcpPeer } from './acp-rpc.js';
 import { createAcpPermissionHandler } from './acp-permissions.js';
 import { verifyNativeHooks } from './verify-native-hooks.js';
+import { createAcpNativeClient } from './acp-native-client.js';
 
 /** One ACP session per host run; no permanent permissions or automatic retry. */
 export async function acpCompletion({ config, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, { verify = verifyNativeHooks } = {}) {
@@ -9,6 +10,8 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
   let sessionId, response = '', hostFinished = false, peer;
   const permit = createAcpPermissionHandler({ sessionId: () => sessionId, mcpRun,
     workspace: invocation.workspace, signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls });
+  const native = createAcpNativeClient({ sessionId: () => sessionId, workspace: invocation.workspace, mcpRun,
+    signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls, onUnknownWrite: error => controller.abort(error) });
   const timer = setTimeout(() => controller.abort(new Error('Antigravity CLI timed out')), config.timeoutMs);
   const guard = setInterval(() => {
     if (!isEnabled() || invocation.policyChanged()) controller.abort(new Error('Antigravity permission policy changed'));
@@ -23,14 +26,14 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       cwd: invocation.workspace, signal: scopedSignal, spawnProcess,
       request: (method, params) => {
         if (method === 'session/request_permission') return permit(params);
-        throw new Error('Unsupported ACP client method');
+        return native.request(method, params);
       },
       update: (method, params) => {
         if (method !== 'session/update' || params?.sessionId !== sessionId) return;
         if (params.update?.sessionUpdate === 'agent_message_chunk' && params.update.content?.type === 'text') response += params.update.content.text || '';
       }
     });
-    const init = await peer.call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
+    const init = await peer.call('initialize', { protocolVersion: 1, clientCapabilities: native.capabilities, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
     if (init?.protocolVersion !== 1) throw new Error('Unsupported ACP protocol');
     const session = await peer.call('session/new', { cwd: invocation.workspace, mcpServers: invocation.acpMcpServers });
     if (typeof session?.sessionId !== 'string' || !session.sessionId) throw new Error('Invalid ACP session');
@@ -62,6 +65,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     clearTimeout(timer); clearInterval(guard);
     controller.abort();
     await peer?.close();
+    await native.close();
   }
   function completed(status) {
     return { message: { role: 'assistant', content: response }, finishReason: 'stop', toolsExecutedViaMcp: true,

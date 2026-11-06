@@ -24,6 +24,10 @@ try {
   const result = await client.callTool(name, args);
   if (result.isError) throw new Error('Host rejected test tool');
   if (names.includes('qq_finish')) {
+    if (process.argv[2] === 'correct-finish') {
+      const invalid = await client.callTool('qq_finish', { threadDisposition: 'listening' });
+      if (!invalid.isError) throw new Error('Missing summary must be rejected before execution');
+    }
     await client.callTool('qq_finish', { summary: 'MCP test completed' });
     // Host finish barrier must stop a second send, even with a fresh MCP ID.
     const after = await client.callTool(name, args);

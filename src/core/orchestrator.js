@@ -1,5 +1,6 @@
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
 import { ensureCliSummary } from '../antigravity-cli/summary.js';
+import { blocksToolFinish } from '../tools/tool-outcome.js';
 export { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate } from './orchestrator-helpers.js';
 import { randomWakeDelay } from './orchestrator-helpers.js';
 export { randomWakeDelay } from './orchestrator-helpers.js';
@@ -2568,7 +2569,7 @@ export class Orchestrator {
         // 但同样不能把 finish 提交掉，否则失败的那几条永远没有下一轮补发（复审 P1）。
         // 技能白名单拦截不是"工具坏了"：不让它把 finish 屏障也一起触发，否则模型被挡住一次
         // 就再也收不了尾。真正的工具失败仍然照旧挡 finish。
-        if ((result.isError && result.skillBlocked !== true) || result.partialFailure === true) priorFailure = true;
+        if (blocksToolFinish(result)) priorFailure = true;
         if (name === 'send_sticker'
           && result.isError
           && (result.errorCode === 'action-cooldown' || /这个动作刚刚用过/.test(contentStr))

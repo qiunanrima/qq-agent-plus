@@ -1,3 +1,4 @@
+import { blocksToolFinish } from '../tools/tool-outcome.js';
 // A CLI turn has many sequential calls, unlike one API tool batch. A known
 // read failure can be acknowledged; failed/partial/unknown writes cannot.
 const reads = new Set(['read_image_text', 'get_message_images', 'search_web', 'fetch_url',
@@ -9,7 +10,7 @@ export function createCliFinishRecovery() {
   let readFailure = false, blockingFailure = false;
   return {
     observe(name, result, blocked = false) {
-      if (blocked || result.skillBlocked || (!result.isError && !result.partialFailure)) return;
+      if (blocked || !blocksToolFinish(result)) return;
       if (reads.has(name) && !result.partialFailure) readFailure = true;
       else blockingFailure = true;
     },
