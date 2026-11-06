@@ -8,6 +8,8 @@ import { createAcpPermissionHandler } from '../src/antigravity-cli/acp-permissio
 import { listCliApprovals } from '../src/antigravity-cli/approvals.js';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { prepareMcpInvocation } from '../src/antigravity-cli/mcp-invocation.js';
+import { McpStdioClient } from '../src/mcp/client.js';
 
 async function hookDecision(call) {
   const child = spawn(process.execPath, [fileURLToPath(new URL('../src/antigravity-cli/native-ask-hook.js', import.meta.url))], { windowsHide: true });
@@ -18,6 +20,41 @@ async function hookDecision(call) {
   await done;
   return JSON.parse(output);
 }
+
+test('real MCP bridge returns a run-owned image path usable through the read_file permission chain', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'qq-image-bridge-'));
+  const bytes = Buffer.from('image returned by host');
+  const controller = new AbortController();
+  let invocation, client;
+  try {
+    invocation = await prepareMcpInvocation({ config: { workspace, agent: 'qq-mcp', nativeApproval: true, qqApproval: false, maxToolCalls: 16, timeoutMs: 3000 },
+      tools: [{ function: { name: 'get_message_images', parameters: { type: 'object' } } }],
+      mcpRun: { chatKey: 'private:1', runId: 'image-test', allowed: () => true,
+        execute: async () => ({ content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${bytes.toString('base64')}` } }] }) },
+      signal: controller.signal });
+    const server = invocation.acpMcpServers[0];
+    client = new McpStdioClient({ ...server, id: 'image-test', env: Object.fromEntries(server.env.map(x => [x.name, x.value])) });
+    await client.start();
+    const result = await client.callTool('qq_get_message_images', {});
+    assert.equal(result.isError, false);
+    assert.equal(result.content.some(part => part.type === 'image'), false);
+    const file = JSON.parse(result.content[0].text.match(/\{"Path":.*?\}/)[0]).Path;
+    assert.deepEqual(await fs.readFile(file), bytes);
+    const session = '1996c561-1924-4235-9af2-a2ff7ac42804';
+    assert.equal(await invocation.imageAccess.allows(file, session), true);
+    assert.equal((await hookDecision({ name: 'read_file', args: { Path: file } })).decision, 'force_ask');
+    const permit = createAcpPermissionHandler({ sessionId: () => session, workspace: invocation.workspace,
+      signal: controller.signal, isEnabled: () => true, maxCalls: 16, imageAccess: invocation.imageAccess,
+      mcpRun: { allowed: () => true, approvalAllowed: () => true } });
+    assert.deepEqual(await permit({ sessionId: session, toolCall: { toolCallId: 'image', name: 'read_file', rawInput: { Path: file } },
+      options: [{ kind: 'allow_once', optionId: 'once' }] }), { outcome: { outcome: 'selected', optionId: 'once' } });
+    await fs.writeFile(file, 'tampered');
+    assert.equal(await invocation.imageAccess.allows(file, session), false);
+  } finally {
+    controller.abort(); client?.stop(); await invocation?.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
 
 test('only exact current-run MCP image bytes in the current CLI media spool bypass approval', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'qq-image-access-'));

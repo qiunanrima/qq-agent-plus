@@ -56,6 +56,10 @@ CLI 返回的正文不被再次解析为工具调用；MCP 已发送的内容不
 Debian 13 的用户服务凭据、真实 OneBot 和实际会话仍需小范围现场验收；不能据 Windows 测试认定已部署。
 # 本轮图片读取
 
+原生审批的 ACP 模式优先由宿主把图片原始字节写进本轮 workspace 的 `.qq-images/`，
+通过 MCP 返回精确的 `read_file({Path: ...})` 调用路径，避免依赖 CLI 自行转存图片的行为。
+每张图片按精确路径和 SHA-256 绑定本轮；篡改后不能自动放行，结束时随 workspace 清理。
+
 启用原生审批的 ACP 模式下，CLI 会把 MCP 图像块写入当前会话的
 `.system_generated/steps/<数字>/media_<数字>.<图像扩展名>`，再用 `read_file({Path: ...})` 读取
 （兼容旧名 `view_file({AbsolutePath: ...})`）。hook 与 ACP 审批均识别这两种调用。

@@ -19,7 +19,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
   let bridge;
-  const imageAccess = createRunImageAccess();
+  const imageAccess = createRunImageAccess({ workspace });
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
     const approve = async (category, name, args, callSignal) => requestCliApproval({ category,
@@ -37,7 +37,9 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         return { isError: true, content: '工具未获管理员批准或本轮已结束；未执行，不要自动重试。' };
       }
       const result = await mcpRun.execute(call.name, call.arguments, call.signal);
-      if (!result?.isError) imageAccess.observe(result?.content);
+      if (!result?.isError && config.nativeApproval) {
+        return { ...result, content: await imageAccess.materialize(result?.content) };
+      }
       return result;
     } });
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
