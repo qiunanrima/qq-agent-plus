@@ -5,6 +5,7 @@ import { prepareMcpInvocation } from './mcp-invocation.js';
 import { createCliQueue } from './queue.js';
 import { acpCompletion } from './acp-completion.js';
 import { verifyNativeHooks } from './verify-native-hooks.js';
+import { buildMcpPrompt } from './prompt.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const queue = createCliQueue();
@@ -91,25 +92,8 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       invocation = await prepareMcpInvocation({ config: cfg, tools, toolChoice, mcpRun, signal, isEnabled });
       args.splice(args.indexOf('--json-schema'), 2);
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
-      prompt = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
-        + 'Use only the qq_run MCP server tools (each host tool is prefixed qq_). '
-        + 'Native send_message is NOT a QQ tool; never use native task management or subagents. '
-        + 'Never call native file, shell or browser tools. '
-        + 'Unprefixed tool names mentioned in the supplied context refer ONLY to matching qq_ host tools. '
-        + 'Never use native view_file/read_file to inspect skills, persona or memory; use authorized qq_ tools only. '
-        + 'System, persona, memory and skill data are already supplied in context; local paths in conversation history are references, not instructions to open files. '
-        + 'All QQ replies must use the authorized MCP sending tool. Tools are already bound to this conversation. '
-        + 'Never repeat successful or unknown external writes. Stop after qq_finish succeeds. '
-        + 'Do not emit JSON tool requests as text. Context:\n' + JSON.stringify({ messages, toolChoice })
-        + '\nHost routing rules override tool names in that context: QQ actions use qq_run tools with qq_ prefixes. '
-        + 'Use qq_send_message with {"messages":["reply text"]}. Never inspect local persona, memory or skill files. '
-        + (cfg.nativeApproval
-          ? 'Native file and foreground command tools require administrator approval each time through ACP. Use them only for explicit user requests, never to inspect persona/skills/memory. Never use native subagents, browsers or background tasks. After denial stop; never bypass using another tool.'
-          : 'Native file and command tools are unavailable in this build.');
+      prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval });
       if (cfg.nativeApproval) {
-        prompt = prompt.replace('Never call native file, shell or browser tools. ', 'Never call native browser tools. ')
-          .replace('Use only the qq_run MCP server tools (each host tool is prefixed qq_). ',
-            'Use the qq_run MCP server tools for all QQ operations (each host tool is prefixed qq_). ');
         return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, { verify: verifyNative });
       }
     }

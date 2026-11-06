@@ -1,6 +1,7 @@
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
 import { ensureCliSummary } from '../antigravity-cli/summary.js';
 import { blocksToolFinish } from '../tools/tool-outcome.js';
+import { runCancelled, isIntentionalCancellation } from './run-cancellation.js';
 export { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate } from './orchestrator-helpers.js';
 import { randomWakeDelay } from './orchestrator-helpers.js';
 export { randomWakeDelay } from './orchestrator-helpers.js';
@@ -1533,9 +1534,11 @@ export class Orchestrator {
         });
       }
     } catch (error) {
-      session.error = String(error?.message ?? error);
+      const cancelled = isIntentionalCancellation(error, controller.signal) && !this.store.hasUncertainEffects(session.leaseId);
+      session.error = cancelled ? null : String(error?.message ?? error);
+      if (cancelled) session.finishReason ||= '暂停或停止导致本轮取消';
       const timeClosed = error?.code === 'TIME_CONTROL_INACTIVE' || !isTimeActive(chatKey);
-      if (!/Delivery uncertain; batch held/.test(session.error)) {
+      if (!cancelled && !/Delivery uncertain; batch held/.test(session.error)) {
         this.getIncidentPilot()?.capture(error, {
           source: 'orchestrator',
           category: 'session',
@@ -1557,13 +1560,9 @@ export class Orchestrator {
       try {
         if (lease) {
 
-          // 时间窗口关闭打断在途批次：无效果（模型没说话、无发送）时直接归档（ack）——
-          // 这是文档化的刻意设计（README："非活跃期消息仅归档，不积压自动补回复"，
-          // test/time-control-integration.test.mjs "prevents retry" 钉住了该语义），
-          // 管理员可见性由上面的 info 级 incident 记录兜底。有发送效果时走 failLease
-          // 进 held/failed 人工核对，不自动重试。
+          // 时间窗口关闭且无效果时只归档；有出站效果仍由账本决定 held/failed，不重放。
           if (timeClosed && !this.store.hasEffects(lease.id)) this.store.ackLease(lease.id);
-          else this.store.failLease(lease.id, session.error, {
+          else this.store.failLease(lease.id, session.error || session.finishReason, {
             // 「本轮跑超时」不能当可重试：同一批上下文再跑 1-2 次只会把模型费用翻倍，
             // 且非发送类工具的副作用（写记忆/提醒/生图）可能被重复执行。
             retryable: !timeClosed
@@ -1579,7 +1578,7 @@ export class Orchestrator {
       } catch (cleanupError) {
         log.warn('[orchestrator] 收尾失败（会话仍会正常收口）:', cleanupError?.message ?? cleanupError);
       }
-      const status = timeClosed ? 'aborted' : 'error';
+      const status = timeClosed || cancelled ? 'aborted' : 'error';
       this.sessions.finish(session.id, status);
       this.emit('session-end', { sessionId: session.id, chatKey, status, error: session.error });
     } finally {
@@ -2441,7 +2440,7 @@ export class Orchestrator {
     };
     for (let round = 0; round < maxRounds && !finish; round++) {
       signal.throwIfAborted();
-      if (this.aborted || !canRun(chatKey)) throw new Error('Run cancelled');
+      if (this.aborted || !canRun(chatKey)) throw runCancelled('access-changed');
       const maxRunTokens = runLimits.maxRunTokens;
       const requestPayloadChars = JSON.stringify({
         messages,
@@ -2489,7 +2488,7 @@ export class Orchestrator {
       const cliFinishRecovery = createCliFinishRecovery();
       const executeOneTool = async (call, toolSignal = signal) => {
         toolSignal.throwIfAborted();
-        if (!canRun(chatKey)) throw new Error('Run cancelled');
+        if (!canRun(chatKey)) throw runCancelled('access-changed');
         const name = call?.function?.name ?? '';
         const argsRaw = call?.function?.arguments ?? '{}';
         if (['search_web', 'fetch_url', 'web_search', 'web_fetch'].includes(name)) webSearchCount += 1;
@@ -4014,7 +4013,7 @@ export class Orchestrator {
       // 落盘失败不能只改一半内存：正在跑的 run 仍要中止、状态仍要广播，否则用户看到
       // "保存失败"但机器人已经半暂停（或恢复后积压没被处理）。
       if (this.paused) {
-        for (const controller of this.controllers.values()) controller.abort(new Error('Run cancelled'));
+        for (const controller of this.controllers.values()) controller.abort(runCancelled('paused'));
       }
       this.pauseReason = this.paused ? reason : null;
       this.emit('status', { paused: this.paused, pauseReason: this.pauseReason });
@@ -4025,7 +4024,7 @@ export class Orchestrator {
     this.aborted = true;
     this.subagents.cancelAll();
     clearInterval(this.retryTimer);
-    for (const controller of this.controllers.values()) controller.abort(new Error('Run cancelled'));
+    for (const controller of this.controllers.values()) controller.abort(runCancelled('shutdown'));
     for (const timer of this.wakeTimers.values()) clearTimeout(timer);
     this.wakeTimers.clear();
     this.pendingWake.clear();

@@ -887,7 +887,9 @@ describe('Orchestrator', () => {
   });
 
   it('cancels a running request and releases the batch for a later attempt', async (t) => {
-    const { runner, store, append } = fixture(t);
+    const { runner, store, append, sessions } = fixture(t);
+    const incidents = [];
+    runner.getIncidentPilot = () => ({ capture: (...args) => incidents.push(args) });
     append(1);
     let started;
     const ready = new Promise((resolve) => { started = resolve; });
@@ -901,6 +903,9 @@ describe('Orchestrator', () => {
     await task;
     assert.equal(store.findByMid('group:1', 1).state, 'pending');
     assert.equal(runner.runningChats.size, 0);
+    const session = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.equal(session.status, 'aborted'); assert.equal(session.error, null);
+    assert.match(session.finishReason, /取消/); assert.equal(incidents.length, 0);
   });
 
   it('commits an explicit finish handoff after a successful batch', async (t) => {
