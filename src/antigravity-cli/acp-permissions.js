@@ -3,7 +3,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import { requestCliApproval } from './approvals.js';
 
-const nativeNames = new Set(['view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command']);
+const nativeNames = new Set(['read_file', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command']);
 const decode = value => { try { return JSON.parse(value); } catch { return value; } };
 const inside = (target, root) => { const relative = path.relative(root, target); return !relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)); };
 
@@ -18,7 +18,8 @@ export function describeAcpPermission(toolCall) {
   }
   if (/^(?:mcp[:_])?qq_run(?:\/|_)/.test(name || '')) return { category: 'mcp', tool: name, args };
   const inferred = toolCall.kind === 'execute' && Object.hasOwn(args, 'CommandLine') ? 'run_command'
-    : toolCall.kind === 'read' && Object.hasOwn(args, 'AbsolutePath') ? 'view_file'
+    : toolCall.kind === 'read' && Object.hasOwn(args, 'Path') ? 'read_file'
+      : toolCall.kind === 'read' && Object.hasOwn(args, 'AbsolutePath') ? 'view_file'
       : toolCall.kind === 'edit' && Object.hasOwn(args, 'TargetFile')
         ? Object.hasOwn(args, 'CodeContent') ? 'write_to_file'
           : Object.hasOwn(args, 'ReplacementChunks') ? 'multi_replace_file_content'
@@ -45,15 +46,15 @@ export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signa
     if (calls++ >= maxCalls) return cancelled;
     decisions.add(id);
     const promise = (async () => {
-      // CLI offloads MCP image blocks and requests view_file to consume them.
+      // CLI 1.4 uses read_file/Path; retain view_file/AbsolutePath compatibility.
       // This exact, content-bound read is part of the already authorized MCP tool.
-      if (description.tool === 'view_file'
-        && await imageAccess?.allows(decode(description.args.AbsolutePath), sessionId()) && allowed())
+      const field = description.tool === 'read_file' ? 'Path' : description.tool === 'view_file' ? 'AbsolutePath' : 'TargetFile';
+      const isRead = ['read_file', 'view_file'].includes(description.tool);
+      if (isRead && await imageAccess?.allows(decode(description.args[field]), sessionId()) && allowed())
         return { outcome: { outcome: 'selected', optionId: option.optionId } };
-      const field = description.tool === 'view_file' ? 'AbsolutePath' : 'TargetFile';
       if (description.tool !== 'run_command' && !Object.hasOwn(description.args, field)) return cancelled;
       if (description.tool === 'run_command' && (typeof decode(description.args.CommandLine) !== 'string' || !decode(description.args.CommandLine).trim())) return cancelled;
-      for (const key of ['AbsolutePath', 'TargetFile']) {
+      for (const key of ['Path', 'AbsolutePath', 'TargetFile']) {
         if (!Object.hasOwn(description.args, key)) continue;
         const file = decode(description.args[key]);
         if (typeof file !== 'string' || !path.isAbsolute(file)) return cancelled;

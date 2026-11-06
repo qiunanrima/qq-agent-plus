@@ -25,7 +25,7 @@ async function waitPending() {
   throw new Error('No native approval');
 }
 test('native hooks force approval every time and never autoapprove native tools', () => {
-  for (const name of ['view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command'])
+  for (const name of ['read_file', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command'])
     assert.equal(nativeHookDecision({ toolCall: { name, args: {} } }).decision, 'force_ask');
   for (const name of ['invoke_subagent', 'read_url_content', 'send_message', 'unknown'])
     assert.equal(nativeHookDecision({ toolCall: { name, args: {} } }).decision, 'deny');
@@ -49,6 +49,17 @@ test('protected files, unknown native tools and persistent commands cannot be ap
   const permit = createAcpPermissionHandler({ sessionId: () => 'session', mcpRun: run, workspace: os.tmpdir(), signal: new AbortController().signal, isEnabled: () => true, maxCalls: 8 });
   for (const [name, rawInput] of [['unknown', { CommandLine: 'echo x' }], ['view_file', { AbsolutePath: path.join(os.homedir(), '.ssh') }], ['run_command', { CommandLine: 'echo x', RunPersistent: true }], ['run_command', { CommandLine: 'echo x', IsDaemon: true }]]) {
     assert.equal((await permit({ ...params(name), toolCall: { toolCallId: `${name}:${JSON.stringify(rawInput)}`, name, rawInput } })).outcome.outcome, 'cancelled');
+  }
+  for (const file of [path.join(os.homedir(), '.ssh'), path.join(os.homedir(), '.gemini'), os.homedir()]) {
+    const request = { ...params(`read:${file}`), toolCall: { toolCallId: `read:${file}`, name: 'read_file', rawInput: { Path: file } } };
+    if (file === os.homedir()) {
+      const pending = permit(request);
+      const entry = await waitPending();
+      assert.equal(entry.tool, 'read_file');
+      assert.match(entry.preview, /Path/);
+      decideCliApproval(entry.id, false);
+      assert.equal((await pending).outcome.outcome, 'cancelled');
+    } else assert.equal((await permit(request)).outcome.outcome, 'cancelled');
   }
 });
 test('real offline ACP subprocess waits for approval, rejection produces no effect', async () => {
@@ -129,7 +140,7 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
       assert.match(agent, /inheritCustomizations: true/); assert.doesNotMatch(agent, /commandExecutionPolicy: off/);
       assert.match(agent, /commandExecutionPolicy: sandbox/);
-      for (const tool of ['run_command', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
+      for (const tool of ['run_command', 'read_file', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
       const hooks = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/hooks.json'), 'utf8'));
       assert.equal(hooks['qq-run-approval'].PreToolUse[0].hooks[0].command, invocation.hookCommand);
       checked = true;

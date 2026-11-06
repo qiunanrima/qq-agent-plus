@@ -11,7 +11,7 @@ export function nativeHookDecision(payload) {
     return { decision: server === 'qq_run' ? 'allow' : 'deny' };
   }
   if (/^(?:mcp[:_])?qq_run(?:\/|_)/.test(call?.name || '')) return { decision: 'allow' };
-  if (['view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command'].includes(call?.name)) {
+  if (['read_file', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'run_command'].includes(call?.name)) {
     return { decision: 'force_ask', reason: 'QQ Agent administrator must approve this operation once through ACP.' };
   }
   return { decision: 'deny', reason: 'This native tool is not enabled for QQ Agent.' };

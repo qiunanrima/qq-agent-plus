@@ -6,6 +6,18 @@ import path from 'node:path';
 import { createRunImageAccess } from '../src/antigravity-cli/image-access.js';
 import { createAcpPermissionHandler } from '../src/antigravity-cli/acp-permissions.js';
 import { listCliApprovals } from '../src/antigravity-cli/approvals.js';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+async function hookDecision(call) {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../src/antigravity-cli/native-ask-hook.js', import.meta.url))], { windowsHide: true });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  const done = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', code => code === 0 ? resolve() : reject(new Error('Hook failed'))); });
+  child.stdin.end(JSON.stringify({ toolCall: call }));
+  await done;
+  return JSON.parse(output);
+}
 
 test('only exact current-run MCP image bytes in the current CLI media spool bypass approval', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'qq-image-access-'));
@@ -27,11 +39,15 @@ test('only exact current-run MCP image bytes in the current CLI media spool bypa
     const permit = createAcpPermissionHandler({ sessionId: () => session,
       mcpRun: { allowed: () => true, approvalAllowed: () => true }, workspace: home,
       signal: new AbortController().signal, isEnabled: () => true, maxCalls: 16, imageAccess: access });
-    const request = { sessionId: session, toolCall: { toolCallId: 'image', name: 'view_file', rawInput: { AbsolutePath: file } },
-      options: [{ kind: 'allow_once', optionId: 'once' }] };
-    assert.deepEqual(await permit(request), { outcome: { outcome: 'selected', optionId: 'once' } });
-    assert.deepEqual(listCliApprovals(), []);
-    assert.equal((await permit(request)).outcome.outcome, 'cancelled');
+    for (const [name, field] of [['read_file', 'Path'], ['view_file', 'AbsolutePath']]) {
+      // Actual production wire shape: hook must request ACP rather than deny first.
+      assert.equal((await hookDecision({ name, args: { [field]: file } })).decision, 'force_ask');
+      const request = { sessionId: session, toolCall: { toolCallId: name, name, kind: 'read', rawInput: { [field]: file } },
+        options: [{ kind: 'allow_once', optionId: 'once' }] };
+      assert.deepEqual(await permit(request), { outcome: { outcome: 'selected', optionId: 'once' } });
+      assert.deepEqual(listCliApprovals(), []);
+      assert.equal((await permit(request)).outcome.outcome, 'cancelled');
+    }
     await fs.writeFile(file, 'changed bytes');
     assert.equal(await access.allows(file, session), false);
   } finally { await fs.rm(home, { recursive: true, force: true }); }
