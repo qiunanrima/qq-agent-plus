@@ -2,6 +2,7 @@ import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeIm
 import { ensureCliSummary } from '../antigravity-cli/summary.js';
 import { blocksToolFinish } from '../tools/tool-outcome.js';
 import { runCancelled, isIntentionalCancellation } from './run-cancellation.js';
+import { antigravityQuotaTools } from '../antigravity-cli/tools.js';
 export { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate } from './orchestrator-helpers.js';
 import { randomWakeDelay } from './orchestrator-helpers.js';
 export { randomWakeDelay } from './orchestrator-helpers.js';
@@ -2139,8 +2140,7 @@ export class Orchestrator {
       allowed: () => canRun(chatKey) && !this.paused && !this.aborted,
       complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true, usageSource: 'subagent' })
     }));
-    if (pluginToolDefs.length) toolDefs.push(...pluginToolDefs);
-    if (mcpToolDefs.length) toolDefs.push(...mcpToolDefs);
+    toolDefs.push(...antigravityQuotaTools(getConfig), ...pluginToolDefs, ...mcpToolDefs);
     const openAiTools = toOpenAiTools(toolDefs);
     const baseSystemPrompt = buildSystemPrompt({
       // 按群生效的人设（缺省 = 全局）

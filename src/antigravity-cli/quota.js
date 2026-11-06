@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-const runFile = promisify(execFile);
+const runFile = (executable, args, options) => { const pending = promisify(execFile)(executable, args, options); pending.child.stdin.end(); return pending; };
 const text = value => typeof value === 'string' ? value.slice(0, 240) : '';
 
 export function parseQuotaEnvelope(stdout, command) {
@@ -29,12 +29,12 @@ export function parseQuotaEnvelope(stdout, command) {
 /** Explicit queries only; shared promise, five-minute cache and failure cooldown. */
 export function createQuotaReader({ run = runFile, now = Date.now } = {}) {
   const entries = new Map();
-  const read = async executable => {
+  const read = async (executable, { refresh = false } = {}) => {
     let entry = entries.get(executable);
     if (entry?.pending) return entry.pending;
-    if (entry && now() < entry.retryAt) {
+    if (entry && now() < entry.retryAt && (!refresh || entry.error || now() - Date.parse(entry.value?.checkedAt) < 60000)) {
       if (entry.error) throw new Error(entry.error);
-      return { ...entry.value, cached: true };
+      return { ...entry.value, cached: true, ...(refresh ? { refreshThrottled: true, refreshAfter: new Date(Date.parse(entry.value.checkedAt) + 60000).toISOString() } : {}) };
     }
     if (!entry) { entries.clear(); entry = {}; entries.set(executable, entry); }
     entry.pending = (async () => {
@@ -66,3 +66,6 @@ export function createQuotaReader({ run = runFile, now = Date.now } = {}) {
   };
   return read;
 }
+
+// Homepage and Agent requests share cache, single-flight and cooldown in-process.
+export const antigravityQuotaReader = createQuotaReader();

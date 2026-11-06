@@ -70,3 +70,19 @@ test('credit query failure leaves model quotas usable with unknown credits', asy
   assert.equal(result.groups.length, 1);
   assert.ok(!JSON.stringify(result).includes('secret'));
 });
+
+test('explicit refresh bypasses five-minute cache only after a minute and shares in-flight work', async () => {
+  let clock = 1000000, calls = 0;
+  const read = createQuotaReader({ now: () => clock, run: async (_exe, args) => {
+    calls++;
+    return { stdout: args[0] === '--version' ? '1.4.12' : args[1] === '/usage' ? usage : envelope('credits', { remaining_credits: 0 }) };
+  } });
+  await read('agy');
+  const blocked = await read('agy', { refresh: true });
+  assert.equal(blocked.refreshThrottled, true); assert.equal(calls, 3);
+  clock += 60001;
+  await read('agy'); assert.equal(calls, 3);
+  const [a,b] = await Promise.all([read('agy', { refresh: true }), read('agy', { refresh: true })]);
+  assert.deepEqual(a,b); assert.equal(a.cached, false); assert.equal(calls, 6);
+  assert.equal(read.peek('agy').checkedAt, a.checkedAt);
+});

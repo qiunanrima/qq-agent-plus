@@ -3,7 +3,7 @@ import { normalizeAntigravityConfig } from './config.js';
 import { antigravityStatus } from './index.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createQuotaReader } from './quota.js';
+import { antigravityQuotaReader } from './quota.js';
 import { listCliApprovals, decideCliApproval } from './approvals.js';
 
 const runFile = promisify(execFile);
@@ -22,7 +22,7 @@ export function registerAntigravityRoutes(router, { json, getConfig, readBody, a
     if (!decideCliApproval(params.id, body.approved)) return json(res, 409, { error: '该审批已失效或已处理' });
     return json(res, 200, { ok: true });
   });
-  const readQuota = createQuotaReader();
+  const readQuota = antigravityQuotaReader;
   router.add('GET', '/api/antigravity-cli/quota', async (_req, res) => {
     const cfg = getConfig().antigravityCli;
     return json(res, 200, readQuota.peek(cfg?.executable || 'agy'));
