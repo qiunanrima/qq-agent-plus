@@ -61,6 +61,8 @@ import { registerBackupRoutes } from './routes/backup.js';
 import { registerSessionRoutes } from './routes/sessions.js';
 import { registerStatusRoutes } from './routes/status.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
+import { createWeixinFeature } from '../weixin/index.js';
+import { registerWeixinRoutes } from '../weixin/routes.js';
 import { registerConfigRoutes } from './routes/config.js';
 import { registerMemoryRoutes } from './routes/memory.js';
 import { registerMediaSettingsRoutes } from './routes/media-settings.js';
@@ -2369,6 +2371,9 @@ function buildApp({
   // 这里只注册，不再往本文件里加 handler。
   registerStorageRoutes(router, { json, sessions });
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
+  const weixin = createWeixinFeature({ dataDir: DATA_DIR, getConfig, memory,
+    background: new PersonaBackground({ dataDir: DATA_DIR }), personalityMemory, isPaused: () => orchestrator.paused });
+  registerWeixinRoutes(router, { runtime: weixin, json, readBody, getConfig, updateConfig, auditWrite });
 
   router.add('GET', '/healthz', async (req, res) => {
     // 给拨测/uptime 监控用：无鉴权，但只含版本与连接状态，不带任何配置
@@ -2981,7 +2986,7 @@ function buildApp({
     store, orchestrator, sessions, mcpManager, pluginRegistry,
     dailyMoments, lifeFeed, qzoneInteractions, groupDigest, adminBriefing,
     safeConfigWithAsrStatus, personalityMemory,
-    syncIncidentPilot, syncIdentityPilot, syncSlangPilot,
+    syncIncidentPilot, syncIdentityPilot, syncSlangPilot, syncWeixin: () => weixin.sync(),
     getConfigConflict, getBoundServerHost: () => boundServerHost,
     dataDir: DATA_DIR, configLog: moduleLog('config'), mcpLog: moduleLog('mcp'), stableJson
   });
@@ -3620,10 +3625,12 @@ function buildApp({
     log(`控制台已就绪：http://${serverCfg.host}:${port} (${getConfig().runtime.mode})`);
     log(`OneBot: ws=${getConfig().onebot?.wsUrl} http=${getConfig().onebot?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
+    try { weixin.start(); } catch { log('[weixin] 微信渠道启动失败，请检查独立渠道设置；QQ 服务继续运行'); }
     return port;
   }
 
   async function stop() {
+    await weixin.stop();
     try {
       pluginsStarted = false;
       // 先关闭入站入口，再 abort：否则停服过程中到达的事件会在等待快照之后

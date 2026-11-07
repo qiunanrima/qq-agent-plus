@@ -31,8 +31,7 @@ export function describeAcpPermission(toolCall) {
 export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, controlRoot, signal, isEnabled, maxCalls, imageAccess }) {
   let calls = 0;
   const decisions = new Set();
-  const allowed = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.()
-    && (mcpRun.approvalAllowed?.('native') ?? true);
+  const allowed = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.();
   return async params => {
     const cancelled = { outcome: { outcome: 'cancelled' } };
     if (!sessionId() || params?.sessionId !== sessionId() || !allowed()) return cancelled;
@@ -52,6 +51,7 @@ export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, contr
       const isRead = ['read_file', 'view_file'].includes(description.tool);
       if (isRead && await imageAccess?.allows(decode(description.args[field]), sessionId()) && allowed())
         return { outcome: { outcome: 'selected', optionId: option.optionId } };
+      if (mcpRun.approvalAllowed?.('native') === false) return cancelled;
       if (description.tool !== 'run_command' && !Object.hasOwn(description.args, field)) return cancelled;
       if (description.tool === 'run_command' && (typeof decode(description.args.CommandLine) !== 'string' || !decode(description.args.CommandLine).trim())) return cancelled;
       for (const key of ['Path', 'AbsolutePath', 'TargetFile']) {

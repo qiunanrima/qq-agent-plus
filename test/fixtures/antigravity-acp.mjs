@@ -26,7 +26,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     if (mode === 'pool-probe' || mode === 'pool-cancel') sessionId = `session-${++sessionCount}`;
     const server = message.params?.mcpServers?.[0];
     if (message.params?.mcpServers?.length !== 1 || server?.name !== 'qq_run' || !server.command || !Array.isArray(server.env)) process.exit(3);
-    if (['mcp-probe', 'pool-probe', 'pool-cancel'].includes(mode)) {
+    if (['mcp-probe', 'pool-probe', 'pool-cancel', 'mcp-direct'].includes(mode)) {
       mcp = new McpStdioClient({ id: server.name, command: server.command, args: server.args,
         env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])), timeoutMs: 3000,
         log: { info() {}, warn() {}, error() {} } });
@@ -41,6 +41,14 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   else if (method === 'session/cancel') send({ id: promptId, result: { stopReason: 'cancelled' } });
   else if (method === 'session/prompt') {
     promptId = id;
+    if (mode === 'mcp-direct') {
+      const result = await mcp.callTool('qq_probe', {});
+      send({ method: 'session/update', params: { sessionId, update: {
+        sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: result.content[0].text }
+      } } });
+      send({ id, result: { stopReason: 'end_turn' } });
+      continue;
+    }
     if (mode === 'executor-error') {
       send({ method: 'session/update', params: { sessionId: 'session', update: {
         sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Agent execution terminated due to error.' }

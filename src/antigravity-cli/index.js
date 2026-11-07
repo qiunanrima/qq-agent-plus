@@ -95,8 +95,8 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       invocation = await prepareMcpInvocation({ config: cfg, tools, toolChoice, mcpRun, signal, isEnabled });
       args.splice(args.indexOf('--json-schema'), 2);
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
-      prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval });
-      if (cfg.nativeApproval) {
+      prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval, platform: mcpRun?.platform, imageOnlyAcp: mcpRun?.imageOnlyAcp });
+      if (cfg.nativeApproval || mcpRun?.imageOnlyAcp) {
         return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, {
           verify: verifyNative, pool: spawnProcess === spawn ? acpPool : undefined
         });
