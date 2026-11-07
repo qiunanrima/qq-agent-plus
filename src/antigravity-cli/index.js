@@ -6,9 +6,11 @@ import { createCliQueue } from './queue.js';
 import { acpCompletion } from './acp-completion.js';
 import { verifyNativeHooks } from './verify-native-hooks.js';
 import { buildMcpPrompt } from './prompt.js';
+import { createAcpPool } from './acp-pool.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const queue = createCliQueue();
+const acpPool = createAcpPool();
 // Session-only settings override user auto-approval without changing their profile.
 // tools: [] in agent frontmatter does not remove built-ins in CLI 1.4.12.
 const SESSION_SETTINGS = {
@@ -20,6 +22,7 @@ const SESSION_SETTINGS = {
 };
 
 export function antigravityStatus() { return queue.status(); }
+export async function closeAntigravityProcesses() { await acpPool.close(); }
 
 function schemaFor(tools, toolChoice) {
   const names = toolChoice === 'none' ? [] : (tools || []).map(t => t.function?.name).filter(Boolean);
@@ -94,7 +97,9 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
       prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval });
       if (cfg.nativeApproval) {
-        return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, { verify: verifyNative });
+        return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, {
+          verify: verifyNative, pool: spawnProcess === spawn ? acpPool : undefined
+        });
       }
     }
     const result = await new Promise((resolve, reject) => {

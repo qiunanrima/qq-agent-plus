@@ -51,7 +51,7 @@ export function createAcpPeer(executable, args, { cwd, signal, spawnProcess = sp
         Promise.resolve().then(() => request(message.method, message.params)).then(
           result => send({ jsonrpc: '2.0', id: message.id, result }),
           () => send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Request denied by QQ Agent' } })
-        );
+        ).finally(() => incoming.delete(message.id));
       } else if (message.method) {
         try { update?.(message.method, message.params); } catch { close(); return; }
       } else {
@@ -72,6 +72,7 @@ export function createAcpPeer(executable, args, { cwd, signal, spawnProcess = sp
   signal?.addEventListener('abort', close, { once: true });
   if (signal?.aborted) close();
   return {
+    get closed() { return closed; },
     close,
     notify: (method, params) => send({ jsonrpc: '2.0', method, params }),
     call(method, params) {

@@ -18,7 +18,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     if (path.dirname(target) !== path.resolve(config.workspace) || !path.basename(target).startsWith('qq-run-')) throw new Error('Invalid MCP workspace cleanup target');
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
-  let bridge;
+  let bridge, retained = false;
   const imageAccess = createRunImageAccess({ workspace });
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
@@ -97,9 +97,12 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
       policyChanged: () => typeof mcpRun.approvalAllowed === 'function'
         && (mcpRun.approvalAllowed('qq') !== config.qqApproval || mcpRun.approvalAllowed('native') !== config.nativeApproval),
       revoke: () => bridge.close(),
+      retainWorkspace: () => { retained = true; },
+      releaseWorkspace: removeWorkspace,
       async close() {
         bridge.close();
-        await removeWorkspace();
+        if (!retained) await removeWorkspace();
+        else await fs.rm(path.join(workspace, '.qq-images'), { recursive: true, force: true });
       }
     };
   } catch (error) {

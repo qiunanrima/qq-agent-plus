@@ -10,7 +10,7 @@ const LIMIT = 256 * 1024;
 const inside = (file, root) => { const rel = path.relative(root, file); return !rel || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
 
 /** ACP client capabilities are implemented here, never merely advertised. */
-export function createAcpNativeClient({ sessionId, workspace, mcpRun, signal, isEnabled, maxCalls, onUnknownWrite = () => {} }) {
+export function createAcpNativeClient({ sessionId, workspace, controlRoot, mcpRun, signal, isEnabled, maxCalls, onUnknownWrite = () => {} }) {
   const terminals = new Map();
   let calls = 0;
   const allowed = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.()
@@ -30,6 +30,10 @@ export function createAcpNativeClient({ sessionId, workspace, mcpRun, signal, is
     try { resolved = await fs.realpath(lexical); }
     catch { resolved = path.join(await fs.realpath(path.dirname(lexical)), path.basename(lexical)); }
     const control = path.join(await fs.realpath(workspace), '.agents');
+    for (const candidate of [lexical, resolved]) {
+      if (controlRoot && inside(candidate, controlRoot) && path.relative(controlRoot, candidate).split(path.sep).includes('.agents'))
+        throw new Error('Protected native path');
+    }
     for (const root of [control, path.join(os.homedir(), '.ssh'), path.join(os.homedir(), '.gemini')])
       if (inside(lexical, root) || inside(resolved, root)) throw new Error('Protected native path');
     return resolved;

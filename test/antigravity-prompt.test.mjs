@@ -4,7 +4,7 @@ import { buildMcpPrompt } from '../src/antigravity-cli/prompt.js';
 
 test('native runtime facts override stale lack-of-access statements without granting execution', () => {
   const prompt = buildMcpPrompt({ messages: [{ role: 'assistant', content: '我只能看到qq_run，不能调用本地命令' }], toolChoice: 'auto', nativeApproval: true });
-  assert.match(prompt, /nativeApproval enabled/); assert.match(prompt, /run_command, view_file/);
+  assert.match(prompt, /nativeApproval enabled/); assert.match(prompt, /run_command, read_file/);
   assert.match(prompt, /Host-tool lists.*not the entire CLI tool inventory/);
   assert.match(prompt, /Every native operation requires approval/);
   assert.doesNotMatch(prompt, /Native file and command tools are unavailable/);

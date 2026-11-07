@@ -28,7 +28,7 @@ export function describeAcpPermission(toolCall) {
   return tool ? { category: 'native', tool, args } : null;
 }
 
-export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signal, isEnabled, maxCalls, imageAccess }) {
+export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, controlRoot, signal, isEnabled, maxCalls, imageAccess }) {
   let calls = 0;
   const decisions = new Set();
   const allowed = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.()
@@ -61,7 +61,8 @@ export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, signa
         let target = path.resolve(file);
         try { target = await fs.realpath(target); }
         catch { try { target = path.join(await fs.realpath(path.dirname(target)), path.basename(target)); } catch { return cancelled; } }
-        if (inside(target, path.join(workspace, '.agents')) || inside(target, path.join(os.homedir(), '.ssh'))
+        if ((controlRoot && inside(target, controlRoot) && path.relative(controlRoot, target).split(path.sep).includes('.agents'))
+          || inside(target, path.join(workspace, '.agents')) || inside(target, path.join(os.homedir(), '.ssh'))
           || inside(target, path.join(os.homedir(), '.gemini'))) return cancelled;
       }
       if (decode(description.args.RunPersistent) === true || decode(description.args.IsDaemon) === true || description.args.RequestedTerminalID) return cancelled;

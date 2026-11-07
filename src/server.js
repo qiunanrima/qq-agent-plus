@@ -9,6 +9,7 @@ import { assertSqliteAvailable } from './core/sqlite.js';
 import { createLogger } from './core/logger.js';
 import { createDailyRetentionScheduler } from './core/ledger-retention.js';
 import { isContainerRuntime } from './core/runtime.js';
+import { closeAntigravityProcesses } from './antigravity-cli/index.js';
 
 const log = createLogger('server');
 
@@ -121,7 +122,7 @@ async function shutdown() {
   retentionScheduler?.stop();
   const deadline = setTimeout(() => process.exit(1), 25000);
   deadline.unref();
-  try { await app.stop(); process.exit(0); }
+  try { await app.stop(); await closeAntigravityProcesses(); process.exit(0); }
   catch (error) { log.error(error); process.exit(1); }
 }
 process.on('SIGINT', shutdown);
