@@ -2846,10 +2846,28 @@ export function buildToolDefs() {
       description: getMessageImagesDescription(),
       parameters: {
         type: 'object',
-        properties: { messageId: { type: ['integer', 'string'], description: 'QQ 消息 id（聊天记录里的 #数字，可能为负数）' } },
-        required: ['messageId']
+        properties: {
+          messageId: { type: ['integer', 'string'], description: 'QQ 消息 id（聊天记录里的 #数字，可能为负数）' },
+          messageIds: { type: 'array', minItems: 1, maxItems: 4, items: { type: ['integer', 'string'] }, description: '批量查看当前会话的消息图片，最多 4 条；优先使用单个 messageId' }
+        },
+        anyOf: [{ required: ['messageId'] }, { required: ['messageIds'] }]
       },
-      async execute(ctx, args) {
+      execute: async function getMessageImages(ctx, args) {
+        if (!Object.hasOwn(args, 'messageId') && Object.hasOwn(args, 'messageIds')) {
+          const ids = args.messageIds;
+          if (!Array.isArray(ids) || !ids.length || ids.length > 4 || ids.some(id =>
+            !['string', 'number'].includes(typeof id) || (typeof id === 'number' && !Number.isSafeInteger(id)) || !/^-?\d{1,20}$/.test(String(id))))
+            return err('messageIds 必须为 1～4 个当前会话的消息 id；不要省略、编造或传入其他会话的消息。');
+          const content = [];
+          let isError = false;
+          for (const messageId of new Set(ids.map(String))) {
+            ctx.signal?.throwIfAborted();
+            const result = await getMessageImages(ctx, { messageId });
+            isError ||= Boolean(result.isError);
+            content.push(...(Array.isArray(result.content) ? result.content : [{ type: 'text', text: String(result.content ?? '') }]));
+          }
+          return { content, isError };
+        }
         try {
           const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
           if (!modelVisible(entry)) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);

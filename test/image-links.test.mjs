@@ -17,6 +17,34 @@ const { buildSystemPrompt } = await import('../src/llm/prompt.js');
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6aUAAAAASUVORK5CYII=', 'base64');
 const origin = 'http://203.0.113.90';
 
+test('批量识图兼容 messageIds，去重并保持消息与会话边界', async t => {
+  setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
+  stubImages(t, () => ({}));
+  const lookups = [];
+  const ctx = { chatKey: 'private:1', stickers: { find: async () => null },
+    store: { recent: () => [], findByMid: (chatKey, mid) => {
+      lookups.push([chatKey, String(mid)]);
+      return String(mid) === '999' ? null : { mid, text: '', media: [{ kind: 'image', url: `${origin}/batch-${mid}` }] };
+    } } };
+  const tool = buildToolDefs().find(tool => tool.name === 'get_message_images');
+  const result = await tool.execute(ctx, { messageIds: [1073581636, 1078451414, '1073581636'] });
+  assert.equal(result.isError, false);
+  assert.equal(result.content.filter(part => part.type === 'image_url').length, 2);
+  assert.deepEqual(lookups, [['private:1', '1073581636'], ['private:1', '1078451414']]);
+  lookups.length = 0;
+  const mixed = await tool.execute(ctx, { messageIds: ['1073581636', '999'] });
+  assert.equal(mixed.isError, true);
+  assert.equal(mixed.content.filter(part => part.type === 'image_url').length, 1);
+  assert.match(JSON.stringify(mixed.content), /找不到消息 999/);
+  lookups.length = 0;
+  for (const ids of [[], ['1', '2', '3', '4', '5'], ['1', 'wrong'], [1.5], [null]]) {
+    assert.equal((await tool.execute(ctx, { messageIds: ids })).isError, true);
+  }
+  assert.deepEqual(lookups, []);
+  await tool.execute(ctx, { messageId: '999', messageIds: ['1073581636'] });
+  assert.deepEqual(lookups, [['private:1', '999']]);
+});
+
 function stubImages(t, respond) {
   const original = http.request;
   const calls = [];
