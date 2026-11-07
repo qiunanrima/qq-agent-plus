@@ -69,7 +69,8 @@ export function parseAntigravityResult(result, tools = [], toolChoice = 'auto') 
 
 /** One isolated process per model turn. No retries, session resume or shell. */
 export async function antigravityCompletion({ config, messages, tools, toolChoice = 'auto', signal, isEnabled = () => true, mcpRun }, { spawnProcess = spawn, verifyNative = verifyNativeHooks } = {}) {
-  const cfg = normalizeAntigravityConfig(config);
+  const cfg = normalizeAntigravityConfig(mcpRun?.platform === 'wechat'
+    ? { ...config, nativeApproval: false, qqApproval: false, maxConcurrent: 1 } : config);
   signal?.throwIfAborted();
   if (!cfg.enabled || !isEnabled()) throw new Error('Antigravity CLI disabled');
   const chatKey = mcpRun?.chatKey;
@@ -95,7 +96,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       invocation = await prepareMcpInvocation({ config: cfg, tools, toolChoice, mcpRun, signal, isEnabled });
       args.splice(args.indexOf('--json-schema'), 2);
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
-      prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval });
+      prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval, platform: mcpRun?.platform });
       if (cfg.nativeApproval) {
         return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, {
           verify: verifyNative, pool: spawnProcess === spawn ? acpPool : undefined

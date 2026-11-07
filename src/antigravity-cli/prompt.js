@@ -1,4 +1,9 @@
-export function buildMcpPrompt({ messages, toolChoice, nativeApproval }) {
+export function buildMcpPrompt({ messages, toolChoice, nativeApproval, platform }) {
+  if (platform === 'wechat') return 'You are the shared Agent backend serving this WeChat DM. Follow the role card and supplied context. '
+    + 'The qq_run MCP server uses historical qq_ names: qq_send_message sends ONLY to the current WeChat DM; qq_finish ends the turn with a nonempty summary. '
+    + 'Use only the actual host tool catalog. No native tools, commands, files, QQ operations or cross-chat actions are available. '
+    + 'Never repeat successful or unknown sends. Stop immediately after qq_finish succeeds. Do not output tool requests as text.\n'
+    + JSON.stringify({ messages, toolChoice });
   const routing = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
     + 'All QQ actions and replies use the qq_run MCP server host tools with qq_ prefixes, bound to this conversation. '
     + 'Use qq_send_message with {"messages":["reply text"]}. Native send_message is not a QQ sending tool. '

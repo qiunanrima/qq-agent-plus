@@ -20,6 +20,7 @@ import {
   uiServiceOfUrl
 } from '../core/format.js';
 import { refreshIntervalMs, state } from '../core/state.js';
+import { bindAgentWechatSettings, renderAgentWechatSection } from './agent-wechat.js';
 import { bindAntigravitySettings, renderAntigravitySection } from './antigravity-cli.js';
 import { loadChats, renderChatSection } from './chat.js';
 import {
@@ -61,6 +62,7 @@ const SECTION_SEARCH_TERMS = {
   'time-control': '时间 控制 时段 峰谷 活跃',
   experiments: '实验 功能 试点',
   platform: '平台 能力 权限 工具',
+  'agent-wechat': '微信 wxid 绑定 QQ 白名单 Agent WeChat',
   mcp: 'MCP 工具 server 外部 协议',
   knowledge: '知识库 文档 FAQ 群规 检索',
   memes: '梗 黑话 外号 群梗库 梗百科',
@@ -106,7 +108,7 @@ function renderSettingsSidebar() {
     ['对话与人格', [['persona', '人设'], ['chat', '聊天设置'], ['messageTypes', '消息类型'], ['allow', '聊天白名单'], ['memory', '记忆']]],
     ['模型与服务', [['api', '模型 API'], ...(state.config?.antigravityCli?.graduated ? [['antigravity-cli', 'Antigravity CLI']] : []), ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
     ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['life-feed', '见闻'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
-    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
+    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ...(state.config?.agentWechat?.graduated ? [['agent-wechat', '微信接入']] : []), ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
     ['系统', [['appearance', '外观'], ['desktop', '系统']]]
   ];
   sidebar.innerHTML = `
@@ -327,6 +329,7 @@ function renderSettingsImpl() {
   bindAppearanceControls();
   bindSettingsEvents(c);
   bindAntigravitySettings();
+  bindAgentWechatSettings();
   bindCrossSectionControls();
   bindExtensionSettings();
   hydrateExtensionStatus();
@@ -342,6 +345,7 @@ function renderSettingsImpl() {
 function renderSettingsSection(c) {
   const sec = state.settingsSection || 'api';
   if (sec === 'antigravity-cli') return renderAntigravitySection(c);
+  if (sec === 'agent-wechat') return renderAgentWechatSection(c);
   const sections = {
     api: () => renderApiSection(c),
     search: () => renderSearchSection(c),

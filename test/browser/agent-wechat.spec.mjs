@@ -1,0 +1,38 @@
+import fs from 'node:fs';
+import { test, expect } from '@playwright/test';
+import { login, switchTo, collectPageErrors } from './helpers.mjs';
+
+test('微信独立白名单、可选绑定、固化和窄屏；QQ配置保持原样', async ({ page }) => {
+  const errors = collectPageErrors(page);
+  await login(page);
+  const getConfig = async () => (await (await page.request.get('/api/config')).json());
+  const before = await getConfig();
+  await page.goto('/'); await switchTo(page, 'settings');
+  await page.click('button[data-section="experiments"]');
+  await page.locator('#wechat-open').click();
+  await expect(page.locator('#wechat-page')).toBeVisible();
+  await page.locator('#wechat-account').fill('test-account');
+  await page.locator('#wechat-token-file').fill('/home/test/private-token');
+  await page.locator('#wechat-allow').fill('wxid_alice\nwxid_bob');
+  await page.locator('#wechat-bindings').fill('wxid_alice 12345');
+  await page.locator('#wechat-save').click(); await page.locator('[data-confirm-accept]').last().click();
+  await expect.poll(async () => (await getConfig()).agentWechat?.allow).toEqual(['wxid_alice', 'wxid_bob']);
+  const after = await getConfig();
+  expect(after.agentWechat.enabled).toBe(false);
+  expect(after.agentWechat.bindings).toEqual({ wxid_alice: '12345' });
+  for (const key of ['onebot', 'allow', 'deny', 'api', 'antigravityCli', 'persona', 'memory']) expect(after[key]).toEqual(before[key]);
+  await page.locator('#wechat-bindings').fill('');
+  await page.locator('#wechat-save').click(); await page.locator('[data-confirm-accept]').last().click();
+  await expect.poll(async () => (await getConfig()).agentWechat?.bindings).toEqual({});
+  await page.click('button[data-section="experiments"]');
+  await page.locator('#wechat-graduate').click(); await page.locator('[data-confirm-accept]').last().click();
+  await expect(page.locator('button[data-section="agent-wechat"]')).toBeVisible();
+  await page.locator('button[data-section="agent-wechat"]').click();
+  fs.mkdirSync('.codex/agent-wechat-ui', { recursive: true });
+  await page.screenshot({ path: '.codex/agent-wechat-ui/desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#wechat-save').scrollIntoViewIfNeeded();
+  expect(await page.locator('#wechat-page').evaluate(n => n.scrollWidth > n.clientWidth + 1)).toBe(false);
+  await page.screenshot({ path: '.codex/agent-wechat-ui/mobile.png', fullPage: true });
+  expect(errors).toEqual([]);
+});

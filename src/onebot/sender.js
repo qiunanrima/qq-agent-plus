@@ -3,6 +3,7 @@
 // - 分钟/小时限频（超限直接拒绝，工具会把错误告诉模型）
 // - Markdown → 纯文本、QQ 硬长度切分、CQ 转义
 // - 发出的每一条记进 ChatStore（self=true，供下一次运行当"自己的发言"）
+import { channelForChat, isWechatChat } from '../channels/registry.js';
 import { getConfig, DEFAULT_CONFIG } from '../core/config.js';
 import { sleep, sleepAbortable, randInt, createSendChain, formatClockTime, todayKey } from '../core/util.js';
 import { mdToPlain, splitForQQ } from '../llm/md-to-plain.js';
@@ -480,6 +481,12 @@ export class SendQueue {
    * 返回 { sent: [{text, messageId}], failed: [{text, error}] }；全部失败时抛错。
    */
   async sendTextBatch(chatKey, messages, options = {}) {
+    if (isWechatChat(chatKey)) {
+      assertCanSend(chatKey, options.signal);
+      const channel = channelForChat(chatKey);
+      if (!channel) throw new Error('微信渠道未运行');
+      return channel.sendTextBatch(chatKey, messages, options);
+    }
     const [kind, id] = String(chatKey).split(':');
     if (kind !== 'group' && kind !== 'private') throw new Error(`非法会话 key：${chatKey}`);
     const list = Array.isArray(messages) ? messages : [messages];

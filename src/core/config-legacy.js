@@ -19,6 +19,7 @@ import { PLATFORM_GATE_KEYS, PRIVATE_FILE_DEFAULT_MAX_KIB, privateFileMaxKiB } f
 import { LIVING_MEMORY_DEFAULTS, normalizeLivingMemoryConfig } from '../living-memory/config.js';
 import { PERSONALITY_MEMORY_DEFAULTS, normalizePersonalityMemoryConfig } from '../personality-memory/config.js';
 import { SUBAGENT_DEFAULTS, normalizeSubagentConfig } from '../subagents/config.js';
+import { WECHAT_DEFAULTS, normalizeWechatConfig } from '../agent-wechat/config.js';
 import { ANTIGRAVITY_DEFAULTS, normalizeAntigravityConfig } from '../antigravity-cli/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,7 @@ export function getConfigConflict() {
 
 export const DEFAULT_CONFIG = {
   antigravityCli: { ...ANTIGRAVITY_DEFAULTS },
+  agentWechat: { ...WECHAT_DEFAULTS },
   // OpenAI 兼容 API（必填才能跑）
   api: {
     // 每日花费上限（改进方案 #8，默认关闭＝升级不改变任何行为）。按**估算价**累计当日用量，
@@ -1975,6 +1977,8 @@ export function loadConfig() {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
     const parsed = migrateConfig(JSON.parse(text));
     const merged = deepMerge(DEFAULT_CONFIG, parsed);
+    try { merged.agentWechat = normalizeWechatConfig(merged.agentWechat); }
+    catch { merged.agentWechat = { ...WECHAT_DEFAULTS }; }
     try { merged.antigravityCli = normalizeAntigravityConfig(merged.antigravityCli); }
     catch {
       merged.antigravityCli = { ...merged.antigravityCli, enabled: false };
@@ -2219,6 +2223,8 @@ export function updateConfig(patch, { force = false } = {}) {
   next.timeControl = normalizeTimeControl(next.timeControl);
   next.livingMemory = normalizeLivingMemoryConfig(next.livingMemory);
   next.personalityMemory = normalizePersonalityMemoryConfig(next.personalityMemory);
+  try { next.agentWechat = normalizeWechatConfig(next.agentWechat); }
+  catch (error) { throw invalidConfig(error.message); }
   next.subagent = normalizeSubagentConfig(next.subagent);
   try { next.antigravityCli = normalizeAntigravityConfig(next.antigravityCli); }
   catch (error) {

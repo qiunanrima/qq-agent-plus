@@ -1,3 +1,4 @@
+import { isWechatChat } from '../channels/registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -1435,17 +1436,18 @@ export class ChatStore {
     // fromId：显式从"最老一条"开始正向取（全量导出用）；与 afterId 不同，0 也有意义。
     // scope='private'：只给"私聊共享上下文"用，读所有 private:*，按 ts 排序（跨会话没有可比 id）。
     // scope='all'：群聊与私聊共用上下文（issue #14 第二项），读所有会话，同样按 ts 排序。
+    if (isWechatChat(chatKey)) scope = 'chat';
     const after = Number(afterId) > 0 ? Number(afterId) : 0;
     const before = !after && Number(beforeId) > 0 ? Number(beforeId) : 0;
     const filters = `${includeSelf ? '' : 'AND self=0'} ${readOnly ? "AND state='acked'" : ''}`;
     if (scope === 'private' && String(chatKey || '').startsWith('private:')) {
-      const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key LIKE 'private:%' ${filters}
+      const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key LIKE 'private:%' AND chat_key NOT GLOB 'private:wechat_*' ${filters}
         ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`)
         .all(Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
       return rows.reverse().map(entry);
     }
     if (scope === 'all') {
-      const rows = this.db.prepare(`SELECT * FROM messages WHERE 1=1 ${filters}
+      const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key NOT GLOB 'private:wechat_*' ${filters}
         ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`)
         .all(Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
       return rows.reverse().map(entry);

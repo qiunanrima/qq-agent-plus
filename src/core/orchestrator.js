@@ -1,3 +1,4 @@
+import { channelForChat, isWechatChat } from '../channels/registry.js';
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
 import { ensureCliSummary } from '../antigravity-cli/summary.js';
 import { blocksToolFinish } from '../tools/tool-outcome.js';
@@ -548,6 +549,7 @@ export class Orchestrator {
    * 这里只给一次机会，避免变成刷屏。
    */
   #maybeScheduleFollowUp(chatKey, session) {
+    if (isWechatChat(chatKey)) return;
     try {
       const cfgNow = getConfig();
       // 主动私聊默认关闭：补话也不能绕过这个范围开关。
@@ -1504,7 +1506,7 @@ export class Orchestrator {
       if (session.perception) this.perception.consume(session.perception, session.episodeSummary || session.handoffDraft?.summary || lastSentText(session));
       // 已读回执（platform.readReceipts，默认关）：这批处理完就在 QQ 里标已读，
       // 各端未读数不再堆积；默认关是因为它会改变"你自己打开机器人 QQ 时的未读观感"。
-      if (getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
+      if (!isWechatChat(chatKey) && getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
       const status = session.sent.length > 0 ? 'done' : 'noreply';
       this.sessions.finish(session.id, status);
       try {
@@ -1959,13 +1961,15 @@ export class Orchestrator {
     signal
   }) {
     const cfg = getConfig();
+    const channel = channelForChat(chatKey);
+    const channelMemory = channel ? channel.memoryFor(chatKey, this.memory) : this.memory;
     // 本轮生效的人设：全局 persona + 这个群的覆盖（见 personas.resolvePersona）。
     // 一次解析、多处共用 —— 提示词、群内显示名、运行记录必须是同一份，
     // 否则会出现"提示词是猫娘、落款还是小鲸鱼"。
     const persona = resolvePersona(cfg, chatKey);
     session.memoryPersona = persona;
     // 人类化状态：有真实互动才轻微抬心情/掉精力；关闭时整条链路不碰。
-    if (cfg.humanize?.enabled === true && triggerEntries?.length) {
+    if (!channel && cfg.humanize?.enabled === true && triggerEntries?.length) {
       notePersonaInteraction(persona, { kind: 'incoming' });
       if (cfg.humanize?.relationship?.enabled !== false) {
         try {
@@ -1996,7 +2000,7 @@ export class Orchestrator {
     })();
 
     // 表情包总开关：关掉时连动作类工具带清单一起摘（见下方 toolDefs 过滤，2026-10-02 用户反馈）
-    const stickerEnabled = cfg.sticker?.enabled !== false;
+    const stickerEnabled = !channel && cfg.sticker?.enabled !== false;
     // 表情库快照（提示词用）
     let stickerEntries = [];
     if (stickerEnabled) {
@@ -2147,8 +2151,12 @@ export class Orchestrator {
       complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true, usageSource: 'subagent' })
     }));
     toolDefs.push(...antigravityQuotaTools(getConfig), ...pluginToolDefs, ...mcpToolDefs);
+    if (channel) {
+      const permitted = new Set(['send_message', 'finish', 'persona_background_lookup']);
+      for (let i = toolDefs.length - 1; i >= 0; i--) if (!permitted.has(toolDefs[i].name)) toolDefs.splice(i, 1);
+    }
     const openAiTools = toOpenAiTools(toolDefs);
-    const baseSystemPrompt = buildSystemPrompt({
+    const baseSystemPrompt = channel ? channel.systemPrompt(persona) : buildSystemPrompt({
       // 按群生效的人设（缺省 = 全局）
       persona,
       // 与【此刻状态】用同一个名字（群名片优先），否则同一次请求里会出现两个"你在群里的名字"
@@ -2167,7 +2175,7 @@ export class Orchestrator {
     // lifecycle 线程与前缀缓存失效。服务不可用时仅跳过召回，聊天主链路照常。
     let livingRecall = { text: '', entries: [], mode: 'disabled' };
     try {
-      if (cfg.memory?.hippocampusEnabled !== true) {
+      if (!channel && cfg.memory?.hippocampusEnabled !== true) {
         livingRecall = await this.livingMemory?.recall?.({ chatKey, triggerEntries, signal }) || livingRecall;
       }
     } catch (error) {
@@ -2180,7 +2188,7 @@ export class Orchestrator {
         participantIds: (triggerEntries || []).map((entry) => entry.senderId) }) || '';
     } catch (error) { log.warn(`[personality-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error); }
     let hippocampusRecall = '';
-    try { hippocampusRecall = this.memory.hippocampus?.prompt({ chatKey, persona }) || ''; }
+    try { hippocampusRecall = channel ? '' : this.memory.hippocampus?.prompt({ chatKey, persona }) || ''; }
     catch (error) { log.warn('[hippocampus] 读取记忆失败，已跳过：', error?.message ?? error); }
     const humanLines = [
       personaStateLine,
@@ -2252,7 +2260,7 @@ export class Orchestrator {
       chatKey, kind, chatId, chatName,
       triggerEntries,
       store: this.store,
-      memory: this.memory,
+      memory: channelMemory,
       stickerEntries,
       gameContext: this.getGames?.()?.summaryFor(chatKey) || '',
       slangContext,
@@ -2594,6 +2602,7 @@ export class Orchestrator {
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
       bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
+      if (channel) { mcpRun.platform = 'wechat'; mcpRun.approvalAllowed = () => false; }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,
@@ -3307,7 +3316,7 @@ export class Orchestrator {
     const prefix = scope === 'private' ? 'private:' : 'group:';
     const privateInitiatives = scope === 'private' ? readProactiveState(PROACTIVE_STATE_FILE).privateInitiatives : {};
     return proactiveCandidates({
-      chatKeys: this.store.listChats().filter((key) => String(key).startsWith(prefix)),
+      chatKeys: this.store.listChats().filter((key) => !isWechatChat(key) && String(key).startsWith(prefix)),
       cfg,
       metaOf: (chatKey) => this.store.getChatMeta(chatKey),
       canWake: (chatKey) => canRun(chatKey),

@@ -60,6 +60,8 @@ import { registerChatRoutes } from './routes/chats.js';
 import { registerBackupRoutes } from './routes/backup.js';
 import { registerSessionRoutes } from './routes/sessions.js';
 import { registerStatusRoutes } from './routes/status.js';
+import { AgentWechatChannel } from '../agent-wechat/runtime.js';
+import { registerAgentWechatRoutes, handleWechatAdminCommand } from '../agent-wechat/routes.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
 import { registerConfigRoutes } from './routes/config.js';
 import { registerMemoryRoutes } from './routes/memory.js';
@@ -1974,6 +1976,8 @@ function buildApp({
 
   async function ingestOneBotEvent(event, arrivedInactive) {
     if (!event || typeof event !== 'object') return;
+    if (await handleWechatAdminCommand(event, { getConfig, updateConfig, runtime: agentWechat, audit: appendAudit,
+      reply: (owner, text) => sender.sendTextBatch(`private:${owner}`, [text], {}) })) return;
     if (await handlePrivateCliApproval(event, { getConfig, audit: appendAudit,
       reply: (owner, text) => sender.sendTextBatch(`private:${owner}`, [text], {}) })) return;
     if (event.post_type === 'message' || event.post_type === 'message_sent') {
@@ -2369,6 +2373,8 @@ function buildApp({
   // 这里只注册，不再往本文件里加 handler。
   registerStorageRoutes(router, { json, sessions });
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
+  const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit });
+  registerAgentWechatRoutes(router, { runtime: agentWechat, getConfig, updateConfig, json, readBody, auditWrite });
 
   router.add('GET', '/healthz', async (req, res) => {
     // 给拨测/uptime 监控用：无鉴权，但只含版本与连接状态，不带任何配置
@@ -2981,7 +2987,7 @@ function buildApp({
     store, orchestrator, sessions, mcpManager, pluginRegistry,
     dailyMoments, lifeFeed, qzoneInteractions, groupDigest, adminBriefing,
     safeConfigWithAsrStatus, personalityMemory,
-    syncIncidentPilot, syncIdentityPilot, syncSlangPilot,
+    syncIncidentPilot, syncIdentityPilot, syncSlangPilot, syncAgentWechat: () => agentWechat.sync(),
     getConfigConflict, getBoundServerHost: () => boundServerHost,
     dataDir: DATA_DIR, configLog: moduleLog('config'), mcpLog: moduleLog('mcp'), stableJson
   });
@@ -3620,10 +3626,12 @@ function buildApp({
     log(`控制台已就绪：http://${serverCfg.host}:${port} (${getConfig().runtime.mode})`);
     log(`OneBot: ws=${getConfig().onebot?.wsUrl} http=${getConfig().onebot?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
+    void agentWechat.sync().catch(() => log('[agent-wechat] 微信启动失败，QQ 继续运行'));
     return port;
   }
 
   async function stop() {
+    await agentWechat.dispose().catch(() => {});
     try {
       pluginsStarted = false;
       // 先关闭入站入口，再 abort：否则停服过程中到达的事件会在等待快照之后
