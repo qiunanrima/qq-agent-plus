@@ -30,20 +30,6 @@ test('native hooks force approval every time and never autoapprove native tools'
   for (const name of ['invoke_subagent', 'read_url_content', 'send_message', 'unknown'])
     assert.equal(nativeHookDecision({ toolCall: { name, args: {} } }).decision, 'deny');
 });
-
-test('Weixin image-only runtime uses ACP with scoped MCP while native commands stay disabled', async t => {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'weixin-acp-'));
-  t.after(() => fs.rm(workspace, { recursive: true, force: true, maxRetries: 3 }));
-  let calls = 0;
-  const result = await antigravityCompletion({ config: { enabled: true, nativeApproval: false, workspace, executable: process.execPath },
-    messages: [{ role: 'user', content: 'offline' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }],
-    mcpRun: { ...run, platform: 'weixin', imageOnlyAcp: true, approvalAllowed: () => false,
-      execute: async () => { calls++; return { content: 'host-probe-ok' }; } }
-  }, { verifyNative: async () => {}, spawnProcess: (_exe, _args, options) => spawn(process.execPath,
-    [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'mcp-direct'], options) });
-  assert.equal(result.raw.driver, 'acp'); assert.equal(result.message.content, 'host-probe-ok'); assert.equal(calls, 1);
-  assert.deepEqual(listCliApprovals(), []);
-});
 test('ACP grants only once after explicit decision, binds session and prevents replay', async () => {
   const controller = new AbortController();
   const permit = createAcpPermissionHandler({ sessionId: () => 'session', mcpRun: run, workspace: os.tmpdir(), signal: controller.signal, isEnabled: () => true, maxCalls: 8 });

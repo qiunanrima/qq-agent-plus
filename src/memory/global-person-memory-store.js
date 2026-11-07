@@ -9,7 +9,7 @@ const MIGRATION_MARKER = path.join(MEMORY_DIR, '_global_people_v1.json');
 const MIGRATION_BACKUP_DIR = path.join(MEMORY_DIR, 'backups', 'global-people-v1');
 
 const clean = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
-const validChat = (v) => /^(?:(?:group|private):\d+|weixin:[a-f0-9]{64}:[a-f0-9]{64})$/.test(String(v || ''));
+const validChat = (v) => /^(group|private):\d+$/.test(String(v || ''));
 const chatKeyFromDir = (name) => {
   const m = /^(group|private)_(\d+)$/.exec(String(name || ''));
   return m ? `${m[1]}:${m[2]}` : '';

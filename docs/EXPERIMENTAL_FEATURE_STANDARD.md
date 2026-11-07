@@ -72,7 +72,6 @@ For the current modules:
 | Long-term semantic memory | `livingMemory.enabled` | `livingMemory.graduated` | `living-memory` / 长期记忆 |
 | Personality growth memory | `personalityMemory.enabled` | `personalityMemory.graduated` | `personality-memory` / 人格成长 |
 | Restricted subagents | `subagent.enabled` | `subagent.graduated` | 生命周期卡片；调用记录沿用会话详情与日志 |
-| Weixin official channel | `weixin.enabled` | `weixin.graduated` | `weixin` / 微信官方渠道，扫码、身份绑定与渠道记录 |
 | Group games | `groupGame.enabled`（默认关） | —（无固化开关） | `settings` / 设置页的「实验功能」开关与「群游戏」分区 |
 
 ## 4. API And Persistence

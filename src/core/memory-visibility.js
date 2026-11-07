@@ -20,7 +20,7 @@ export function impressionVisible(entry, chatKey, vis = memoryVisibilityOf()) {
   const sources = Array.isArray(entry?.sourceChatKeys) ? entry.sourceChatKeys.map(String) : [];
   const key = String(chatKey || '');
   if (vis.mode === 'perChat' && !sources.includes(key)) return false;
-  if (vis.hidePrivateInGroup && key.startsWith('group:') && sources.some((k) => k.startsWith('private:') || k.startsWith('weixin:'))) return false;
+  if (vis.hidePrivateInGroup && key.startsWith('group:') && sources.some((k) => k.startsWith('private:'))) return false;
   return true;
 }
 

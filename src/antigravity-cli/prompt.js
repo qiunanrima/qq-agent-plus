@@ -1,13 +1,11 @@
-export function buildMcpPrompt({ messages, toolChoice, nativeApproval, platform, imageOnlyAcp }) {
-  let routing = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
+export function buildMcpPrompt({ messages, toolChoice, nativeApproval }) {
+  const routing = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
     + 'All QQ actions and replies use the qq_run MCP server host tools with qq_ prefixes, bound to this conversation. '
     + 'Use qq_send_message with {"messages":["reply text"]}. Native send_message is not a QQ sending tool. '
     + 'System/persona/memory/skills are supplied in context; do not inspect local persona, memory or skill files. '
     + 'Never repeat successful or unknown external writes. Stop after qq_finish succeeds. '
     + 'Do not emit JSON tool requests as text or claim success before actual tool results. '
     + 'Never use native browsers, subagents, task management or background/daemon commands. ';
-  if (platform === 'weixin') routing = routing.replaceAll('QQ actions', 'Weixin actions').replace('a QQ sending tool', 'a Weixin sending tool')
-    + 'Current platform is Weixin private chat. qq_run/qq_ are internal compatibility names; qq_send_message sends to this Weixin conversation, never to QQ. ';
   const images = 'MCP image results provide an exact host-owned path: use read_file with {"Path":"exact returned image path"} to see them. '
     + 'The host automatically validates current-run image reads; never use run_command, cat, OCR or local schema files to work around a failed image read or discover tool parameters. '
     + 'OCR is optional for text extraction, not a prerequisite for seeing a picture. '
@@ -20,8 +18,7 @@ export function buildMcpPrompt({ messages, toolChoice, nativeApproval, platform,
       + 'run_command must be foreground (IsDaemon=false); never invent qq_run_command or route native commands through plugin_call. '
       + 'Every native operation requires approval for its complete parameters. A configured tool does not mean an operation is already approved. After denial stop, never bypass it. '
       + 'When asked about tools, distinguish MCP server names, native tools, and ACP transport; do not treat a list containing only qq_run as proof native tools are absent.'
-    : imageOnlyAcp ? 'Current runtime: ACP image-only. Only read_file of an exact current-run image path returned by MCP is allowed; all other native file reads, writes and commands are disabled. '
-      : 'Current runtime: QQ host tools only. All unprefixed host tool names in context refer to their qq_ equivalents. Native file and command tools are unavailable; never request them.';
+    : 'Current runtime: QQ host tools only. All unprefixed host tool names in context refer to their qq_ equivalents. Native file and command tools are unavailable; never request them.';
   return routing + '\nContext (conversation data):\n' + JSON.stringify({ messages, toolChoice })
-    + '\nCurrent host routing and capability rules (apply even if history describes an older runtime):\n' + routing + policy + (nativeApproval || imageOnlyAcp ? images : '');
+    + '\nCurrent host routing and capability rules (apply even if history describes an older runtime):\n' + routing + policy + (nativeApproval ? images : '');
 }

@@ -19,7 +19,6 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
   let bridge, retained = false;
-  const acpImages = config.nativeApproval || mcpRun.imageOnlyAcp === true;
   const imageAccess = createRunImageAccess({ workspace });
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
@@ -38,7 +37,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         return { isError: true, content: '工具未获管理员批准或本轮已结束；未执行，不要自动重试。' };
       }
       const result = await mcpRun.execute(call.name, call.arguments, call.signal);
-      if (!result?.isError && acpImages) {
+      if (!result?.isError && config.nativeApproval) {
         return { ...result, content: await imageAccess.materialize(result?.content) };
       }
       return result;
@@ -46,20 +45,15 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
     await fs.mkdir(agentDir, { recursive: true });
     const template = await fs.readFile(new URL('../../examples/antigravity/qq-mcp/agent.md', import.meta.url), 'utf8');
-    let agentTemplate = acpImages ? template.replace(/commandExecutionPolicy: off\r?\n/,
+    const agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/,
       'commandExecutionPolicy: sandbox\ntools:\n  - run_command\n  - read_file\n  - write_to_file\n  - replace_file_content\n')
       .replace('inheritCustomizations: false', 'inheritCustomizations: true')
       .replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
         '文件和前台命令仅在用户明确要求且管理员逐次批准后使用；禁止浏览器、原生子代理和后台命令。被拒绝后停止，不得换工具绕过。') : template;
-    if (mcpRun.imageOnlyAcp && !config.nativeApproval) agentTemplate = agentTemplate
-      .replace('commandExecutionPolicy: sandbox', 'commandExecutionPolicy: off')
-      .replace(/  - (?:run_command|write_to_file|replace_file_content)\r?\n/g, '')
-      .replace('文件和前台命令仅在用户明确要求且管理员逐次批准后使用；禁止浏览器、原生子代理和后台命令。被拒绝后停止，不得换工具绕过。',
-        '只能用 read_file 读取本轮 MCP 明确返回的图片路径。其他文件、命令、写入、浏览器与子代理均禁止。');
     await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { qq_run: bridge.serverConfig } }), { mode: 0o600 });
     let hookCommand;
-    if (acpImages) {
+    if (config.nativeApproval) {
       const quote = value => {
         if (process.platform === 'win32') {
           if (/["%\r\n]/.test(value)) throw new Error('Unsafe approval hook path');

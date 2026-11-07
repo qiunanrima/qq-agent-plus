@@ -21,7 +21,6 @@ import {
 } from '../core/format.js';
 import { refreshIntervalMs, state } from '../core/state.js';
 import { bindAntigravitySettings, renderAntigravitySection } from './antigravity-cli.js';
-import { bindWeixinSettings, renderWeixinSection } from './weixin.js';
 import { loadChats, renderChatSection } from './chat.js';
 import {
   renderDailyMomentsSection, renderGroupGameSection, renderQzoneInteractionSection, renderRemindersSection
@@ -52,7 +51,6 @@ const SECTION_SEARCH_TERMS = {
   memory: '记忆 印象 交接 人物',
   api: '模型 API Key 温度 上下文 预算 提供商',
   'antigravity-cli': '反重力 Antigravity CLI Agent MCP 模型 调用',
-  weixin: '微信 官方 iLink 扫码 身份绑定 共享记忆',
   search: '搜索 联网 Key',
   asr: '语音 转文字 识别 转写',
   'token-saver': 'Token 节省 上下文 预算',
@@ -108,7 +106,7 @@ function renderSettingsSidebar() {
     ['对话与人格', [['persona', '人设'], ['chat', '聊天设置'], ['messageTypes', '消息类型'], ['allow', '聊天白名单'], ['memory', '记忆']]],
     ['模型与服务', [['api', '模型 API'], ...(state.config?.antigravityCli?.graduated ? [['antigravity-cli', 'Antigravity CLI']] : []), ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
     ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['life-feed', '见闻'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
-    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ...(state.config?.weixin?.graduated ? [['weixin', '微信官方渠道']] : []), ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
+    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
     ['系统', [['appearance', '外观'], ['desktop', '系统']]]
   ];
   sidebar.innerHTML = `
@@ -329,7 +327,6 @@ function renderSettingsImpl() {
   bindAppearanceControls();
   bindSettingsEvents(c);
   bindAntigravitySettings();
-  bindWeixinSettings();
   bindCrossSectionControls();
   bindExtensionSettings();
   hydrateExtensionStatus();
@@ -345,7 +342,6 @@ function renderSettingsImpl() {
 function renderSettingsSection(c) {
   const sec = state.settingsSection || 'api';
   if (sec === 'antigravity-cli') return renderAntigravitySection(c);
-  if (sec === 'weixin') return renderWeixinSection(c);
   const sections = {
     api: () => renderApiSection(c),
     search: () => renderSearchSection(c),

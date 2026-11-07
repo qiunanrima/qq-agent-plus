@@ -571,7 +571,6 @@ export function registerConfigRoutes(router, deps = {}) {
     }
     auditWrite('config.update', 'config', { req, before: auditBefore, after: next, changed: changedTopKeys(auditBefore, next) });
     personalityMemory?.syncConfig();
-    if (Object.hasOwn(patch, 'weixin')) await deps.syncWeixin?.();
     orchestrator.subagents?.syncConfig();
     store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
     store.setSynchronous(next.store?.sqliteSynchronous);
@@ -713,7 +712,6 @@ export function registerConfigRoutes(router, deps = {}) {
       store.listChats().map((chatKey) => [chatKey, conversationConfigForChat(chatKey).mode])
     );
     const next = reloadConfig();
-    await deps.syncWeixin?.();
     personalityMemory?.syncConfig();
     orchestrator.subagents?.syncConfig();
     const warnings = [];

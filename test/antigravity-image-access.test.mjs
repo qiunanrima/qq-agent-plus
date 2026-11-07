@@ -21,23 +21,18 @@ async function hookDecision(call) {
   return JSON.parse(output);
 }
 
-for (const nativeApproval of [true, false]) test(`real MCP bridge returns a run-owned image path usable through the read_file permission chain (nativeApproval=${nativeApproval})`, async () => {
+test('real MCP bridge returns a run-owned image path usable through the read_file permission chain', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'qq-image-bridge-'));
   const bytes = Buffer.from('image returned by host');
   const controller = new AbortController();
   let invocation, client;
   try {
-    invocation = await prepareMcpInvocation({ config: { workspace, agent: 'qq-mcp', nativeApproval, qqApproval: false, maxToolCalls: 16, timeoutMs: 3000 },
+    invocation = await prepareMcpInvocation({ config: { workspace, agent: 'qq-mcp', nativeApproval: true, qqApproval: false, maxToolCalls: 16, timeoutMs: 3000 },
       tools: [{ function: { name: 'get_message_images', parameters: { type: 'object' } } }],
-      mcpRun: { chatKey: 'private:1', runId: 'image-test', imageOnlyAcp: true, allowed: () => true,
+      mcpRun: { chatKey: 'private:1', runId: 'image-test', allowed: () => true,
         execute: async () => ({ content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${bytes.toString('base64')}` } }] }) },
       signal: controller.signal });
     const server = invocation.acpMcpServers[0];
-    if (!nativeApproval) {
-      const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
-      assert.ok(agent.includes('  - read_file')); assert.ok(!agent.includes('  - run_command'));
-      assert.ok(!agent.includes('  - write_to_file'));
-    }
     client = new McpStdioClient({ ...server, id: 'image-test', env: Object.fromEntries(server.env.map(x => [x.name, x.value])) });
     await client.start();
     const result = await client.callTool('qq_get_message_images', {});
@@ -50,12 +45,9 @@ for (const nativeApproval of [true, false]) test(`real MCP bridge returns a run-
     assert.equal((await hookDecision({ name: 'read_file', args: { Path: file } })).decision, 'force_ask');
     const permit = createAcpPermissionHandler({ sessionId: () => session, workspace: invocation.workspace,
       signal: controller.signal, isEnabled: () => true, maxCalls: 16, imageAccess: invocation.imageAccess,
-      mcpRun: { allowed: () => true, approvalAllowed: () => nativeApproval } });
+      mcpRun: { allowed: () => true, approvalAllowed: () => true } });
     assert.deepEqual(await permit({ sessionId: session, toolCall: { toolCallId: 'image', name: 'read_file', rawInput: { Path: file } },
       options: [{ kind: 'allow_once', optionId: 'once' }] }), { outcome: { outcome: 'selected', optionId: 'once' } });
-    if (!nativeApproval) assert.deepEqual(await permit({ sessionId: session,
-      toolCall: { toolCallId: 'command', name: 'run_command', rawInput: { CommandLine: 'echo denied' } },
-      options: [{ kind: 'allow_once', optionId: 'once' }] }), { outcome: { outcome: 'cancelled' } });
     await fs.writeFile(file, 'tampered');
     assert.equal(await invocation.imageAccess.allows(file, session), false);
   } finally {
