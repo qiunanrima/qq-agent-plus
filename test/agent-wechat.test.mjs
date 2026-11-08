@@ -45,6 +45,19 @@ test('default disabled creates no files, timers or network; QQ policy unchanged'
   assert.equal(chatAllowed('private:12345'), true); assert.equal(chatAllowed('private:55555'), false);
   assert.equal(canRun(f.key), false);
 });
+
+test('contact picker reads one bounded page, filters system/group IDs and does not change whitelist', async t => {
+  const f = fixture(t);
+  f.api.request = async route => {
+    assert.equal(route, '/contacts?limit=100&cursor=next%2Fpage');
+    return { items: [{ username: 'wxid_alice', nickname: '昵称', remark: '备注', alias: 'wechat-alice', token: 'never exposed' },
+      { username: 'filehelper', nickname: '助手' }, { username: 'wxid_system', classification: { category: 'system' } },
+      { username: '123@chatroom' }], nextCursor: 'page2', coverage: { partial: true } };
+  };
+  assert.deepEqual(await f.runtime.contacts('next/page'), { items: [{ wxid: 'wxid_alice', name: '备注', nickname: '昵称', remark: '备注', alias: 'wechat-alice' }], nextCursor: 'page2', partial: true });
+  assert.deepEqual(f.cfg.agentWechat.allow, ['wxid_test']);
+  await assert.rejects(f.runtime.contacts('x'.repeat(1025)), /游标/);
+});
 test('independent whitelist allows unbound wxid without allowing other QQ or WeChat users', async t => {
   const f = fixture(t, { enabled: true });
   assert.equal(canRun(f.key), true); assert.equal(f.runtime.linkedQq(f.key), '');

@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 import { login, switchTo, collectPageErrors } from './helpers.mjs';
 
 test('微信独立白名单、可选绑定、固化和窄屏；QQ配置保持原样', async ({ page }) => {
+  fs.mkdirSync('.codex/agent-wechat-ui', { recursive: true });
   const errors = collectPageErrors(page);
   await login(page);
   const getConfig = async () => (await (await page.request.get('/api/config')).json());
@@ -13,6 +14,25 @@ test('微信独立白名单、可选绑定、固化和窄屏；QQ配置保持原
   await expect(page.locator('#wechat-page')).toBeVisible();
   await page.locator('#wechat-account').fill('test-account');
   await page.locator('#wechat-token-file').fill('/home/test/private-token');
+  await page.locator('#wechat-allow').fill('wxid_alice\nwxid_bob');
+  await page.route('**/api/agent-wechat/contacts*', route => route.fulfill({ json: {
+    items: [{ wxid: 'wxid_alice', name: '小明 <script>', nickname: '小明', alias: 'alice-id' }], nextCursor: null
+  } }));
+  await page.locator('#wechat-pick-contacts').click();
+  await expect(page.getByRole('dialog', { name: '选择微信联系人' })).toBeVisible();
+  await page.screenshot({ path: '.codex/agent-wechat-ui/picker-desktop.png', fullPage: true });
+  await page.locator('#wechat-contact-search').fill('alice-id');
+  await expect(page.locator('#wechat-contact-list')).toContainText('小明 <script>');
+  await page.locator('#wechat-contact-list input[value="wxid_alice"]').uncheck();
+  await page.locator('#wechat-contact-search').fill('');
+  await expect(page.locator('#wechat-contact-list input[value="wxid_bob"]')).toBeChecked();
+  await page.locator('#wechat-contact-cancel').click();
+  await expect(page.locator('#wechat-allow')).toHaveValue('wxid_alice\nwxid_bob');
+  await page.locator('#wechat-pick-contacts').click();
+  await page.locator('#wechat-contact-list input[value="wxid_bob"]').uncheck();
+  await page.locator('#wechat-contact-apply').click();
+  await expect(page.locator('#wechat-allow')).toHaveValue('wxid_alice');
+  expect((await getConfig()).agentWechat?.allow || []).toEqual([]);
   await page.locator('#wechat-allow').fill('wxid_alice\nwxid_bob');
   await page.locator('#wechat-bindings').fill('wxid_alice 12345');
   await page.locator('#wechat-save').click(); await page.locator('[data-confirm-accept]').last().click();
@@ -31,6 +51,10 @@ test('微信独立白名单、可选绑定、固化和窄屏；QQ配置保持原
   fs.mkdirSync('.codex/agent-wechat-ui', { recursive: true });
   await page.screenshot({ path: '.codex/agent-wechat-ui/desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#wechat-pick-contacts').click();
+  expect(await page.getByRole('dialog', { name: '选择微信联系人' }).evaluate(n => n.scrollWidth > n.clientWidth + 1)).toBe(false);
+  await page.screenshot({ path: '.codex/agent-wechat-ui/picker-mobile.png', fullPage: true });
+  await page.locator('#wechat-contact-cancel').click();
   await page.locator('#wechat-save').scrollIntoViewIfNeeded();
   expect(await page.locator('#wechat-page').evaluate(n => n.scrollWidth > n.clientWidth + 1)).toBe(false);
   await page.screenshot({ path: '.codex/agent-wechat-ui/mobile.png', fullPage: true });

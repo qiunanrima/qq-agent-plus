@@ -22,6 +22,7 @@ function renderAgentWechatSection(c = {}) {
     <div class="field"><label for="wechat-account">服务中的账号 ID</label><input id="wechat-account" value="${esc(w.accountId || '')}"></div>
     <div class="field"><label for="wechat-token-file">服务器上的令牌文件路径</label><input id="wechat-token-file" value="${esc(w.tokenFile || '')}"></div>
     <h3>微信私聊白名单</h3><p>每行一个 wxid；空白表示全部禁止。QQ 白名单独立生效。未绑定 QQ 的联系人仍按 wxid 独立处理。</p>
+    <p><button type="button" class="btn" id="wechat-pick-contacts">从微信联系人选择</button></p>
     <div class="field"><label for="wechat-allow">允许的 wxid</label><textarea id="wechat-allow" rows="5">${esc((w.allow || []).join('\n'))}</textarea></div>
     <h3>身份绑定 · wxid → QQ</h3><p>每行填写「wxid QQ号」。绑定后关联该 QQ 的人物记忆，微信上下文与消息存档单独保存。绑定不授予管理权限，也不会自动加入白名单。</p>
     <div class="field"><label for="wechat-bindings">身份对应关系</label><textarea id="wechat-bindings" rows="5">${esc(Object.entries(w.bindings || {}).map(([id, qq]) => `${id} ${qq}`).join('\n'))}</textarea></div>
@@ -35,6 +36,69 @@ async function refreshAgentWechat() {
   if ($('#wechat-status') !== node) return;
   node.textContent = `${s.enabled ? '已启用' : '已停用'} · ${s.running ? '接入运行中' : '接入未运行'} · ${s.online ? '微信已连接' : '尚未确认微信连接'}${s.error ? ` · ${s.error}` : ''}`;
 }
+async function openWechatContactPicker() {
+  const input = $('#wechat-allow'); if (!input) return;
+  const selected = new Set(input.value.split(/\s+/).filter(Boolean));
+  const contacts = new Map();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:calc(100vw - 32px)" role="dialog" aria-modal="true" aria-label="选择微信联系人">
+    <div class="modal-head">选择微信联系人</div>
+    <input id="wechat-contact-search" aria-label="搜索微信联系人" placeholder="搜索昵称、备注、微信号或 wxid">
+    <p id="wechat-contact-count" role="status"></p><div class="modal-list" id="wechat-contact-list"></div>
+    <p id="wechat-contact-status" role="status"></p><div class="modal-foot" style="flex-wrap:wrap">
+    <button type="button" class="btn" id="wechat-contact-more">读取联系人</button>
+    <button type="button" class="btn btn-primary" id="wechat-contact-apply">确定选择</button>
+    <button type="button" class="btn" id="wechat-contact-cancel">取消</button></div></div>`;
+  document.body.appendChild(overlay);
+  const find = selector => overlay.querySelector(selector);
+  let cursor = '', loaded = false, busy = false, partial = false;
+  const close = () => { overlay.remove(); $('#wechat-pick-contacts')?.focus(); };
+  const render = () => {
+    const query = find('#wechat-contact-search').value.trim().toLowerCase();
+    const rows = new Map(contacts);
+    for (const wxid of selected) if (!rows.has(wxid)) rows.set(wxid, { wxid, name: '已选联系人（尚未同步资料）' });
+    const visible = [...rows.values()].filter(row => Object.values(row).join(' ').toLowerCase().includes(query));
+    find('#wechat-contact-count').textContent = `已选 ${selected.size} 人 · 已读取 ${contacts.size} 位联系人`;
+    find('#wechat-contact-list').innerHTML = visible.map(row => `<label class="pick-item" style="align-items:flex-start">
+      <input type="checkbox" value="${esc(row.wxid)}" ${selected.has(row.wxid) ? 'checked' : ''}>
+      <span style="min-width:0;overflow-wrap:anywhere"><strong>${esc(row.name)}</strong>
+      <br><span class="muted">${esc(row.wxid)}${row.alias ? ` · 微信号：${esc(row.alias)}` : ''}</span></span></label>`).join('')
+      || '<p class="muted">没有匹配的联系人；可加载更多，或保留手动填写的 wxid。</p>';
+    find('#wechat-contact-list').querySelectorAll('input').forEach(box => box.addEventListener('change', () => {
+      if (box.checked) selected.add(box.value); else selected.delete(box.value);
+      find('#wechat-contact-count').textContent = `已选 ${selected.size} 人 · 已读取 ${contacts.size} 位联系人`;
+    }));
+  };
+  const load = async () => {
+    if (busy) return;
+    busy = true; const button = find('#wechat-contact-more'); button.disabled = true;
+    find('#wechat-contact-status').textContent = '正在读取微信联系人…';
+    try {
+      const data = await api(`/api/agent-wechat/contacts${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+      if (!overlay.isConnected) return;
+      for (const row of data.items || []) contacts.set(row.wxid, row);
+      loaded = true; partial ||= data.partial; cursor = data.nextCursor || '';
+      render(); button.hidden = !cursor; button.textContent = '加载更多联系人';
+      find('#wechat-contact-status').textContent = `${partial ? '协议端资料尚未完整同步。' : ''}确定后还需保存微信设置才会生效。`;
+    } catch (error) {
+      if (overlay.isConnected) { find('#wechat-contact-status').textContent = error.message; button.textContent = loaded ? '重试加载更多' : '重试读取'; }
+    } finally { busy = false; button.disabled = false; }
+  };
+  overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+  overlay.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+  find('#wechat-contact-search').addEventListener('input', render);
+  find('#wechat-contact-more').addEventListener('click', load);
+  find('#wechat-contact-cancel').addEventListener('click', close);
+  find('#wechat-contact-apply').addEventListener('click', () => {
+    if ($('#wechat-allow') === input) {
+      input.value = [...selected].join('\n');
+      $('#wechat-result').textContent = `已选择 ${selected.size} 位联系人，请保存微信设置后生效。`;
+    }
+    close();
+  });
+  render(); find('#wechat-contact-search').focus(); await load();
+}
 function bindAgentWechatSettings() {
   const bind = (id, fn) => $(id)?.addEventListener('click', async event => {
     const b = event.currentTarget; b.disabled = true;
@@ -47,6 +111,7 @@ function bindAgentWechatSettings() {
   };
   bind('#wechat-open', async () => { state.settingsSection = 'agent-wechat'; await loadSettings(); });
   bind('#wechat-refresh', refreshAgentWechat);
+  bind('#wechat-pick-contacts', openWechatContactPicker);
   bind('#wechat-toggle', async () => {
     const enabled = !state.config?.agentWechat?.enabled;
     if (enabled && !await askForConfirmation('启用微信接入？仅微信白名单中的私聊可触发现有 Agent 回复。')) return;

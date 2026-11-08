@@ -2,6 +2,12 @@ import { normalizeWechatConfig, validWxid } from './config.js';
 import { readOwnerUin } from '../core/notify-owner.js';
 
 export function registerAgentWechatRoutes(router, { runtime, getConfig, updateConfig, json, readBody, auditWrite }) {
+  router.add('GET', '/api/agent-wechat/contacts', async (req, res) => {
+    try {
+      const cursor = new URL(req.url, 'http://localhost').searchParams.get('cursor') || '';
+      return json(res, 200, await runtime.contacts(cursor));
+    } catch { return json(res, 502, { error: '微信联系人读取失败，请检查账号登录和本地协议服务后重试；原白名单保留' }); }
+  });
   router.add('GET', '/api/agent-wechat/status', async (_req, res) => {
     try { return json(res, 200, runtime.status()); }
     catch { return json(res, 200, { enabled: false, running: false, online: false, error: '微信配置无效；QQ 继续运行', peers: [] }); }

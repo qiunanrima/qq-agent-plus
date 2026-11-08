@@ -49,6 +49,12 @@
   },
   {
     "method": "GET",
+    "path": "/api/agent-wechat/contacts",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
     "path": "/api/agent-wechat/status",
     "auth": true,
     "keyEndpoint": false

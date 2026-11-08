@@ -25,6 +25,18 @@ export class AgentWechatChannel {
   }
   attach() { this.unregister ||= registerChannel('wechat', this); }
   config() { return normalizeWechatConfig(this.getConfig().agentWechat); }
+  async contacts(cursor = '') {
+    if (typeof cursor !== 'string' || cursor.length > 1024) throw new Error('微信联系人游标无效');
+    const data = await this.api.request(`/contacts?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+    if (!Array.isArray(data.items)) throw new Error('微信联系人列表无效');
+    const text = value => typeof value === 'string' ? value.slice(0, 160) : '';
+    return { items: data.items.slice(0, 100).filter(row => validWxid(row.username || row.id)
+      && !['system', 'group'].includes(row.classification?.category)).map(row => ({
+      wxid: row.username || row.id, name: text(row.remark || row.nickname || row.displayName || row.username || row.id),
+      nickname: text(row.nickname), remark: text(row.remark), alias: text(row.alias)
+    })), nextCursor: typeof data.nextCursor === 'string' && data.nextCursor.length <= 1024 ? data.nextCursor : null,
+    partial: data.coverage?.partial === true };
+  }
   read() {
     if (this.state) return this.state;
     try {
