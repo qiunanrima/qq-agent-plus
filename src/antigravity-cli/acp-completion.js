@@ -50,7 +50,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     const create = async entry => {
       await verify(config, invocation, { signal: scopedSignal });
       scopedSignal.throwIfAborted();
-      const connection = createAcpPeer(config.executable, ['acp', '--agent', config.agent, '--include-default-customizations=false'], {
+      const connection = createAcpPeer(config.executable, ['acp', '--agent', config.agent, '--include-default-customizations=false', '--process-per-session'], {
         cwd: invocation.workspace, signal: pool ? undefined : scopedSignal, spawnProcess,
         request: (method, params) => {
           const active = pool ? entry.active : handlers;
@@ -80,6 +80,8 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     if (scopedSignal.aborted) abortPeer();
     timings.processReadyMs = Date.now() - startedAt;
     const sessionStarted = Date.now();
+    // Each worker is isolated so a reused front process cannot retain an expired
+    // turn's MCP catalog. Explicit servers are required for pre-prompt discovery.
     const session = await peer.call('session/new', { cwd: invocation.workspace, mcpServers: invocation.acpMcpServers });
     if (typeof session?.sessionId !== 'string' || !session.sessionId) throw new Error('Invalid ACP session');
     sessionId = session.sessionId;

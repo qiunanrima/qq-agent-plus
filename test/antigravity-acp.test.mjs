@@ -204,7 +204,8 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       // Dynamic MCP dispatchers are not static built-in component names in CLI 1.4.
       // A restrictive static list hides dispatch; naming it explicitly crashes the executor.
       assert.doesNotMatch(agent, /^tools:/m);
-      await assert.rejects(fs.access(path.join(invocation.workspace, '.agents/mcp_config.json')), { code: 'ENOENT' });
+      const mcpConfig = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/mcp_config.json'), 'utf8'));
+      assert.equal(mcpConfig.mcpServers.qq_run.tools.qq_probe.eager, true);
       assert.equal(invocation.acpMcpServers[0]._meta.antigravity.forceAllToolsEager, true);
       for (const obsolete of ['view_file', 'multi_replace_file_content']) assert.ok(!agent.includes(`  - ${obsolete}`));
       const hooks = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/hooks.json'), 'utf8'));
@@ -214,6 +215,7 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
     spawnProcess: (_exe, args, opts) => {
       assert.equal(args[0], 'acp');
       assert.ok(args.includes('--include-default-customizations=false'));
+      assert.ok(args.includes('--process-per-session'));
       assert.ok(!args.includes('--dangerously-skip-permissions'));
       return spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'mcp-probe'], opts);
     }

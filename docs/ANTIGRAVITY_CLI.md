@@ -129,6 +129,9 @@ QQ 宿主工具审批（qqApproval）与原生文件、前台命令审批（nati
 运行时提示区分 MCP 目录和原生工具：历史“只能看见 qq_run”的自述不是当前权限事实，
 不会据此删记忆；请求实际文件/命令仍须获得完整参数审批。
 创建 ACP 会话时显式传入本轮 qq_run stdio 服务，环境变量使用 ACP 的 name/value 数组格式。
+启动参数使用 `--process-per-session`：同一聊天可复用 ACP 前进程，每轮由独立 worker
+加载当前工具与工作目录，避免旧轮已关闭的 MCP 连接污染后续工具目录。工作目录仍保留
+CLI 的 eager 工具配置；不能只依赖 ACP server 字段传递 eager 设置。
 必须观察到本轮服务完成 tools/list，才发送 session/prompt；未发现工具时在模型调用前失败。
 启动前只读验证专用 PreToolUse 钩子，原生工具强制 force_ask，客户端只接受 allow_once。
 没有原始完整参数、会话不符、重复调用 ID、浏览器/原生子代理/后台命令均拒绝。
