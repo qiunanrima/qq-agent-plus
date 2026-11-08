@@ -110,6 +110,11 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       error.code = 'ANTIGRAVITY_ACP_EXECUTION_FAILED';
       throw error;
     }
+    if (/^\s*⚠\s*Model produced invalid output\./.test(response)) {
+      const error = new Error('Antigravity ACP model produced invalid output');
+      error.code = 'ANTIGRAVITY_ACP_INVALID_OUTPUT';
+      throw error;
+    }
     if (invocation.finished()) hostFinished = true;
     // A protocol-only turn must leave either a host tool result or model text.
     // An empty end_turn is not evidence that the incoming message was handled.

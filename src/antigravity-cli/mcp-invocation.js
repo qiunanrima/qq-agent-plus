@@ -58,7 +58,9 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     const eagerTools = Object.fromEntries(selected.filter(tool => tool.function?.name)
       .map(tool => [`qq_${tool.function.name}`, { eager: true }]));
-    await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: {
+    // ACP receives its server through session/new. Loading it from disk as well
+    // creates a second registry entry and retains an expired bridge in pooled processes.
+    if (!useAcp) await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: {
       qq_run: { ...bridge.serverConfig, tools: eagerTools, forceAllToolsEager: true }
     } }), { mode: 0o600 });
     let hookCommand;

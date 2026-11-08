@@ -119,6 +119,15 @@ test('executor failure banner with end_turn must never be recorded as SUCCESS', 
   assert.deepEqual(listCliApprovals(), []);
 });
 
+test('invalid model output followed by an unsent draft is not a successful ACP turn', async () => {
+  await assert.rejects(acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
+    prompt: 'offline', mcpRun: run, isEnabled: () => true,
+    spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'invalid-output'], opts)
+  }, { verify: async () => {} }), { code: 'ANTIGRAVITY_ACP_INVALID_OUTPUT' });
+  assert.deepEqual(listCliApprovals(), []);
+});
+
 test('WeChat empty ACP end_turn fails instead of silently acknowledging the incoming message', async () => {
   await assert.rejects(acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
     invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
@@ -195,9 +204,7 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       // Dynamic MCP dispatchers are not static built-in component names in CLI 1.4.
       // A restrictive static list hides dispatch; naming it explicitly crashes the executor.
       assert.doesNotMatch(agent, /^tools:/m);
-      const mcpConfig = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/mcp_config.json'), 'utf8'));
-      assert.equal(mcpConfig.mcpServers.qq_run.tools.qq_probe.eager, true);
-      assert.equal(mcpConfig.mcpServers.qq_run.forceAllToolsEager, true);
+      await assert.rejects(fs.access(path.join(invocation.workspace, '.agents/mcp_config.json')), { code: 'ENOENT' });
       assert.equal(invocation.acpMcpServers[0]._meta.antigravity.forceAllToolsEager, true);
       for (const obsolete of ['view_file', 'multi_replace_file_content']) assert.ok(!agent.includes(`  - ${obsolete}`));
       const hooks = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/hooks.json'), 'utf8'));

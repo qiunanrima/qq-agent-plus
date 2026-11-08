@@ -45,9 +45,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       send({ id, result: { stopReason: 'end_turn' } });
       continue;
     }
-    if (mode === 'executor-error') {
+    if (mode === 'executor-error' || mode === 'invalid-output') {
       send({ method: 'session/update', params: { sessionId: 'session', update: {
-        sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Agent execution terminated due to error.' }
+        sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: mode === 'invalid-output'
+          ? '\n⚠ Model produced invalid output.\nUnsent draft' : '⚠ Agent execution terminated due to error.' }
       } } });
       send({ id, result: { stopReason: 'end_turn' } });
       continue;
