@@ -112,6 +112,15 @@ test('queued and submitting are polled to acceptance without resubmitting either
   assert.equal(f.store.hasUncertainEffects('submitting'), false);
 });
 
+test('console test-send without a model run ID uses a nullable outbox run', async t => {
+  const f = fixture(t, { enabled: true });
+  const sender = new SendQueue({ onebot: {}, store: f.store });
+  const result = await sender.sendTextBatch(f.key, ['console test']);
+  assert.equal(result.sent.length, 1);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.db.prepare('SELECT run_id FROM outbox').get().run_id, null);
+});
+
 test('unknown send blocks any additional submission and is never retried', async t => {
   const f = fixture(t, { enabled: true }); let submissions = 0;
   f.api.request = async () => { submissions++; throw Error('connection reset'); };

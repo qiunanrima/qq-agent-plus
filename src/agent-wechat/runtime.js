@@ -184,7 +184,7 @@ export class AgentWechatChannel {
     const wxid = this.peer(chatKey), list = Array.isArray(messages) ? messages : [messages];
     if (!wxid || !this.allowed(chatKey) || !list.length || list.length > 4
       || list.some(t => typeof t !== 'string' || !t.trim() || t.length > 2000)) throw new Error('微信当前会话不可发送或文字超限');
-    if (this.store.hasUncertainEffects(options.runId)) throw new Error('Delivery uncertain; batch held');
+    if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Delivery uncertain; batch held');
     const countKey = options.runId || chatKey;
     if ((this.sentCounts.get(countKey) || 0) + list.length > 4) throw new Error('微信每轮最多发送四条文字');
     this.sentCounts.set(countKey, (this.sentCounts.get(countKey) || 0) + list.length);
