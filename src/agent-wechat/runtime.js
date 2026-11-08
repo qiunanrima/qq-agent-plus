@@ -197,7 +197,7 @@ export class AgentWechatChannel {
       let result;
       try {
         result = await this.api.request('/sends', { body: { kind: 'text', threadId: wxid, text }, key: `qq-agent-wechat-${id}`, signal: options.signal });
-        for (let i = 0; result.state === 'queued' || result.state === 'sending'; i++) {
+        for (let i = 0; ['queued', 'submitting', 'sending'].includes(result.state); i++) {
           if (i >= 20 || typeof result.id !== 'string') throw new Error('微信发送结果未知');
           await delay(500, null, { signal: options.signal });
           result = await this.api.request(`/sends/${encodeURIComponent(result.id)}`, { signal: options.signal });

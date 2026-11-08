@@ -91,6 +91,27 @@ test('accepted WeChat send uses durable existing outbox and never OneBot', async
   assert.equal(f.calls[0][1].body.threadId, 'wxid_test'); assert.ok(f.calls[0][1].key);
   assert.equal(f.store.hasUncertainEffects('wx-run'), false);
 });
+test('queued and submitting are polled to acceptance without resubmitting either bubble', async t => {
+  const f = fixture(t, { enabled: true });
+  const polls = new Map(); let submissions = 0;
+  f.api.request = async (route, options = {}) => {
+    if (route === '/sends') {
+      submissions++;
+      assert.ok(options.key);
+      return { id: `send-${submissions}`, state: 'queued' };
+    }
+    const count = (polls.get(route) || 0) + 1; polls.set(route, count);
+    assert.equal(options.body, undefined);
+    return count === 1 ? { id: route.split('/').at(-1), state: 'submitting' }
+      : { state: 'accepted', destination: 'wxid_test', serverId: String(100 + submissions) };
+  };
+  const result = await f.runtime.sendTextBatch(f.key, ['first', 'second'], { runId: 'submitting' });
+  assert.equal(result.sent.length, 2);
+  assert.equal(submissions, 2, 'each bubble must be submitted once');
+  assert.deepEqual([...polls.values()], [2, 2]);
+  assert.equal(f.store.hasUncertainEffects('submitting'), false);
+});
+
 test('unknown send blocks any additional submission and is never retried', async t => {
   const f = fixture(t, { enabled: true }); let submissions = 0;
   f.api.request = async () => { submissions++; throw Error('connection reset'); };
