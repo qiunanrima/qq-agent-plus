@@ -9,6 +9,14 @@
 也可通过安装实例的 `data/config.json` 配置，手改磁盘后重启服务。
 不要在源码 checkout 里执行 `manage.sh`。
 
+原生命令审批模式的内建工具白名单必须保留 `call_mcp_tool`，否则模型可能看得到
+宿主工具名称，却无法通过 MCP 调用。`qq_send_message`、`qq_finish` 等不是 shell
+命令，不应为普通聊天触发命令审批。运行时为本轮 MCP 工具请求 eager 加载，避免
+为读取工具参数而访问磁盘上的 schema；旧 CLI 是否采纳 ACP eager 扩展仍取决于
+其版本。宿主输入同时提供本轮参数定义，保留 dispatcher 作为调用入口。
+参见官方 [工具加载说明](https://antigravity.google/docs/mcp?app=antigravity-ide-)
+与 [ACP eager 扩展更新记录](https://antigravity.google/docs/changelog?ide=visual-studio&tab=extensions)。
+
 ## 官方依据
 
 - [Headless 与输入输出协议](https://antigravity.google/docs/cli/headless/)

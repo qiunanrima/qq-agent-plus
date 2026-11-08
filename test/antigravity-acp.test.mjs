@@ -192,7 +192,11 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
       assert.match(agent, /inheritCustomizations: true/); assert.doesNotMatch(agent, /commandExecutionPolicy: off/);
       assert.match(agent, /commandExecutionPolicy: sandbox/);
-      for (const tool of ['run_command', 'read_file', 'write_to_file', 'replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
+      for (const tool of ['call_mcp_tool', 'run_command', 'read_file', 'write_to_file', 'replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
+      const mcpConfig = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/mcp_config.json'), 'utf8'));
+      assert.equal(mcpConfig.mcpServers.qq_run.tools.qq_probe.eager, true);
+      assert.equal(mcpConfig.mcpServers.qq_run.forceAllToolsEager, true);
+      assert.equal(invocation.acpMcpServers[0]._meta.antigravity.forceAllToolsEager, true);
       for (const obsolete of ['view_file', 'multi_replace_file_content']) assert.ok(!agent.includes(`  - ${obsolete}`));
       const hooks = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/hooks.json'), 'utf8'));
       assert.equal(hooks['qq-run-approval'].PreToolUse[0].hooks[0].command, invocation.hookCommand);
