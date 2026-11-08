@@ -65,7 +65,9 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
         const init = await connection.call('initialize', { protocolVersion: 1, clientCapabilities: mcpRun.platform === 'wechat' && !config.nativeApproval ? {} : native.capabilities, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
         if (init?.protocolVersion !== 1) throw new Error('Unsupported ACP protocol');
         if (pool) invocation.retainWorkspace();
-        return { peer: connection, dispose: () => invocation.releaseWorkspace() };
+        const capabilities = init.agentCapabilities?.sessionCapabilities || init.agentCapabilities?.session_capabilities;
+        return { peer: connection, canCloseSession: !!capabilities && capabilities.close != null && capabilities.close !== false,
+          dispose: () => invocation.releaseWorkspace() };
       } catch (error) { await connection.close(); throw error; }
       finally { scopedSignal.removeEventListener('abort', abort); }
     };
@@ -136,6 +138,18 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     scopedSignal.removeEventListener('abort', abortPeer);
     controller.abort();
     await native.close();
+    // Cancel ends a turn; close releases its worker while preserving the front.
+    // Never keep a process after an unconfirmed close, and never retry a prompt.
+    if (lease && healthy && sessionId && lease.entry.canCloseSession) {
+      let deadline;
+      try {
+        await Promise.race([peer.call('session/close', { sessionId }), new Promise((_, reject) => {
+          deadline = setTimeout(() => reject(new Error('ACP session close timed out')), 2000);
+        })]);
+        lease.entry.sessionDisposed = true;
+      } catch { healthy = false; }
+      finally { clearTimeout(deadline); }
+    }
     // End every turn's permissions without aborting a healthy pooled process.
     if (lease) await lease.release(healthy);
     else await peer?.close();

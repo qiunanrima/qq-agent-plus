@@ -212,3 +212,12 @@ npx eslint src/antigravity-cli src/llm/llm.js src/core/config-legacy.js src/core
 ```
 
 测试 double 仅使用本机 Node 子进程，不登录 Google、不发送 QQ 消息。
+# ACP 会话关闭与进程复用
+
+ACP 主进程按聊天复用，最多五个；第六个新聊天启动前关闭最早创建的进程组，
+即使该聊天仍在执行。闲置一小时关闭。每轮仍创建独立会话、MCP 授权和审批。
+服务端声明 `sessionCapabilities.close` 时，正常轮次结束后调用 `session/close`，
+释放会话 worker，保留主进程；关闭失败或两秒内未应答则回收整组，不重跑请求。
+不支持关闭的 CLI 沿用每两轮回收整组。CLI 1.5.3 空会话实测关闭应答后 worker
+延迟退出，三秒后已消失，主进程仍可创建下一会话。取消回合不能代替关闭会话。
+

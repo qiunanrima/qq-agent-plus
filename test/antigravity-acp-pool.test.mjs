@@ -143,3 +143,23 @@ for (const mode of ['pool-probe', 'pool-cancel']) test(`real offline process reu
   assert.notEqual(sessions[0], sessions[1]);
   assert.deepEqual(executed, [['private:1', 'one', 'probe'], ['private:1', 'two', 'probe'], ['group:1', 'three', 'probe']]);
 });
+for (const closeMode of ['ok', 'fail', 'hang']) test(`session close ${closeMode} preserves only confirmed healthy fronts`, async t => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'acp-close-'));
+  const pool = createAcpPool();
+  t.after(async () => { await pool.close(); await fs.rm(workspace, { recursive: true, force: true }); });
+  let starts = 0;
+  for (let turn = 0; turn < 3; turn++) {
+    const config = { executable: process.execPath, workspace, agent: 'qq-mcp', effort: 'low', nativeApproval: false, qqApproval: false, timeoutMs: 5000, maxToolCalls: 8 };
+    const mcpRun = { platform: 'wechat', chatKey: 'private:close', runId: `close-${turn}`, allowed: () => true,
+      approvalAllowed: () => false, execute: async () => ({ content: 'host-probe-ok' }) };
+    const invocation = await prepareMcpInvocation({ config, tools: [{ function: { name: 'probe' } }], mcpRun });
+    try {
+      await acpCompletion({ config, invocation, prompt: 'offline', mcpRun, isEnabled: () => true,
+        spawnProcess: (_exe, _args, options) => { starts++; return spawn(process.execPath,
+          [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'mcp-only'],
+          { ...options, env: { ...options.env, ACP_CLOSE_TEST: closeMode } }); }
+      }, { pool, verify: async () => {} });
+    } finally { await invocation.close(); }
+  }
+  assert.equal(starts, closeMode === 'ok' ? 1 : 3);
+});

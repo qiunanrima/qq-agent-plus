@@ -48,7 +48,8 @@ export function createAcpPool({ idleMs = 3600000, maxIdle = 5, maxProcesses = 5,
           if (entries.get(key) !== entry) return entry.closing;
           // CLI 1.4 retains session workers: bound their lifetime while allowing
           // the next turn to reuse initialization once.
-          if (++entry.turns >= maxTurns) return discard(key, entry);
+          if (++entry.turns >= maxTurns && !entry.sessionDisposed) return discard(key, entry);
+          entry.sessionDisposed = false;
           entry.active = null;
           if (!healthy || entry.peer.closed || !entry.valid()) return discard(key, entry);
           entry.busy = false;

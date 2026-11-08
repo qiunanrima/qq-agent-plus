@@ -21,7 +21,14 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     continue;
   }
   const { method, id } = message;
-  if (method === 'initialize') send({ id, result: { protocolVersion: 1 } });
+  if (method === 'initialize') send({ id, result: { protocolVersion: 1,
+    ...(process.env.ACP_CLOSE_TEST ? { agentCapabilities: { sessionCapabilities: { close: {} } } } : {}) } });
+  else if (method === 'session/close') {
+    if (process.env.ACP_CLOSE_TEST === 'hang') continue;
+    if (process.env.ACP_CLOSE_TEST === 'fail') { send({ id, error: { code: -32603, message: 'close failed' } }); continue; }
+    await mcp?.stop(); mcp = null;
+    send({ id, result: {} });
+  }
   else if (method === 'session/new') {
     if (mode === 'pool-probe' || mode === 'pool-cancel') sessionId = `session-${++sessionCount}`;
     const server = message.params?.mcpServers?.[0];
