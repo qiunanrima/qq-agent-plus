@@ -119,6 +119,15 @@ test('executor failure banner with end_turn must never be recorded as SUCCESS', 
   assert.deepEqual(listCliApprovals(), []);
 });
 
+test('WeChat empty ACP end_turn fails instead of silently acknowledging the incoming message', async () => {
+  await assert.rejects(acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },
+    prompt: 'offline', mcpRun: { ...run, platform: 'wechat' }, isEnabled: () => true,
+    spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'executor-empty'], opts)
+  }, { verify: async () => {} }), { code: 'ANTIGRAVITY_ACP_EMPTY_RESULT' });
+  assert.deepEqual(listCliApprovals(), []);
+});
+
 test('ACP deadline revokes unanswered approval and kills the subprocess', async () => {
   const completion = acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 500, maxToolCalls: 8 },
     invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => false },

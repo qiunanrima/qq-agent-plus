@@ -41,6 +41,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   else if (method === 'session/cancel') send({ id: promptId, result: { stopReason: 'cancelled' } });
   else if (method === 'session/prompt') {
     promptId = id;
+    if (mode === 'executor-empty') {
+      send({ id, result: { stopReason: 'end_turn' } });
+      continue;
+    }
     if (mode === 'executor-error') {
       send({ method: 'session/update', params: { sessionId: 'session', update: {
         sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Agent execution terminated due to error.' }

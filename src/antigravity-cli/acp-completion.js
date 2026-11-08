@@ -1,5 +1,5 @@
 import { createAcpPeer } from './acp-rpc.js';
-import { createAcpPermissionHandler } from './acp-permissions.js';
+import { createAcpPermissionHandler, describeAcpPermission } from './acp-permissions.js';
 import { verifyNativeHooks } from './verify-native-hooks.js';
 import { createAcpNativeClient } from './acp-native-client.js';
 
@@ -9,6 +9,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
   const scopedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const startedAt = Date.now(), timings = {};
   let sessionId, response = '', hostFinished = false, peer, lease, abortPeer, finishTimer, healthy = false;
+  const deniedTools = new Set();
   const permit = createAcpPermissionHandler({ sessionId: () => sessionId, mcpRun,
     workspace: invocation.workspace, controlRoot: config.workspace, signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls,
     imageAccess: invocation.imageAccess });
@@ -31,7 +32,14 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       || invocation.acpMcpServers[0].name !== 'qq_run') throw new Error('ACP requires the run-scoped qq_run MCP server');
     const handlers = {
       request: (method, params) => {
-        if (method === 'session/request_permission') return permit(params);
+        if (method === 'session/request_permission') return permit(params).then(result => {
+          const selected = params?.options?.find(option => option.optionId === result.outcome?.optionId);
+          if (result.outcome?.outcome === 'cancelled' || selected?.kind === 'reject_once') {
+            // Never persist arguments, paths, command text or arbitrary tool titles.
+            deniedTools.add(describeAcpPermission(params?.toolCall)?.tool || 'unrecognized-tool');
+          }
+          return result;
+        });
         return native.request(method, params);
       },
       update: (method, params) => {
@@ -103,6 +111,14 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       throw error;
     }
     if (invocation.finished()) hostFinished = true;
+    // A protocol-only turn must leave either a host tool result or model text.
+    // An empty end_turn is not evidence that the incoming message was handled.
+    if (mcpRun.platform === 'wechat' && !hostFinished && !response.trim() && invocation.calls() === 0) {
+      const denied = deniedTools.size ? `; denied tools: ${[...deniedTools].join(', ')}` : '';
+      const error = new Error(`Antigravity ACP returned an empty turn without calling host tools${denied}`);
+      error.code = 'ANTIGRAVITY_ACP_EMPTY_RESULT';
+      throw error;
+    }
     healthy = true;
     return completed(hostFinished ? 'HOST_FINISHED' : 'SUCCESS');
   } catch (error) {
