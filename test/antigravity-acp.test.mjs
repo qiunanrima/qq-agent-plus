@@ -192,7 +192,9 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
       const agent = await fs.readFile(path.join(invocation.workspace, '.agents/agents/qq-mcp/agent.md'), 'utf8');
       assert.match(agent, /inheritCustomizations: true/); assert.doesNotMatch(agent, /commandExecutionPolicy: off/);
       assert.match(agent, /commandExecutionPolicy: sandbox/);
-      for (const tool of ['call_mcp_tool', 'run_command', 'read_file', 'write_to_file', 'replace_file_content']) assert.ok(agent.includes(`  - ${tool}`));
+      // Dynamic MCP dispatchers are not static built-in component names in CLI 1.4.
+      // A restrictive static list hides dispatch; naming it explicitly crashes the executor.
+      assert.doesNotMatch(agent, /^tools:/m);
       const mcpConfig = JSON.parse(await fs.readFile(path.join(invocation.workspace, '.agents/mcp_config.json'), 'utf8'));
       assert.equal(mcpConfig.mcpServers.qq_run.tools.qq_probe.eager, true);
       assert.equal(mcpConfig.mcpServers.qq_run.forceAllToolsEager, true);

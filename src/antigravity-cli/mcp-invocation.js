@@ -47,7 +47,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     await fs.mkdir(agentDir, { recursive: true });
     const template = await fs.readFile(new URL('../../examples/antigravity/qq-mcp/agent.md', import.meta.url), 'utf8');
     let agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/,
-      'commandExecutionPolicy: sandbox\ntools:\n  - call_mcp_tool\n  - run_command\n  - read_file\n  - write_to_file\n  - replace_file_content\n')
+      'commandExecutionPolicy: sandbox\n')
       .replace('inheritCustomizations: false', 'inheritCustomizations: true')
       .replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
         '文件和前台命令仅在用户明确要求且管理员逐次批准后使用；禁止浏览器、原生子代理和后台命令。被拒绝后停止，不得换工具绕过。') : template;
