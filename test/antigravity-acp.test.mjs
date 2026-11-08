@@ -10,7 +10,7 @@ import { acpCompletion } from '../src/antigravity-cli/acp-completion.js';
 import { listCliApprovals, decideCliApproval } from '../src/antigravity-cli/approvals.js';
 import fs from 'node:fs/promises';
 import { verifyNativeHooks } from '../src/antigravity-cli/verify-native-hooks.js';
-import { antigravityCompletion, antigravityStatus } from '../src/antigravity-cli/index.js';
+import { antigravityCompletion, antigravityStatus, closeAntigravityProcesses } from '../src/antigravity-cli/index.js';
 
 const run = { chatKey: 'private:1', runId: 'test', allowed: () => true, approvalAllowed: () => true };
 
@@ -30,7 +30,7 @@ test('MCP-only ACP allows its run-scoped MCP request while cancelling native rea
 
 test('WeChat adapter uses ACP with native permission disabled and can continue after a denied file read', async t => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wechat-acp-'));
-  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  t.after(async () => { await closeAntigravityProcesses(); await fs.rm(workspace, { recursive: true, force: true }); });
   let executed = 0, verified = false;
   const result = await antigravityCompletion({ config: { enabled: true, nativeApproval: true, workspace, timeoutMs: 5000 },
     messages: [{ role: 'user', content: 'hello' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }],
@@ -50,7 +50,7 @@ test('WeChat adapter uses ACP with native permission disabled and can continue a
 const options = [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' }];
 test('WeChat native approval can be enabled independently and still requires a single administrator decision', async t => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wechat-native-'));
-  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  t.after(async () => { await closeAntigravityProcesses(); await fs.rm(workspace, { recursive: true, force: true }); });
   let calls = 0;
   const completion = antigravityCompletion({ config: { enabled: true, nativeApproval: false, workspace, timeoutMs: 5000 },
     messages: [{ role: 'user', content: 'offline' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }],
@@ -204,7 +204,7 @@ test('native hook verification rejects other hooks and paid-credit profile witho
 
 test('normal adapter selects ACP only on opt-in and cleans isolated workspace and lock', async t => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'native-adapter-'));
-  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  t.after(async () => { await closeAntigravityProcesses(); await fs.rm(workspace, { recursive: true, force: true }); });
   let checked = false, executed = 0;
   const completion = antigravityCompletion({ config: { enabled: true, nativeApproval: true, workspace, executable: process.execPath },
     messages: [{ role: 'user', content: 'offline probe' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }], mcpRun: { ...run,
@@ -237,6 +237,7 @@ test('normal adapter selects ACP only on opt-in and cleans isolated workspace an
   const result = await completion;
   assert.equal(result.raw.driver, 'acp'); assert.equal(checked, true);
   assert.equal(result.raw.mcpCalls, 1); assert.equal(executed, 1);
+  await closeAntigravityProcesses();
   assert.deepEqual(await fs.readdir(workspace), []);
   assert.deepEqual(antigravityStatus(), { active: 0, queued: 0 });
 });

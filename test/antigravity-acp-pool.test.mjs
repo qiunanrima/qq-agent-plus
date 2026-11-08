@@ -12,6 +12,41 @@ import { listCliApprovals, decideCliApproval } from '../src/antigravity-cli/appr
 import { createAcpNativeClient } from '../src/antigravity-cli/acp-native-client.js';
 import { createAcpPermissionHandler } from '../src/antigravity-cli/acp-permissions.js';
 
+test('fourth chat evicts oldest even busy, concurrent acquisitions stay bounded', async () => {
+  const pool = createAcpPool({ maxProcesses: 3, maxTurns: Infinity });
+  const live = new Set(), closed = [];
+  const acquire = key => pool.acquire(key, 'cfg', async () => {
+    live.add(key); assert.ok(live.size <= 3);
+    return { peer: { close: async () => { live.delete(key); closed.push(key); } } };
+  }, () => true);
+  const a = await acquire('a');
+  const b = await acquire('b'); await b.release(true);
+  const c = await acquire('c');
+  const reused = await acquire('b'); await reused.release(true);
+  const d = await acquire('d');
+  assert.deepEqual(closed, ['a']);
+  await a.release(true); // Evicted owner cannot resurrect its lease.
+  await Promise.all([acquire('e'), acquire('f')]);
+  assert.deepEqual([...live], ['d', 'e', 'f']);
+  await c.release(true); await d.release(true);
+  await pool.close(); assert.equal(live.size, 0);
+});
+
+test('default cap is five and retained worker groups recycle after two turns', async () => {
+  const pool = createAcpPool(); const live = new Set();
+  const acquire = key => pool.acquire(key, '', async () => {
+    live.add(key); assert.ok(live.size <= 5);
+    return { peer: { close: async () => { live.delete(key); } } };
+  }, () => true);
+  for (const key of ['a', 'b', 'c', 'd', 'e', 'f']) await acquire(key);
+  assert.deepEqual([...live], ['b', 'c', 'd', 'e', 'f']);
+  await pool.close();
+  const first = await acquire('one'); await first.release(true);
+  const second = await acquire('one'); assert.equal(first.entry, second.entry);
+  await second.release(true); assert.equal(live.size, 0);
+  await pool.close();
+});
+
 test('idle expiry, policy changes, failures and capacity dispose chat processes', async () => {
   let created = 0, disposed = 0, valid = true;
   const pool = createAcpPool({ idleMs: 40, maxIdle: 1 });

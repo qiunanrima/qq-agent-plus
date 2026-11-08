@@ -1,6 +1,7 @@
 /** Chat-owned processes; each turn still receives a fresh ACP session/capability. */
-export function createAcpPool({ idleMs = 3600000, maxIdle = 4 } = {}) {
+export function createAcpPool({ idleMs = 3600000, maxIdle = 5, maxProcesses = 5, maxTurns = 2 } = {}) {
   const entries = new Map();
+  let pending = Promise.resolve();
   function discard(key, entry) {
     if (entry.closing) return entry.closing;
     if (entries.get(key) === entry) entries.delete(key);
@@ -15,13 +16,22 @@ export function createAcpPool({ idleMs = 3600000, maxIdle = 4 } = {}) {
   }
   return {
     async acquire(key, signature, create, valid) {
+      const previous = pending;
+      let unlock;
+      pending = new Promise(resolve => { unlock = resolve; });
+      await previous;
+      try {
       let entry = entries.get(key);
       if (entry?.busy) throw new Error('ACP chat already active');
       if (entry && (entry.signature !== signature || entry.peer.closed || !entry.valid())) {
         await discard(key, entry); entry = null;
       }
       if (!entry) {
-        entry = { signature, busy: true, active: null, valid };
+        while (entries.size >= maxProcesses) {
+          const [oldKey, old] = entries.entries().next().value;
+          await discard(oldKey, old);
+        }
+        entry = { signature, busy: true, active: null, valid, turns: 0 };
         const resource = await create(entry);
         Object.assign(entry, resource);
         entries.set(key, entry);
@@ -35,6 +45,10 @@ export function createAcpPool({ idleMs = 3600000, maxIdle = 4 } = {}) {
       return {
         entry,
         async release(healthy) {
+          if (entries.get(key) !== entry) return entry.closing;
+          // CLI 1.4 retains session workers: bound their lifetime while allowing
+          // the next turn to reuse initialization once.
+          if (++entry.turns >= maxTurns) return discard(key, entry);
           entry.active = null;
           if (!healthy || entry.peer.closed || !entry.valid()) return discard(key, entry);
           entry.busy = false;
@@ -48,6 +62,7 @@ export function createAcpPool({ idleMs = 3600000, maxIdle = 4 } = {}) {
           }
         }
       };
+      } finally { unlock(); }
     },
     async close() { await Promise.all([...entries].map(([key, entry]) => discard(key, entry))); }
   };
