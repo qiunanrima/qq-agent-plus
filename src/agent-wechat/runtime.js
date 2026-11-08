@@ -7,6 +7,7 @@ import { normalizeWechatConfig, validWxid } from './config.js';
 import { registerChannel, isWechatChat } from '../channels/registry.js';
 import { memoryDay, personaKey } from '../memory/hippocampus.js';
 import { COMMON_CHAT_TOOLS } from '../channels/tool-policy.js';
+import { readWechatImages } from './media.js';
 import { sanitizeUserText, formatClockTime } from '../core/util.js';
 
 export const wechatChatKey = (account, wxid) => `private:wechat_${createHash('sha256').update(JSON.stringify([account, wxid])).digest('hex')}`;
@@ -19,6 +20,7 @@ export class AgentWechatChannel {
     this.file = path.join(dataDir, 'agent-wechat', 'ingress.json');
     this.state = null; this.controller = null; this.task = null; this.error = ''; this.online = false;
     this.sentCounts = new Map();
+    this.mediaJobs = new Map();
     this.unregister = null;
   }
   attach() { this.unregister ||= registerChannel('wechat', this); }
@@ -60,7 +62,7 @@ export class AgentWechatChannel {
   systemPrompt(persona) {
     return `你正在微信私聊，名字是「${persona.botName || ''}」。遵循角色设定：\n${persona.roleText || ''}\n`
       + '只使用本轮实际提供的工具。用 send_message 回复当前微信会话，用 finish 提交非空 summary 结束。'
-      + '微信身份绑定只关联人物记忆，不授予 QQ 管理权限。当前仅支持文字，不可声称查看图片或操作 QQ。';
+      + '微信身份绑定只关联人物记忆，不授予 QQ 管理权限。收到图片或表情包时先用 get_message_images 查看当前微信消息；读取失败就说明看不到，不可编造画面或操作 QQ。';
   }
   toolsFor(key, definitions, { memory, persona, personalityMemory }) {
     const target = () => this.linkedQq(key) || this.peer(key);
@@ -70,6 +72,9 @@ export class AgentWechatChannel {
     const personCards = () => (memory.hippocampus?.cards?.({ persona, chatKey: source() }) || [])
       .filter(row => row.kind === 'skill' || String(row.subject) === target());
     return definitions.filter(d => COMMON_CHAT_TOOLS.has(d.name)).map(def => {
+      if (def.name === 'get_message_images') return { ...def, description: '查看当前微信私聊中的图片或表情包。用聊天记录中的完整微信消息 ID；不可调用 QQ、OneBot 或任意文件读取。',
+        parameters: { type: 'object', properties: { messageId: { type: 'string' }, messageIds: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } } }, anyOf: [{ required: ['messageId'] }, { required: ['messageIds'] }] },
+        execute: (ctx, args) => readWechatImages(this, key, ctx, args) };
       if (def.name === 'send_message') return { ...def, description: '向当前微信私聊发送文字；messages 为字符串或字符串数组，不可指定其他目标。',
         parameters: { type: 'object', properties: { messages: def.parameters.properties.messages }, required: ['messages'] } };
       if (!['memory_query', 'person_memory_lookup', 'memory_card_list', 'memory_card_lookup', 'hippocampus_lookup', 'personality_lookup'].includes(def.name)) return def;
@@ -166,15 +171,16 @@ export class AgentWechatChannel {
       || !validWxid(d.threadId) || !c.allow.includes(d.threadId) || typeof d.messageId !== 'string'
       || d.messageId.length > 2048 || !Number.isFinite(Date.parse(event.createdAt)) || Math.abs(Date.now() - Date.parse(event.createdAt)) > 120000) return;
     const message = await this.api.request(`/messages/${encodeURIComponent(d.messageId)}`, { signal });
-    if (message.threadId !== d.threadId || message.direction !== 'incoming' || message.type !== 1
+    if (message.threadId !== d.threadId || message.direction !== 'incoming' || ![1, 3, 47].includes(message.type)
       || message.senderId && message.senderId !== d.threadId
-      || typeof message.body !== 'string' || !message.body.trim()) return;
+      || message.type === 1 && (typeof message.body !== 'string' || !message.body.trim())) return;
     signal.throwIfAborted();
     if (!this.config().enabled || !this.config().allow.includes(d.threadId)) return;
     const chatKey = wechatChatKey(c.accountId, d.threadId);
     const row = this.store.appendIncoming(chatKey, { mid: d.messageId, ts: Date.parse(event.createdAt),
       senderId: d.threadId, senderName: message.senderName || d.threadId,
-      text: sanitizeUserText(message.body).slice(0, 8000), media: [], channel: 'wechat' });
+      text: message.type === 1 ? sanitizeUserText(message.body).slice(0, 8000) : message.type === 47 ? '[表情包]' : '[图片]',
+      media: message.type === 1 ? [] : [{ kind: 'image', channel: 'wechat', messageId: d.messageId }], channel: 'wechat' });
     if (!row.duplicate) {
       try { this.log(`[agent-wechat] 私聊已进入统一 Agent：${chatKey}`); } catch { /* Logging cannot suppress ingress. */ }
       this.emit('chat-update', chatKey); this.orchestrator.onIncoming(chatKey, row);

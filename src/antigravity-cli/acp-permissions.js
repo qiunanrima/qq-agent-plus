@@ -40,6 +40,13 @@ export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, contr
     const option = params.options?.find(item => item.kind === 'allow_once');
     if (!description || !option?.optionId) return cancelled;
     if (description.category === 'mcp') return { outcome: { outcome: 'selected', optionId: option.optionId } };
+    const imageField = description.tool === 'read_file' ? 'Path' : description.tool === 'view_file' ? 'AbsolutePath' : null;
+    if (imageField && await imageAccess?.allows(decode(description.args[imageField]), sessionId()) && active()) {
+      const id = params.toolCall?.toolCallId;
+      if (typeof id !== 'string' || !id || decisions.has(id) || calls++ >= maxCalls) return cancelled;
+      decisions.add(id);
+      return { outcome: { outcome: 'selected', optionId: option.optionId } };
+    }
     if (!allowed()) {
       const reject = params.options?.find(item => item.kind === 'reject_once');
       return reject?.optionId ? { outcome: { outcome: 'selected', optionId: reject.optionId } } : cancelled;

@@ -21,15 +21,15 @@ async function hookDecision(call) {
   return JSON.parse(output);
 }
 
-test('real MCP bridge returns a run-owned image path usable through the read_file permission chain', async () => {
+for (const platform of ['qq', 'wechat']) test(`${platform} MCP bridge permits only its run-owned image while native permissions can remain off`, async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'qq-image-bridge-'));
   const bytes = Buffer.from('image returned by host');
   const controller = new AbortController();
   let invocation, client;
   try {
-    invocation = await prepareMcpInvocation({ config: { workspace, agent: 'qq-mcp', nativeApproval: true, qqApproval: false, maxToolCalls: 16, timeoutMs: 3000 },
+    invocation = await prepareMcpInvocation({ config: { workspace, agent: 'qq-mcp', nativeApproval: platform === 'qq', qqApproval: false, maxToolCalls: 16, timeoutMs: 3000 },
       tools: [{ function: { name: 'get_message_images', parameters: { type: 'object' } } }],
-      mcpRun: { chatKey: 'private:1', runId: 'image-test', allowed: () => true,
+      mcpRun: { platform, chatKey: 'private:1', runId: 'image-test', allowed: () => true,
         execute: async () => ({ content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${bytes.toString('base64')}` } }] }) },
       signal: controller.signal });
     const server = invocation.acpMcpServers[0];
@@ -45,11 +45,16 @@ test('real MCP bridge returns a run-owned image path usable through the read_fil
     assert.equal((await hookDecision({ name: 'read_file', args: { Path: file } })).decision, 'force_ask');
     const permit = createAcpPermissionHandler({ sessionId: () => session, workspace: invocation.workspace,
       signal: controller.signal, isEnabled: () => true, maxCalls: 16, imageAccess: invocation.imageAccess,
-      mcpRun: { allowed: () => true, approvalAllowed: () => true } });
+      mcpRun: { allowed: () => true, approvalAllowed: () => platform === 'qq' } });
     assert.deepEqual(await permit({ sessionId: session, toolCall: { toolCallId: 'image', name: 'read_file', rawInput: { Path: file } },
       options: [{ kind: 'allow_once', optionId: 'once' }] }), { outcome: { outcome: 'selected', optionId: 'once' } });
     await fs.writeFile(file, 'tampered');
     assert.equal(await invocation.imageAccess.allows(file, session), false);
+    if (platform === 'wechat') {
+      assert.equal((await permit({ sessionId: session, toolCall: { toolCallId: 'tampered', name: 'read_file', rawInput: { Path: file } },
+        options: [{ kind: 'allow_once', optionId: 'once' }] })).outcome.outcome, 'cancelled');
+      assert.equal(listCliApprovals().length, 0);
+    }
   } finally {
     controller.abort(); client?.stop(); await invocation?.close();
     await fs.rm(workspace, { recursive: true, force: true });

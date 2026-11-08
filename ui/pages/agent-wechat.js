@@ -15,7 +15,7 @@ function renderAgentWechatExperiment(c = {}) {
 function renderAgentWechatSection(c = {}) {
   const w = c.agentWechat || {};
   return `<section data-independent-save id="wechat-page"><h3>微信接入 · Agent WeChat</h3>
-    <p>微信负责收发，消息进入现有 Agent、角色卡和模型。当前支持私聊文字，群聊暂未开放。</p>
+    <p>微信负责收发，消息进入现有 Agent、角色卡和模型。支持私聊文字、图片和协议可下载的表情包；动图抽帧查看，群聊暂未开放。</p>
     <p><button type="button" class="btn" id="wechat-toggle">${w.enabled ? '停用微信' : '启用微信'}</button>
     <button type="button" class="btn" id="wechat-refresh">刷新状态</button></p><p id="wechat-status" role="status">正在读取状态…</p>
     <h3>本地协议服务</h3><div class="field"><label for="wechat-endpoint">服务地址（仅本机）</label><input id="wechat-endpoint" value="${esc(w.endpoint || 'http://127.0.0.1:6174')}"></div>

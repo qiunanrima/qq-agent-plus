@@ -4,7 +4,8 @@ import { normalizeWechatConfig } from './config.js';
 
 export class AgentWechatApi {
   constructor(getConfig, fetchImpl = fetch) { this.getConfig = getConfig; this.fetch = fetchImpl; }
-  async request(route, { body, key, signal } = {}) {
+  async request(route, { body, key, signal, binary = false } = {}) {
+    if (binary && !/^\/media\/[A-Za-z0-9_-]{1,200}\/content$/.test(route)) throw new Error('微信媒体路径无效');
     const c = normalizeWechatConfig(this.getConfig().agentWechat);
     const stat = fs.lstatSync(c.tokenFile);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096 || (process.platform !== 'win32'
@@ -17,6 +18,16 @@ export class AgentWechatApi {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)])
     });
     if (!res.ok) throw new Error(`微信本地接口错误 (${res.status})`);
+    if (binary) {
+      const limit = 12 * 1024 * 1024, chunks = []; let size = 0;
+      if (Number(res.headers.get('content-length')) > limit) { await res.body?.cancel(); throw new Error('微信图片超过 12 MiB'); }
+      for await (const chunk of res.body) {
+        size += chunk.length;
+        if (size > limit) throw new Error('微信图片超过 12 MiB');
+        chunks.push(Buffer.from(chunk));
+      }
+      return Buffer.concat(chunks);
+    }
     return readJsonBounded(res, 2 * 1024 * 1024);
   }
 }

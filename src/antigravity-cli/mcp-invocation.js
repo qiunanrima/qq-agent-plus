@@ -38,7 +38,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         return { isError: true, content: '工具未获管理员批准或本轮已结束；未执行，不要自动重试。' };
       }
       const result = await mcpRun.execute(call.name, call.arguments, call.signal);
-      if (!result?.isError && config.nativeApproval) {
+      if (!result?.isError && useAcp) {
         return { ...result, content: await imageAccess.materialize(result?.content) };
       }
       return result;
@@ -52,6 +52,8 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
       .replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
         '文件和前台命令仅在用户明确要求且管理员逐次批准后使用；禁止浏览器、原生子代理和后台命令。被拒绝后停止，不得换工具绕过。') : template;
     if (useAcp) agentTemplate = agentTemplate.replace('inheritCustomizations: false', 'inheritCustomizations: true');
+    if (useAcp && !config.nativeApproval) agentTemplate = agentTemplate.replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
+      '禁止原生文件、命令和浏览器操作。唯一例外是 qq_run 看图工具返回的本轮图片指定路径，读取时由宿主核对内容；禁止读取其他文件或用命令查找图片。');
     if (mcpRun?.platform === 'wechat') agentTemplate = agentTemplate.replaceAll('普通 QQ 聊天', '当前微信私聊').replaceAll('使用 QQ Agent', '使用共享 Agent');
     await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     const eagerTools = Object.fromEntries(selected.filter(tool => tool.function?.name)

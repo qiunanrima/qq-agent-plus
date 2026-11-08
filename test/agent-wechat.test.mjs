@@ -6,6 +6,7 @@ import { test } from 'node:test';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-wechat-'));
 process.env.QQ_AGENT_DATA_DIR = root;
 const { AgentWechatChannel, wechatChatKey } = await import('../src/agent-wechat/runtime.js');
+const { readWechatImages } = await import('../src/agent-wechat/media.js');
 const { normalizeWechatConfig } = await import('../src/agent-wechat/config.js');
 const { handleWechatAdminCommand } = await import('../src/agent-wechat/routes.js');
 const { canRun, chatAllowed } = await import('../src/core/access.js');
@@ -65,6 +66,75 @@ test('only fresh live direct text enters the existing store and orchestrator; re
 test('mismatched message body cannot redirect the incoming conversation', async t => {
   const f = fixture(t, { enabled: true }); f.api.request = async () => ({ ...message, threadId: 'wxid_other' });
   await f.runtime.receive(event(), new AbortController().signal); assert.equal(f.incoming.length, 0);
+});
+
+test('WeChat images and stickers enter shared history without storing source XML or URLs', async t => {
+  const f = fixture(t, { enabled: true });
+  for (const type of [3, 47]) {
+    f.api.request = async () => ({ ...message, type, body: '<private-cdn-credentials>' });
+    await f.runtime.receive(event({ data: { ...event().data, messageId: `image-${type}` } }), new AbortController().signal);
+  }
+  const rows = f.store.recent(f.key);
+  assert.deepEqual(rows.map(r => r.text), ['[图片]', '[表情包]']);
+  assert.ok(rows.every(r => r.media[0].channel === 'wechat' && !r.media[0].url));
+  assert.equal(f.incoming.length, 2);
+});
+
+test('WeChat lookups return actual image input and never fetch other chats or untrusted content URLs', async t => {
+  const f = fixture(t, { enabled: true });
+  f.store.appendIncoming(f.key, { mid: 'image-3', text: '[图片]', media: [{ kind: 'image', channel: 'wechat' }] });
+  const bytes = Buffer.from('89504e470d0a1a0a', 'hex'); const seen = [];
+  f.api.request = async route => {
+    seen.push(route);
+    if (route === '/messages/image-3') return { ...message, type: 3 };
+    if (route === '/messages/image-3/media') return { items: [{ id: 'asset_test', accountId: 'test', messageId: 'image-3',
+      state: 'available', variant: 'standard', contentUrl: 'http://attacker.invalid/secret' }] };
+    if (route === '/media/asset_test/content') return bytes;
+    throw Error('Unexpected route');
+  };
+  const result = await readWechatImages(f.runtime, f.key, {}, { messageId: 'image-3' });
+  assert.equal(result.isError, false);
+  assert.equal(result.content[1].image_url.url, `data:image/png;base64,${bytes.toString('base64')}`);
+  assert.deepEqual(seen, ['/messages/image-3', '/messages/image-3/media', '/media/asset_test/content']);
+  seen.length = 0;
+  const wrong = await readWechatImages(f.runtime, f.key, {}, { messageId: 'other-chat-image' });
+  assert.equal(wrong.isError, true); assert.equal(seen.length, 0);
+  f.api.request = async route => route.endsWith('/media') ? { items: [{ accountId: 'other-account', messageId: 'image-3' }] } : { ...message, type: 3 };
+  assert.equal((await readWechatImages(f.runtime, f.key, {}, { messageId: 'image-3' })).isError, true);
+});
+
+test('unsupported WeChat sticker source is reported as unseen without falling back to OneBot', async t => {
+  const f = fixture(t, { enabled: true });
+  f.store.appendIncoming(f.key, { mid: 'sticker', text: '[表情包]', media: [{ kind: 'image', channel: 'wechat' }] });
+  f.api.request = async route => { if (route.endsWith('/media')) throw Error('sticker_source_not_allowed'); return { ...message, type: 47 }; };
+  const result = await readWechatImages(f.runtime, f.key, {}, { messageId: 'sticker' });
+  assert.equal(result.isError, true); assert.ok(result.content.every(p => p.type === 'text'));
+  assert.match(result.content[0].text, /不要声称已看见/);
+});
+
+test('uncached WeChat image polls one scoped download job and a lost submit is not automatically repeated', async t => {
+  const f = fixture(t, { enabled: true });
+  f.store.appendIncoming(f.key, { mid: 'uncached', text: '[图片]', media: [{ kind: 'image', channel: 'wechat' }] });
+  let submissions = 0, lookups = 0, polls = 0;
+  f.api.request = async route => {
+    if (route === '/messages/uncached') return { ...message, type: 3 };
+    if (route.endsWith('/media')) return { items: ++lookups > 2 ? [{ id: 'asset_test', accountId: 'test', messageId: 'uncached', state: 'available' }] : [] };
+    if (route.endsWith('/media-transfers')) { submissions++; return { id: 'download', kind: 'download', accountId: 'test', state: 'queued' }; }
+    if (route === '/jobs/download') { polls++; return { id: 'download', kind: 'download', accountId: 'test', state: 'completed' }; }
+    if (route === '/media/asset_test/content') return Buffer.from('89504e470d0a1a0a', 'hex');
+    throw Error('Unexpected route');
+  };
+  assert.equal((await readWechatImages(f.runtime, f.key, {}, { messageId: 'uncached' })).isError, false);
+  assert.equal(submissions, 1); assert.equal(polls, 1);
+  lookups = -100;
+  f.api.request = async route => {
+    if (route === '/messages/uncached') return { ...message, type: 3 };
+    if (route.endsWith('/media')) return { items: [] };
+    submissions++; throw Error('connection lost');
+  };
+  assert.equal((await readWechatImages(f.runtime, f.key, {}, { messageId: 'uncached' })).isError, true);
+  assert.equal((await readWechatImages(f.runtime, f.key, {}, { messageId: 'uncached' })).isError, true);
+  assert.equal(submissions, 2, 'the uncertain second download must not be submitted again');
 });
 test('private/all history sharing never crosses QQ and WeChat or two wxids', t => {
   const f = fixture(t);
