@@ -48,6 +48,19 @@ test('WeChat adapter uses ACP with native permission disabled and can continue a
   assert.equal(listCliApprovals().length, 0);
 });
 const options = [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' }];
+test('WeChat native approval can be enabled independently and still requires a single administrator decision', async t => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wechat-native-'));
+  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  let calls = 0;
+  const completion = antigravityCompletion({ config: { enabled: true, nativeApproval: false, workspace, timeoutMs: 5000 },
+    messages: [{ role: 'user', content: 'offline' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }],
+    mcpRun: { ...run, platform: 'wechat', approvalAllowed: category => category === 'native',
+      execute: async () => { calls++; return { content: 'host-probe-ok' }; } }
+  }, { verifyNative: async config => { assert.equal(config.nativeApproval, true); assert.equal(config.qqApproval, false); },
+    spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'mcp-probe'], opts) });
+  const entry = await waitPending(); assert.equal(calls, 0); decideCliApproval(entry.id, true);
+  const result = await completion; assert.equal(calls, 1); assert.equal(result.raw.driver, 'acp');
+});
 const fakeServers = [{ name: 'qq_run', command: 'offline-only', args: [], env: [] }];
 const params = (id = 'call') => ({ sessionId: 'session', toolCall: { toolCallId: id, name: 'run_command', kind: 'execute', rawInput: { CommandLine: 'echo offline' } }, options });
 async function waitPending() {

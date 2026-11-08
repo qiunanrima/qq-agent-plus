@@ -319,7 +319,7 @@
   },
   {
     "method": "POST",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/(retry-failed|resolve-held)$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/(retry-failed|resolve-held)$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -331,7 +331,7 @@
   },
   {
     "method": "GET",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/runtime-control$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/runtime-control$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -343,7 +343,7 @@
   },
   {
     "method": "PUT",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/runtime-control$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/runtime-control$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -355,7 +355,7 @@
   },
   {
     "method": "GET",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/messages$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/messages$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -367,7 +367,7 @@
   },
   {
     "method": "GET",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/export$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/export$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -385,7 +385,7 @@
   },
   {
     "method": "POST",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/wake$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/wake$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -397,7 +397,7 @@
   },
   {
     "method": "GET",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/thread$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/thread$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -409,7 +409,7 @@
   },
   {
     "method": "DELETE",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/thread$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/thread$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -421,7 +421,7 @@
   },
   {
     "method": "POST",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/test-send$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/test-send$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -433,7 +433,7 @@
   },
   {
     "method": "POST",
-    "path": "/^\\/api\\/chats\\/(private)_(wechat_[a-f0-9]{64})\\/mark-read$/",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/mark-read$/",
     "auth": true,
     "keyEndpoint": false
   },

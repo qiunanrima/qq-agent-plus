@@ -70,7 +70,7 @@ export function parseAntigravityResult(result, tools = [], toolChoice = 'auto') 
 /** One isolated process per model turn. No retries, session resume or shell. */
 export async function antigravityCompletion({ config, messages, tools, toolChoice = 'auto', signal, isEnabled = () => true, mcpRun }, { spawnProcess = spawn, verifyNative = verifyNativeHooks } = {}) {
   const cfg = normalizeAntigravityConfig(mcpRun?.platform === 'wechat'
-    ? { ...config, nativeApproval: false, qqApproval: false, maxConcurrent: 1 } : config);
+    ? { ...config, nativeApproval: mcpRun.approvalAllowed?.('native') === true, qqApproval: false, maxConcurrent: 1 } : config);
   signal?.throwIfAborted();
   if (!cfg.enabled || !isEnabled()) throw new Error('Antigravity CLI disabled');
   const chatKey = mcpRun?.chatKey;

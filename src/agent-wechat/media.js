@@ -23,7 +23,7 @@ export async function readWechatImages(runtime, key, ctx, args = {}) {
       if (!entry || !entry.media?.some(m => m.kind === 'image' && m.channel === 'wechat')) throw new Error('当前微信会话找不到该图片消息');
       const message = await request(`/messages/${encodeURIComponent(id)}`);
       if (message.threadId !== runtime.peer(key) || message.direction !== 'incoming' || ![3, 47].includes(message.type)
-        || message.senderId && message.senderId !== runtime.peer(key)) throw new Error('微信图片消息身份不匹配');
+        || message.senderId && message.senderId !== (entry.senderId || (key.startsWith('private:') ? runtime.peer(key) : ''))) throw new Error('微信图片消息身份不匹配');
       const assets = async () => {
         const page = await request(`/messages/${encodeURIComponent(id)}/media`);
         if (!Array.isArray(page.items) || page.items.some(a => a.accountId !== scope.accountId || a.messageId !== id)) throw new Error('微信媒体身份不匹配');

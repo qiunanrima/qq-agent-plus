@@ -1447,7 +1447,7 @@ export class ChatStore {
       return rows.reverse().map(entry);
     }
     if (scope === 'all') {
-      const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key NOT GLOB 'private:wechat_*' ${filters}
+      const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key NOT GLOB 'private:wechat_*' AND chat_key NOT GLOB 'group:wechat_*' ${filters}
         ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`)
         .all(Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
       return rows.reverse().map(entry);

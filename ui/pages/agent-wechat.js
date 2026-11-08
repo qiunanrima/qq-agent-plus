@@ -15,7 +15,7 @@ function renderAgentWechatExperiment(c = {}) {
 function renderAgentWechatSection(c = {}) {
   const w = c.agentWechat || {};
   return `<section data-independent-save id="wechat-page"><h3>微信接入 · Agent WeChat</h3>
-    <p>微信负责收发，消息进入现有 Agent、角色卡和模型。支持私聊文字、图片和协议可下载的表情包；动图抽帧查看，群聊暂未开放。</p>
+    <p>微信负责收发，消息进入现有 Agent、角色卡和模型。私聊和群聊使用独立白名单；支持文字、图片和协议可下载的表情包。</p>
     <p><button type="button" class="btn" id="wechat-toggle">${w.enabled ? '停用微信' : '启用微信'}</button>
     <button type="button" class="btn" id="wechat-refresh">刷新状态</button></p><p id="wechat-status" role="status">正在读取状态…</p>
     <h3>本地协议服务</h3><div class="field"><label for="wechat-endpoint">服务地址（仅本机）</label><input id="wechat-endpoint" value="${esc(w.endpoint || 'http://127.0.0.1:6174')}"></div>
@@ -24,6 +24,10 @@ function renderAgentWechatSection(c = {}) {
     <h3>微信私聊白名单</h3><p>每行一个 wxid；空白表示全部禁止。QQ 白名单独立生效。未绑定 QQ 的联系人仍按 wxid 独立处理。</p>
     <p><button type="button" class="btn" id="wechat-pick-contacts">从微信联系人选择</button></p>
     <div class="field"><label for="wechat-allow">允许的 wxid</label><textarea id="wechat-allow" rows="5">${esc((w.allow || []).join('\n'))}</textarea></div>
+    <h3>微信群白名单</h3><p>每行一个群 ID（数字@chatroom）；空白禁止全部群聊。只启用明确勾选的群。</p>
+    <p><button type="button" class="btn" id="wechat-pick-groups">从微信群选择</button></p>
+    <div class="field"><label for="wechat-groups">允许的群 ID</label><textarea id="wechat-groups" rows="4">${esc((w.groups || []).join('\n'))}</textarea></div>
+    <p><label><input type="checkbox" id="wechat-native-approval" ${w.nativeApproval ? 'checked' : ''}>允许微信请求原生文件、前台命令工具（管理员每次审批）</label></p>
     <h3>身份绑定 · wxid → QQ</h3><p>每行填写「wxid QQ号」。绑定后关联该 QQ 的人物记忆，微信上下文与消息存档单独保存。绑定不授予管理权限，也不会自动加入白名单。</p>
     <div class="field"><label for="wechat-bindings">身份对应关系</label><textarea id="wechat-bindings" rows="5">${esc(Object.entries(w.bindings || {}).map(([id, qq]) => `${id} ${qq}`).join('\n'))}</textarea></div>
     <p>QQ 管理员私聊也可操作：<code>绑定微信 wxid QQ号</code>、<code>解绑微信 wxid</code>、<code>微信白名单 添加 wxid</code>、<code>微信白名单 移除 wxid</code>。发送 <code>微信绑定</code> 查看配置。</p>
@@ -36,8 +40,8 @@ async function refreshAgentWechat() {
   if ($('#wechat-status') !== node) return;
   node.textContent = `${s.enabled ? '已启用' : '已停用'} · ${s.running ? '接入运行中' : '接入未运行'} · ${s.online ? '微信已连接' : '尚未确认微信连接'}${s.error ? ` · ${s.error}` : ''}`;
 }
-async function openWechatContactPicker() {
-  const input = $('#wechat-allow'); if (!input) return;
+async function openWechatContactPicker(kind = 'contacts') {
+  const input = $(kind === 'groups' ? '#wechat-groups' : '#wechat-allow'); if (!input) return;
   const selected = new Set(input.value.split(/\s+/).filter(Boolean));
   const contacts = new Map();
   const overlay = document.createElement('div');
@@ -52,6 +56,11 @@ async function openWechatContactPicker() {
     <button type="button" class="btn" id="wechat-contact-cancel">取消</button></div></div>`;
   document.body.appendChild(overlay);
   const find = selector => overlay.querySelector(selector);
+  if (kind === 'groups') {
+    find('[role="dialog"]').setAttribute('aria-label', '选择微信群');
+    find('.modal-head').textContent = '选择微信群';
+    find('#wechat-contact-search').placeholder = '搜索群名称或群 ID';
+  }
   let cursor = '', loaded = false, busy = false, partial = false;
   const close = () => { overlay.remove(); $('#wechat-pick-contacts')?.focus(); };
   const render = () => {
@@ -75,7 +84,7 @@ async function openWechatContactPicker() {
     busy = true; const button = find('#wechat-contact-more'); button.disabled = true;
     find('#wechat-contact-status').textContent = '正在读取微信联系人…';
     try {
-      const data = await api(`/api/agent-wechat/contacts${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+      const data = await api(`/api/agent-wechat/contacts?kind=${kind}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
       if (!overlay.isConnected) return;
       for (const row of data.items || []) contacts.set(row.wxid, row);
       loaded = true; partial ||= data.partial; cursor = data.nextCursor || '';
@@ -91,7 +100,7 @@ async function openWechatContactPicker() {
   find('#wechat-contact-more').addEventListener('click', load);
   find('#wechat-contact-cancel').addEventListener('click', close);
   find('#wechat-contact-apply').addEventListener('click', () => {
-    if ($('#wechat-allow') === input) {
+    if ($(kind === 'groups' ? '#wechat-groups' : '#wechat-allow') === input) {
       input.value = [...selected].join('\n');
       $('#wechat-result').textContent = `已选择 ${selected.size} 位联系人，请保存微信设置后生效。`;
     }
@@ -111,7 +120,8 @@ function bindAgentWechatSettings() {
   };
   bind('#wechat-open', async () => { state.settingsSection = 'agent-wechat'; await loadSettings(); });
   bind('#wechat-refresh', refreshAgentWechat);
-  bind('#wechat-pick-contacts', openWechatContactPicker);
+  bind('#wechat-pick-contacts', () => openWechatContactPicker());
+  bind('#wechat-pick-groups', () => openWechatContactPicker('groups'));
   bind('#wechat-toggle', async () => {
     const enabled = !state.config?.agentWechat?.enabled;
     if (enabled && !await askForConfirmation('启用微信接入？仅微信白名单中的私聊可触发现有 Agent 回复。')) return;
@@ -129,7 +139,8 @@ function bindAgentWechatSettings() {
     }
     if (!await askForConfirmation('保存微信连接、独立白名单和身份绑定？请确认 wxid 与 QQ 属于同一个人。')) return;
     await save({ endpoint: $('#wechat-endpoint').value.trim(), accountId: $('#wechat-account').value.trim(), tokenFile: $('#wechat-token-file').value.trim(),
-      allow: $('#wechat-allow').value.split(/\s+/).filter(Boolean), bindings });
+      allow: $('#wechat-allow').value.split(/\s+/).filter(Boolean), groups: $('#wechat-groups').value.split(/\s+/).filter(Boolean),
+      nativeApproval: $('#wechat-native-approval').checked, bindings });
   });
   if ($('#wechat-status')) void refreshAgentWechat().catch(() => { const n = $('#wechat-status'); if (n) n.textContent = '微信状态读取失败'; });
 }

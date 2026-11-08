@@ -6,6 +6,16 @@ import { test } from 'node:test';
 import { Hippocampus, memoryDay } from '../src/memory/hippocampus.js';
 
 const persona = { botName: '鱼鱼', roleText: '喜欢聊天' };
+test('WeChat summaries retain wxid participants and never leak into QQ or another WeChat chat', t => {
+  const f = fixture(t), chatKey = 'group:wechat_' + 'a'.repeat(64);
+  f.memory.capture({ chatKey, persona, session: { id: 'wx-summary', episodeSummary: '微信群里讨论茶' },
+    triggerEntries: [{ eventKind: 'message', senderId: 'wxid_alice', text: '茶' }] });
+  const [row] = f.memory.episodes();
+  assert.equal(JSON.parse(row.participants)[0].id, 'wxid_alice');
+  assert.equal(f.memory.visible(row, chatKey), true);
+  assert.equal(f.memory.visible(row, 'group:12345'), false);
+  assert.equal(f.memory.visible(row, 'private:wechat_' + 'b'.repeat(64)), false);
+});
 const at = (s) => Date.parse(`${s}+08:00`);
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-hippocampus-'));

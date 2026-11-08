@@ -2599,7 +2599,7 @@ export class Orchestrator {
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
       bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
-      if (channel) { mcpRun.platform = 'wechat'; mcpRun.approvalAllowed = () => false; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
+      if (channel) { mcpRun.platform = 'wechat'; mcpRun.approvalAllowed = category => category === 'native' && channel.allowed(chatKey) && channel.config().nativeApproval === true; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,

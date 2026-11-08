@@ -38,6 +38,23 @@ const event = (overrides = {}) => ({ kind: 'message.committed', createdAt: new D
   data: { origin: 'live', direction: 'incoming', threadId: 'wxid_test', messageId: 'msg-1' }, ...overrides });
 const message = { threadId: 'wxid_test', senderId: 'wxid_test', direction: 'incoming', type: 1, body: '你好' };
 
+test('WeChat group whitelist stays separate from DMs and QQ, preserving sender identity', async t => {
+  const f = fixture(t, { enabled: true, groups: ['123@chatroom'], bindings: { wxid_test: '12345' } });
+  f.api.request = async () => ({ ...message, threadId: '123@chatroom', senderName: '群成员' });
+  const data = { ...event().data, threadId: '123@chatroom' };
+  await f.runtime.receive(event({ data }), new AbortController().signal);
+  const key = wechatChatKey('test', '123@chatroom');
+  assert.ok(key.startsWith('group:wechat_'));
+  assert.equal(f.store.recent(key)[0].senderId, 'wxid_test');
+  assert.equal(f.runtime.linkedQq(key), '', 'a group must never inherit one member identity');
+  assert.equal(f.runtime.allowed(wechatChatKey('test', '999@chatroom')), false);
+  assert.equal(f.runtime.allowed('group:123'), false);
+  assert.deepEqual(f.store.recent('private:12345', { scope: 'all', limit: 20 }), []);
+  f.cfg.agentWechat.groups = [];
+  assert.equal(f.runtime.allowed(key), false);
+  assert.equal(f.cfg.agentWechat.bindings.wxid_test, '12345');
+});
+
 test('default disabled creates no files, timers or network; QQ policy unchanged', async t => {
   const f = fixture(t); await f.runtime.sync();
   assert.equal(fs.existsSync(path.join(f.dir, 'agent-wechat')), false);
@@ -270,7 +287,7 @@ test('console routes reuse shared DM handlers for WeChat without accepting fake 
   assert.equal(wx.length, 1);
   assert.equal((await wx[0].handler({}, {}, wx[0].pattern.exec(`/api/chats/private_${id}/wake`))).status, 202);
   assert.deepEqual(awakened, [`private:${id}`]);
-  assert.equal(match(`/api/chats/group_${id}/wake`).length, 0);
+  assert.equal(match(`/api/chats/group_${id}/wake`).length, 1);
   assert.equal(match('/api/chats/private_fakeQQ/wake').length, 0);
   assert.equal(match('/api/chats/private_12345/wake').length, 1);
 });

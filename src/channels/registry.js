@@ -1,6 +1,6 @@
 // Channel capabilities are registered by adapters, never inferred from a QQ ID.
 const adapters = new Map();
-export const isWechatChat = key => /^private:wechat_[a-f0-9]{64}$/.test(String(key));
+export const isWechatChat = key => /^(?:private|group):wechat_[a-f0-9]{64}$/.test(String(key));
 export function channelForChat(key) {
   if (!isWechatChat(key)) return null;
   return adapters.get('wechat') || null;

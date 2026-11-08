@@ -51,7 +51,7 @@ export class Hippocampus {
     } finally { db.close(); }
   }
   capture({ chatKey, session, triggerEntries = [], persona }) {
-    if (!this.enabled() || !/^(group|private):\d+$/.test(chatKey)) return;
+    if (!this.enabled() || !/^(group|private):(?:\d+|wechat_[a-f0-9]{64})$/.test(chatKey)) return;
     const messages = triggerEntries.filter((m) => m.eventKind === 'message' && !m.self);
     if (!messages.length) return;
     // finish 摘要由主对话产生；缺失时仅摘录真实消息，不再额外调用模型。
@@ -68,7 +68,7 @@ export class Hippocampus {
           AND closed=0 AND updated>? ORDER BY updated DESC LIMIT 1`).get(key, chatKey, day, now - 180000);
         const id = old?.id || crypto.randomUUID();
         const people = new Map((old ? JSON.parse(old.participants) : []).map((p) => [p.id, p]));
-        for (const m of messages) if (/^\d{1,15}$/.test(String(m.senderId))) {
+        for (const m of messages) if (/^\d{1,15}$/.test(String(m.senderId)) || chatKey.includes(':wechat_') && /^wxid_[A-Za-z0-9_-]{1,120}$/.test(String(m.senderId))) {
           people.set(String(m.senderId), { id: String(m.senderId), name: clean(m.senderName || m.senderId, 40) });
         }
         // 保留周期内前情与最新结果，避免每轮把摘要直接覆盖成最后一句。
@@ -84,6 +84,8 @@ export class Hippocampus {
   }
   visible(row, chatKey) {
     const sources = row.chat ? [row.chat] : JSON.parse(row.sources);
+    if (sources.some(source => source.includes(':wechat_') && source !== chatKey)) return false;
+    if (chatKey.includes(':wechat_') && sources.some(source => !source.includes(':wechat_'))) return false;
     const policy = memoryVisibilityOf(this.getConfig());
     // 合并正文可能包含任一来源的事实；只包含当前会话并不能证明整条可见。
     return sources.length > 0 && sources.every((source) => impressionVisible({ sourceChatKeys: [source] }, chatKey, policy));
@@ -213,9 +215,10 @@ export class Hippocampus {
           if (!['person', 'skill'].includes(c.kind) || !Array.isArray(c.episodeIds) || !c.episodeIds.length) throw new Error('长期卡片缺少类型或来源（人格成长必须经过独立核验）');
           const sources = c.episodeIds.map((id) => sourceById.get(String(id)));
           if (sources.some((r) => !r) || new Set(sources.map((r) => r.persona)).size !== 1) throw new Error('长期卡片来源无效');
-          const subject = clean(c.subject, 15), title = c.kind === 'person' ? '人物印象' : clean(c.title, 60), content = clean(c.content, c.kind === 'person' ? 130 : 500);
+          const subject = clean(c.subject, 128), title = c.kind === 'person' ? '人物印象' : clean(c.title, 60), content = clean(c.content, c.kind === 'person' ? 130 : 500);
           if (!title || !content || (c.kind === 'person'
-            ? !/^\d+$/.test(subject) || !sources.some((r) => JSON.parse(r.participants).some((p) => p.id === subject))
+            ? !(/^\d{1,15}$/.test(subject) || /^wxid_[A-Za-z0-9_-]{1,120}$/.test(subject) && sources.every(r => r.chat.includes(':wechat_')))
+              || !sources.some((r) => JSON.parse(r.participants).some((p) => p.id === subject))
             : subject !== 'self')) throw new Error('长期卡片主题无效');
           return { persona: sources[0].persona, kind: c.kind, subject, title, content, sources: [...new Set(sources.map((r) => r.chat))] };
         });

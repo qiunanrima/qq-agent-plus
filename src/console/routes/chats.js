@@ -28,7 +28,7 @@ export function registerChatRoutes(router, deps = {}) {
   // Preserve QQ routes exactly; expose the same handlers for namespaced WeChat DMs.
   const addConversationRoute = (method, pattern, handler) => {
     router.add(method, pattern, handler);
-    const wx = new RegExp(pattern.source.replace('(group|private)_(\\d+)', '(private)_(wechat_[a-f0-9]{64})'), pattern.flags);
+    const wx = new RegExp(pattern.source.replace('(group|private)_(\\d+)', '(group|private)_(wechat_[a-f0-9]{64})'), pattern.flags);
     router.add(method, wx, handler);
   };
 
