@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AgentWechatApi } from './api.js';
-import { normalizeWechatConfig, validWxid, validWechatGroup } from './config.js';
+import { normalizeWechatConfig, validWxid, validWechatGroup, wechatBindingContext } from './config.js';
 import { registerChannel, isWechatChat } from '../channels/registry.js';
 import { memoryDay, personaKey } from '../memory/hippocampus.js';
 import { COMMON_CHAT_TOOLS } from '../channels/tool-policy.js';
@@ -22,6 +22,7 @@ export class AgentWechatChannel {
     this.state = null; this.controller = null; this.task = null; this.error = ''; this.online = false;
     this.sentCounts = new Map();
     this.mediaJobs = new Map();
+    this.nameCache = new Map();
     this.unregister = null;
   }
   attach() { this.unregister ||= registerChannel('wechat', this); }
@@ -56,6 +57,31 @@ export class AgentWechatChannel {
   peer(key) { const c = this.config(); return [...c.allow, ...c.groups].find(id => wechatChatKey(c.accountId, id) === key) || ''; }
   allowed(key) { try { return this.config().enabled && !!this.peer(key); } catch { return false; } }
   linkedQq(key) { const id = this.peer(key); return id ? this.config().bindings[id] || '' : ''; }
+  bindingContext(key, participantIds) { return wechatBindingContext(this.config(), { chatKey: key, wechatPeer: this.peer(key), participantIds }); }
+  async members(thread, signal) {
+    const c = this.config(), scope = `${c.endpoint}:${c.accountId}:${thread}`;
+    const cached = this.nameCache.get(scope);
+    if (cached && cached.expires > Date.now()) return cached.rows;
+    const rows = [], seen = new Set(); let cursor = '';
+    const deadline = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(5000)]);
+    try {
+      for (let page = 0; page < 20; page++) {
+        const data = await this.api.request(`${validWechatGroup(thread) ? `/groups/${encodeURIComponent(thread)}/members` : '/contacts'}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal: deadline });
+        if (!Array.isArray(data.items)) break;
+        for (const row of data.items) {
+          const id = row.username || row.id;
+          if (!validWxid(id) || seen.has(id)) continue;
+          seen.add(id); rows.push({ id, name: sanitizeUserText(String(row.roomDisplayName || row.remark || row.nickname || row.displayName || row.mentionName || id)).slice(0, 100) });
+        }
+        if (!data.nextCursor || data.nextCursor === cursor) break;
+        cursor = data.nextCursor;
+      }
+    } catch { /* Names are optional; never interrupt message receipt. */ }
+    if (signal?.aborted) signal.throwIfAborted();
+    if (this.nameCache.size >= 100) this.nameCache.delete(this.nameCache.keys().next().value);
+    this.nameCache.set(scope, { rows: rows.length ? rows : cached?.rows || [], expires: Date.now() + (rows.length ? 300000 : 30000) });
+    return this.nameCache.get(scope).rows;
+  }
   memoryFor(key, memory) {
     const qq = this.linkedQq(key);
     // Only the bound identity's impressions are shared. Handoff/history stays local.
@@ -85,8 +111,40 @@ export class AgentWechatChannel {
       .filter(row => String(row.userId) === target()).map(({ content, origin, createdAt }) => ({ content, origin, createdAt }));
     const personCards = () => (memory.hippocampus?.cards?.({ persona, chatKey: source() }) || [])
       .filter(row => row.kind === 'skill' || String(row.subject) === target());
-    return definitions.filter(d => COMMON_CHAT_TOOLS.has(d.name)).map(def => {
-      if (def.name === 'get_message_images') return { ...def, description: '查看当前微信私聊中的图片或表情包。用聊天记录中的完整微信消息 ID；不可调用 QQ、OneBot 或任意文件读取。',
+    return definitions.filter(d => COMMON_CHAT_TOOLS.has(d.name) || ['list_stickers', 'get_sticker_image', 'send_sticker', 'get_active_members'].includes(d.name)).map(def => {
+      if (def.name === 'get_active_members') return { ...def, description: '查看当前微信会话成员的 wxid 和群名片/昵称，不查询 QQ。', execute: async ctx => {
+        if (!this.allowed(key)) return { isError: true, content: '微信会话已停止' };
+        const rows = await this.members(this.peer(key), ctx.signal);
+        return { content: JSON.stringify({ members: rows.filter(row => key.startsWith('group:') || row.id === this.peer(key))
+          .map(row => ({ ...row, linkedQq: this.config().bindings[row.id] || '' })) }) };
+      } };
+      if (['list_stickers', 'get_sticker_image', 'send_sticker'].includes(def.name)) return { ...def,
+        description: def.name === 'list_stickers' ? '搜索可用于微信的本地表情图片；不访问 QQ。'
+          : def.name === 'get_sticker_image' ? '查看本地表情图片。' : '将本地表情作为普通图片发送到当前微信会话；不是原生微信表情，不支持引用或@。',
+        execute: async (ctx, args = {}) => {
+          try {
+            if (!this.allowed(key) || ctx.signal?.aborted) throw new Error('微信会话已停止');
+            if (def.name === 'list_stickers') {
+              const query = String(args.query || '').toLowerCase();
+              const rows = (ctx.stickers?.entries || []).filter(row => row.localFile && `${row.id} ${row.desc || ''} ${row.localNote || ''}`.toLowerCase().includes(query));
+              return { content: JSON.stringify({ stickers: rows.slice(0, Math.min(100, Math.max(1, Number(args.limit) || 24))).map(row => ({ id: row.id, desc: row.desc, localNote: row.localNote })), total: rows.length }) };
+            }
+            const image = ctx.stickers?.readImage(args.stickerId);
+            if (!image?.buffer?.length || image.buffer.length > 12 * 1024 * 1024) throw new Error('该表情没有可用的本地图片，或超过 12 MiB；未调用 QQ');
+            if (def.name === 'get_sticker_image') {
+              if (image.buffer.length > 4 * 1024 * 1024) throw new Error('本地表情超过模型看图大小限制');
+              return { content: [{ type: 'image_url', image_url: { url: `data:${image.contentType};base64,${image.buffer.toString('base64')}` } }] };
+            }
+            if (args.replyToMessageId || args.atUserId) throw new Error('微信图片暂不支持引用或@，未发送');
+            const source = await this.api.request('/uploads', { upload: { bytes: image.buffer, mime: image.contentType }, signal: ctx.signal });
+            if (typeof source.id !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(source.id)) throw new Error('微信图片上传返回无效，未发送');
+            const result = await this.sendTextBatch(key, ['[表情图片]'], { runId: ctx.session.leaseId, signal: ctx.signal, imageSourceId: source.id });
+            ctx.session.sent.push(...result.sent.map(row => ({ ...row, type: 'image' })));
+            ctx.emit?.('session-update', ctx.session.id);
+            return { content: JSON.stringify({ sent: result.sent.length, note: '已作为普通图片发送；不是原生微信表情。' }) };
+          } catch (error) { return { isError: true, reportIncident: false, content: error.message }; }
+        } };
+      if (def.name === 'get_message_images') return { ...def, description: '查看当前微信会话中的图片或表情包。用聊天记录中的完整微信消息 ID；不可调用 QQ、OneBot 或任意文件读取。',
         parameters: { type: 'object', properties: { messageId: { type: 'string' }, messageIds: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } } }, anyOf: [{ required: ['messageId'] }, { required: ['messageIds'] }] },
         execute: (ctx, args) => readWechatImages(this, key, ctx, args) };
       if (def.name === 'send_message') return { ...def, description: '向当前微信私聊发送文字；messages 为字符串或字符串数组，不可指定其他目标。',
@@ -94,6 +152,19 @@ export class AgentWechatChannel {
       if (!['memory_query', 'person_memory_lookup', 'memory_card_list', 'memory_card_lookup', 'hippocampus_lookup', 'personality_lookup'].includes(def.name)) return def;
       return { ...def, execute: async (ctx, args = {}) => {
         if (!this.allowed(key) || ctx.signal?.aborted) return { isError: true, reportIncident: false, content: '当前微信会话已停止。' };
+        if (key.startsWith('group:') && ['memory_query', 'person_memory_lookup'].includes(def.name)) {
+          const participants = [...new Set(this.store.recent(key, { limit: 200 }).filter(row => !row.self).map(row => row.senderId))];
+          const bindings = this.config().bindings;
+          const requested = args.userId == null ? participants.at(-1) : String(args.userId);
+          const wxid = participants.find(id => id === requested || bindings[id] === requested);
+          if (!wxid) return { isError: true, reportIncident: false, content: '只能查询当前微信群记录中出现的成员；请传该成员 wxid 或已绑定 QQ。' };
+          const qq = bindings[wxid];
+          const rows = qq ? (memory.query?.(`private:${qq}`, 'memberImpression')?.memberImpression || [])
+            .filter(row => String(row.userId) === qq && (this.config().sharePrivateMemoryInGroups || row.sourceChatKeys?.length
+              && row.sourceChatKeys.every(source => source === key || /^group:\d+$/.test(source)))) : [];
+          return { content: JSON.stringify({ userId: wxid, linkedQq: qq || '', memberImpression: rows.slice(0, 20).map(({ content, origin }) => ({ content, origin })),
+            note: this.config().sharePrivateMemoryInGroups ? '已允许读取绑定成员的私聊来源人物记忆；结合场合决定是否说出，不包含完整私聊记录。' : '仅当前成员的群内可见印象，不读取私聊记录。' }) };
+        }
         if (args.userId != null && String(args.userId) !== target() && String(args.userId) !== this.peer(key))
           return { isError: true, reportIncident: false, content: '只能查询当前微信联系人及其明确绑定的 QQ 人物记忆。' };
         let value;
@@ -191,8 +262,10 @@ export class AgentWechatChannel {
     signal.throwIfAborted();
     if (!this.config().enabled || !(validWechatGroup(d.threadId) ? this.config().groups : this.config().allow).includes(d.threadId)) return;
     const chatKey = wechatChatKey(c.accountId, d.threadId);
+    const names = await this.members(d.threadId, signal);
+    if (!this.allowed(chatKey)) return;
     const row = this.store.appendIncoming(chatKey, { mid: d.messageId, ts: Date.parse(event.createdAt),
-      senderId: message.senderId || d.threadId, senderName: message.senderName || message.senderId || d.threadId,
+      senderId: message.senderId || d.threadId, senderName: names.find(row => row.id === (message.senderId || d.threadId))?.name || message.senderName || message.senderId || d.threadId,
       text: message.type === 1 ? sanitizeUserText(message.body).slice(0, 8000) : message.type === 47 ? '[表情包]' : '[图片]',
       media: message.type === 1 ? [] : [{ kind: 'image', channel: 'wechat', messageId: d.messageId }], channel: 'wechat' });
     if (!row.duplicate) {
@@ -213,10 +286,21 @@ export class AgentWechatChannel {
     for (const text of list) {
       options.signal?.throwIfAborted();
       if (!this.allowed(chatKey)) throw new Error('微信会话已停用');
-      const id = this.store.beginSend(chatKey, options.runId, { type: 'text', text, channel: 'wechat' });
+      const id = this.store.beginSend(chatKey, options.runId, { type: options.imageSourceId ? 'image' : 'text', text, channel: 'wechat' });
       let result;
       try {
-        result = await this.api.request('/sends', { body: { kind: 'text', threadId: wxid, text }, key: `qq-agent-wechat-${id}`, signal: options.signal });
+        result = await this.api.request('/sends', { body: options.imageSourceId ? { kind: 'image', threadId: wxid, sourceId: options.imageSourceId } : { kind: 'text', threadId: wxid, text }, key: `qq-agent-wechat-${id}`, signal: options.signal });
+        if (options.imageSourceId) {
+          const jobId = result.id;
+          for (let i = 0; !['completed', 'failed', 'cancelled', 'unknown', 'needs_review'].includes(result.state); i++) {
+            if (i >= 30 || typeof jobId !== 'string' || result.id !== jobId) throw new Error('微信图片发送结果未知');
+            await delay(500, null, { signal: options.signal });
+            result = await this.api.request(`/jobs/${encodeURIComponent(jobId)}`, { signal: options.signal });
+          }
+          if (result.id !== jobId || result.accountId !== this.config().accountId || result.threadId !== wxid
+            || result.state !== 'completed' || !result.serverMessageId) throw new Error('微信图片发送未确认');
+          result = { state: 'accepted', destination: wxid, serverId: result.serverMessageId };
+        }
         for (let i = 0; ['queued', 'submitting', 'sending'].includes(result.state); i++) {
           if (i >= 20 || typeof result.id !== 'string') throw new Error('微信发送结果未知');
           await delay(500, null, { signal: options.signal });

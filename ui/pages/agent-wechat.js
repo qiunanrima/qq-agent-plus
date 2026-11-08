@@ -30,6 +30,8 @@ function renderAgentWechatSection(c = {}) {
     <p><label><input type="checkbox" id="wechat-native-approval" ${w.nativeApproval ? 'checked' : ''}>允许微信请求原生文件、前台命令工具（管理员每次审批）</label></p>
     <h3>身份绑定 · wxid → QQ</h3><p>每行填写「wxid QQ号」。绑定后关联该 QQ 的人物记忆，微信上下文与消息存档单独保存。绑定不授予管理权限，也不会自动加入白名单。</p>
     <div class="field"><label for="wechat-bindings">身份对应关系</label><textarea id="wechat-bindings" rows="5">${esc(Object.entries(w.bindings || {}).map(([id, qq]) => `${id} ${qq}`).join('\n'))}</textarea></div>
+    <p><label><input type="checkbox" id="wechat-share-private-memory" ${w.sharePrivateMemoryInGroups ? 'checked' : ''}>QQ 群及微信群可读取绑定成员另一平台的私聊来源记忆</label></p>
+    <p>开启后由 Agent 根据场合决定是否提及。绑定后的私聊支持双向查摘要及人物记忆，不读取完整聊天记录；绑定关系会告知两边的 Agent。</p>
     <p>QQ 管理员私聊也可操作：<code>绑定微信 wxid QQ号</code>、<code>解绑微信 wxid</code>、<code>微信白名单 添加 wxid</code>、<code>微信白名单 移除 wxid</code>。发送 <code>微信绑定</code> 查看配置。</p>
     <p><button type="button" class="btn" id="wechat-save">确认保存微信设置</button></p><p id="wechat-result" role="status"></p>
     <p>停用保留绑定与数据。发送结果未知时会停止当前会话；可在异常处理和会话详情核对。</p></section>`;
@@ -140,7 +142,7 @@ function bindAgentWechatSettings() {
     if (!await askForConfirmation('保存微信连接、独立白名单和身份绑定？请确认 wxid 与 QQ 属于同一个人。')) return;
     await save({ endpoint: $('#wechat-endpoint').value.trim(), accountId: $('#wechat-account').value.trim(), tokenFile: $('#wechat-token-file').value.trim(),
       allow: $('#wechat-allow').value.split(/\s+/).filter(Boolean), groups: $('#wechat-groups').value.split(/\s+/).filter(Boolean),
-      nativeApproval: $('#wechat-native-approval').checked, bindings });
+      nativeApproval: $('#wechat-native-approval').checked, sharePrivateMemoryInGroups: $('#wechat-share-private-memory').checked, bindings });
   });
   if ($('#wechat-status')) void refreshAgentWechat().catch(() => { const n = $('#wechat-status'); if (n) n.textContent = '微信状态读取失败'; });
 }

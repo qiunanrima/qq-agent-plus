@@ -4,7 +4,10 @@ import { normalizeWechatConfig } from './config.js';
 
 export class AgentWechatApi {
   constructor(getConfig, fetchImpl = fetch) { this.getConfig = getConfig; this.fetch = fetchImpl; }
-  async request(route, { body, key, signal, binary = false } = {}) {
+  async request(route, { body, key, signal, binary = false, upload } = {}) {
+    if (upload && (route !== '/uploads' || !Buffer.isBuffer(upload.bytes) || !upload.bytes.length || upload.bytes.length > 12 * 1024 * 1024)) throw new Error('微信上传图片无效或超过 12 MiB');
+    let form;
+    if (upload) { form = new FormData(); form.append('file', new Blob([upload.bytes], { type: upload.mime }), 'sticker-image'); }
     if (binary && !/^\/media\/[A-Za-z0-9_-]{1,200}\/content$/.test(route)) throw new Error('微信媒体路径无效');
     const c = normalizeWechatConfig(this.getConfig().agentWechat);
     const stat = fs.lstatSync(c.tokenFile);
@@ -13,9 +16,9 @@ export class AgentWechatApi {
     const token = fs.readFileSync(c.tokenFile, 'utf8').trim();
     if (!/^[A-Za-z0-9_+/=-]{24,1024}$/.test(token)) throw new Error('微信令牌文件无效');
     const res = await this.fetch(`${c.endpoint}/v1/accounts/${encodeURIComponent(c.accountId)}${route}`, {
-      method: body === undefined ? 'GET' : 'POST', redirect: 'error',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)])
+      method: body === undefined && !form ? 'GET' : 'POST', redirect: 'error',
+      headers: { authorization: `Bearer ${token}`, ...(!form ? { 'content-type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}) },
+      ...(form ? { body: form } : body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)])
     });
     if (!res.ok) throw new Error(`微信本地接口错误 (${res.status})`);
     if (binary) {

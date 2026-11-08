@@ -22,6 +22,7 @@ export async function readWechatImages(runtime, key, ctx, args = {}) {
       const entry = runtime.store.findByMid(key, id);
       if (!entry || !entry.media?.some(m => m.kind === 'image' && m.channel === 'wechat')) throw new Error('当前微信会话找不到该图片消息');
       const message = await request(`/messages/${encodeURIComponent(id)}`);
+      if (message.recall || message.type === 10000) throw Object.assign(new Error('微信消息已撤回或已变为系统通知，原图片不可读取。'), { publicReason: true });
       if (message.threadId !== runtime.peer(key) || message.direction !== 'incoming' || ![3, 47].includes(message.type)
         || message.senderId && message.senderId !== (entry.senderId || (key.startsWith('private:') ? runtime.peer(key) : ''))) throw new Error('微信图片消息身份不匹配');
       const assets = async () => {
@@ -64,10 +65,11 @@ export async function readWechatImages(runtime, key, ctx, args = {}) {
       runtime.mediaJobs.delete(id);
       content.push({ type: 'text', text: `微信消息 ${id} 的图片${animated ? '：动图按时间抽成 2×2 四帧，顺序左上、右上、左下、右下；黑格为填充' : ''}。判断情绪和含义后回复，不要编造未看见的内容。` },
         { type: 'image_url', image_url: { url: `data:${mime};base64,${prepared.toString('base64')}` } });
-    } catch {
+    } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
       isError = true;
-      content.push({ type: 'text', text: '微信图片或表情包未能读取（可能尚未下载或协议不支持该来源）；不要声称已看见，也不要换用 QQ 或原生文件工具查找。' });
+      content.push({ type: 'text', text: error.publicReason ? error.message + ' 不要声称已看见；如已如实回复可用 errorAcknowledged:true 结束。'
+        : '微信图片或表情包未能读取（可能尚未下载或协议不支持该来源）；不要声称已看见，也不要换用 QQ 或原生文件工具查找。' });
     }
   }
   return { content, isError: isError && !content.some(part => part.type === 'image_url') };

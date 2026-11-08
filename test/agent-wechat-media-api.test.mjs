@@ -4,6 +4,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AgentWechatApi } from '../src/agent-wechat/api.js';
+test('owned image uploads use multipart without exposing arbitrary paths or URLs', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wechat-upload-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tokenFile = path.join(dir, 'token'); fs.writeFileSync(tokenFile, 'x'.repeat(40), { mode: 0o600 });
+  const api = new AgentWechatApi(() => ({ agentWechat: { accountId: 'test', tokenFile } }), async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:6174/v1/accounts/test/uploads');
+    assert.equal(options.method, 'POST'); assert.equal(options.headers['content-type'], undefined);
+    assert.equal(options.body.get('file').size, 3); return Response.json({ id: 'source_1' });
+  });
+  assert.equal((await api.request('/uploads', { upload: { bytes: Buffer.from('abc'), mime: 'image/png' } })).id, 'source_1');
+  await assert.rejects(api.request('/sends', { upload: { bytes: Buffer.from('abc') } }), /上传图片无效/);
+});
 
 test('media bytes use only the configured local account endpoint, private bearer and bounded response', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wechat-media-api-'));

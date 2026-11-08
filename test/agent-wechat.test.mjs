@@ -7,7 +7,9 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-wechat-'));
 process.env.QQ_AGENT_DATA_DIR = root;
 const { AgentWechatChannel, wechatChatKey } = await import('../src/agent-wechat/runtime.js');
 const { readWechatImages } = await import('../src/agent-wechat/media.js');
-const { normalizeWechatConfig } = await import('../src/agent-wechat/config.js');
+const { normalizeWechatConfig, wechatBindingContext } = await import('../src/agent-wechat/config.js');
+const { crossPlatformMemoryTools } = await import('../src/agent-wechat/memory-bridge.js');
+const { personaKey } = await import('../src/memory/hippocampus.js');
 const { handleWechatAdminCommand } = await import('../src/agent-wechat/routes.js');
 const { canRun, chatAllowed } = await import('../src/core/access.js');
 const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js');
@@ -37,6 +39,75 @@ function fixture(t, overrides = {}) {
 const event = (overrides = {}) => ({ kind: 'message.committed', createdAt: new Date().toISOString(),
   data: { origin: 'live', direction: 'incoming', threadId: 'wxid_test', messageId: 'msg-1' }, ...overrides });
 const message = { threadId: 'wxid_test', senderId: 'wxid_test', direction: 'incoming', type: 1, body: '你好' };
+test('group names use cached room cards and do not query QQ or refresh remotely', async t => {
+  const f = fixture(t, { enabled: true, groups: ['123@chatroom'] }); let names = 0;
+  f.api.request = async route => route.startsWith('/groups/') ? (names++, { items: [{ username: 'wxid_test', roomDisplayName: '群名片', displayName: '昵称' }] })
+    : { ...message, threadId: '123@chatroom' };
+  await f.runtime.receive(event({ data: { ...event().data, threadId: '123@chatroom' } }), new AbortController().signal);
+  const key = wechatChatKey('test', '123@chatroom');
+  assert.equal(f.store.recent(key)[0].senderName, '群名片');
+  assert.equal((await f.runtime.members('123@chatroom'))[0].name, '群名片'); assert.equal(names, 1);
+});
+
+test('group member memory excludes private and unknown-provenance impressions', async t => {
+  const f = fixture(t, { enabled: true, groups: ['123@chatroom'], bindings: { wxid_test: '12345' } });
+  const key = wechatChatKey('test', '123@chatroom');
+  f.store.appendIncoming(key, { mid: 'member', text: '你好', senderId: 'wxid_test' });
+  const memory = { query: () => ({ memberImpression: [
+    { userId: '12345', content: '群内印象', sourceChatKeys: ['group:123'] },
+    { userId: '12345', content: '私聊秘密', sourceChatKeys: ['private:12345'] },
+    { userId: '12345', content: '未知来源' },
+    { userId: '99999', content: '其他成员', sourceChatKeys: ['group:123'] }
+  ] }) };
+  const tool = f.runtime.toolsFor(key, buildToolDefs(), { memory, persona: {} }).find(d => d.name === 'person_memory_lookup');
+  const result = await tool.execute({}, { userId: '12345' });
+  assert.ok(result.content.includes('群内印象'));
+  for (const hidden of ['私聊秘密', '未知来源', '其他成员']) assert.ok(!result.content.includes(hidden));
+  assert.equal((await tool.execute({}, { userId: 'wxid_stranger' })).isError, true);
+  f.cfg.agentWechat.sharePrivateMemoryInGroups = true;
+  assert.ok((await tool.execute({}, { userId: '12345' })).content.includes('私聊秘密'));
+});
+
+test('explicit binding enables bidirectional memory queries and revocation, with a separate group switch', async t => {
+  const f = fixture(t, { enabled: true, bindings: { wxid_test: '12345' } });
+  const persona = { botName: 'test' }, p = personaKey(persona);
+  const memory = { hippocampus: { episodes: () => [
+    { persona: p, chat: f.key, summary: '微信记忆' },
+    { persona: p, chat: 'private:12345', summary: 'QQ记忆' },
+    { persona: p, chat: 'private:99999', summary: '其他人秘密' }
+  ], cards: () => [] } };
+  const make = (chatKey, extra = {}) => crossPlatformMemoryTools({ config: f.cfg.agentWechat, chatKey, memory, persona, ...extra })[0];
+  assert.ok((await make('private:12345').execute({})).content.includes('微信记忆'));
+  assert.ok((await make(f.key, { wechatPeer: 'wxid_test' }).execute({})).content.includes('QQ记忆'));
+  const group = make('group:123', { participantIds: ['12345'] });
+  assert.equal((await group.execute({})).isError, true);
+  f.cfg.agentWechat.sharePrivateMemoryInGroups = true;
+  const result = await group.execute({});
+  assert.ok(result.content.includes('微信记忆')); assert.ok(!result.content.includes('其他人秘密'));
+  assert.equal((await group.execute({}, { userId: '99999' })).isError, true);
+  assert.ok(wechatBindingContext(f.cfg.agentWechat, { chatKey: 'private:12345' }).includes('cross_platform_memory_lookup'));
+  assert.ok(f.runtime.bindingContext(f.key, []).includes('12345'));
+  delete f.cfg.agentWechat.bindings.wxid_test;
+  assert.equal((await group.execute({})).isError, true);
+  assert.throws(() => normalizeWechatConfig({ sharePrivateMemoryInGroups: 'yes' }));
+});
+
+test('local sticker image sends use account-scoped jobs and unknown sends are never resubmitted', async t => {
+  const f = fixture(t, { enabled: true }); let sends = 0;
+  f.api.request = async (route, options) => {
+    if (route === '/uploads') { assert.ok(Buffer.isBuffer(options.upload.bytes)); return { id: 'source_1' }; }
+    assert.equal(route, '/sends'); sends++; assert.equal(options.body.kind, 'image');
+    return { id: 'job_1', accountId: 'test', threadId: 'wxid_test', state: 'completed', serverMessageId: '222' };
+  };
+  const defs = f.runtime.toolsFor(f.key, buildToolDefs(), { memory: {}, persona: {} });
+  const ctx = { session: { leaseId: 'wx-image', sent: [] }, stickers: { readImage: () => ({ buffer: Buffer.from('image'), contentType: 'image/png' }) } };
+  assert.equal((await defs.find(d => d.name === 'send_sticker').execute(ctx, { stickerId: 'local' })).isError, undefined);
+  assert.equal(ctx.session.sent.length, 1); assert.equal(sends, 1);
+  f.api.request = async () => { sends++; throw Error('lost'); };
+  await assert.rejects(f.runtime.sendTextBatch(f.key, ['image'], { runId: 'wx-unknown-image', imageSourceId: 'source_1' }), /uncertain/);
+  await assert.rejects(f.runtime.sendTextBatch(f.key, ['image'], { runId: 'wx-unknown-image', imageSourceId: 'source_1' }), /uncertain/);
+  assert.equal(sends, 2);
+});
 
 test('WeChat group whitelist stays separate from DMs and QQ, preserving sender identity', async t => {
   const f = fixture(t, { enabled: true, groups: ['123@chatroom'], bindings: { wxid_test: '12345' } });
@@ -265,7 +336,8 @@ test('common tools are aligned while QQ-only writes stay absent; person queries 
   const memory = { query: () => ({ memberImpression: [{ userId: '12345', content: '喜欢茶' }, { userId: '67890', content: '其他人的记忆' }] }) };
   const defs = f.runtime.toolsFor(f.key, buildToolDefs(), { memory, persona: {} });
   for (const name of ['get_recent_messages', 'get_message_detail', 'memory_query', 'search_web', 'fetch_url']) assert.ok(defs.some(d => d.name === name), name);
-  for (const name of ['send_poke', 'send_voice', 'kick_group_member', 'send_sticker']) assert.ok(!defs.some(d => d.name === name), name);
+  for (const name of ['send_poke', 'send_voice', 'kick_group_member']) assert.ok(!defs.some(d => d.name === name), name);
+  assert.ok(defs.some(d => d.name === 'send_sticker'));
   const query = defs.find(d => d.name === 'memory_query');
   const result = await query.execute({}, { userId: '12345' });
   assert.ok(result.content.includes('喜欢茶')); assert.ok(!result.content.includes('其他人的记忆'));
@@ -337,7 +409,8 @@ test('real shared Agent handles WeChat then QQ with their own tool catalogs and 
   await runner.wake(f.key);
   const first = sessions.listSummaries(10)[0]; assert.equal(sessions.get(first.id).status, 'done', JSON.stringify(sessions.get(first.id)));
   assert.ok(requests[0].messages[0].content.includes('微信私聊'));
-  assert.ok(requests[0].tools.every(tool => COMMON_CHAT_TOOLS.has(tool.function.name)));
+  assert.ok(requests[0].tools.every(tool => COMMON_CHAT_TOOLS.has(tool.function.name)
+    || ['list_stickers', 'get_sticker_image', 'send_sticker', 'get_active_members', 'cross_platform_memory_lookup'].includes(tool.function.name)));
   assert.equal(f.calls.filter(([p]) => p === '/sends').length, 1); assert.equal(qqSent.length, 0);
   f.store.appendIncoming('private:12345', { mid: 'qq-turn', text: '你好', senderId: '12345' });
   await runner.wake('private:12345'); assert.deepEqual(qqSent, ['你好呀']); assert.equal(requests.length, 4);

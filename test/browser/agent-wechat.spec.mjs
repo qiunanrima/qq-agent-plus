@@ -37,6 +37,7 @@ test('微信独立白名单、可选绑定、固化和窄屏；QQ配置保持原
   await page.locator('#wechat-bindings').fill('wxid_alice 12345');
   await page.locator('#wechat-groups').fill('123@chatroom');
   await page.locator('#wechat-native-approval').check();
+  await page.locator('#wechat-share-private-memory').check();
   await page.locator('#wechat-save').click(); await page.locator('[data-confirm-accept]').last().click();
   await expect.poll(async () => (await getConfig()).agentWechat?.allow).toEqual(['wxid_alice', 'wxid_bob']);
   const after = await getConfig();
@@ -44,6 +45,8 @@ test('微信独立白名单、可选绑定、固化和窄屏；QQ配置保持原
   expect(after.agentWechat.bindings).toEqual({ wxid_alice: '12345' });
   expect(after.agentWechat.groups).toEqual(['123@chatroom']);
   expect(after.agentWechat.nativeApproval).toBe(true);
+  expect(after.agentWechat.sharePrivateMemoryInGroups).toBe(true);
+  await expect(page.locator('#wechat-share-private-memory')).toBeChecked();
   for (const key of ['onebot', 'allow', 'deny', 'api', 'antigravityCli', 'persona', 'memory']) expect(after[key]).toEqual(before[key]);
   await page.locator('#wechat-bindings').fill('');
   await page.locator('#wechat-save').click(); await page.locator('[data-confirm-accept]').last().click();

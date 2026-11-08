@@ -5,6 +5,7 @@ export function buildMcpPrompt({ messages, toolChoice, nativeApproval, platform 
     + (nativeApproval ? 'Native file and foreground command tools require administrator approval for every invocation. Never bypass rejection or start background tasks. '
       : 'Native tools, commands and files are disabled except exact host-owned image reads. ')
     + 'Never repeat successful or unknown sends. Stop immediately after qq_finish succeeds. Do not output tool requests as text.\n'
+    + 'If a read-only tool failed and you have replied honestly, call qq_finish with errorAcknowledged:true and a factual summary. Never retry unknown sends or invent ignoreErrors.\n'
     + JSON.stringify({ messages, toolChoice });
   const routing = 'You are the QQ Agent conversation model. Follow the supplied system messages, role card and memory. '
     + 'All QQ actions and replies use the qq_run MCP server host tools with qq_ prefixes, bound to this conversation. '
