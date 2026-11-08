@@ -13,6 +13,40 @@ import { verifyNativeHooks } from '../src/antigravity-cli/verify-native-hooks.js
 import { antigravityCompletion, antigravityStatus } from '../src/antigravity-cli/index.js';
 
 const run = { chatKey: 'private:1', runId: 'test', allowed: () => true, approvalAllowed: () => true };
+
+test('MCP-only ACP allows its run-scoped MCP request while cancelling native reads', async () => {
+  const permit = createAcpPermissionHandler({ sessionId: () => 'session', mcpRun: { ...run, approvalAllowed: () => false },
+    workspace: os.tmpdir(), signal: new AbortController().signal, isEnabled: () => true, maxCalls: 8 });
+  const options = [{ kind: 'allow_once', optionId: 'once' }];
+  const native = await permit({ sessionId: 'session', options, toolCall: { toolCallId: 'native', name: 'read_file', rawInput: { Path: '/forbidden' } } });
+  assert.equal(native.outcome.outcome, 'cancelled');
+  const rejected = await permit({ sessionId: 'session', options: [...options, { kind: 'reject_once', optionId: 'deny' }],
+    toolCall: { toolCallId: 'native-reject', name: 'read_file', rawInput: { Path: '/forbidden' } } });
+  assert.equal(rejected.outcome.optionId, 'deny', 'an explicit tool rejection must not be reported as cancellation of the conversation');
+  const mcp = await permit({ sessionId: 'session', options, toolCall: { toolCallId: 'mcp', name: 'call_mcp_tool', rawInput: { ServerName: 'qq_run' } } });
+  assert.equal(mcp.outcome.optionId, 'once');
+  assert.equal(listCliApprovals().length, 0);
+});
+
+test('WeChat adapter uses ACP with native permission disabled and can continue after a denied file read', async t => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wechat-acp-'));
+  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  let executed = 0, verified = false;
+  const result = await antigravityCompletion({ config: { enabled: true, nativeApproval: true, workspace, timeoutMs: 5000 },
+    messages: [{ role: 'user', content: 'hello' }], tools: [{ function: { name: 'probe', parameters: { type: 'object' } } }],
+    mcpRun: { ...run, platform: 'wechat', approvalAllowed: () => false,
+      execute: async () => { executed++; return { content: 'host-probe-ok' }; } }
+  }, { verifyNative: async (config, invocation) => {
+    assert.equal(config.nativeApproval, false); assert.equal(config.qqApproval, false);
+    assert.ok(invocation.hookCommand); verified = true;
+  }, spawnProcess: (_exe, args, opts) => {
+    assert.equal(args[0], 'acp');
+    return spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'mcp-only'], opts);
+  } });
+  assert.equal(verified, true); assert.equal(executed, 1);
+  assert.equal(result.raw.driver, 'acp'); assert.equal(result.message.content, 'native-denied-mcp-ok');
+  assert.equal(listCliApprovals().length, 0);
+});
 const options = [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' }];
 const fakeServers = [{ name: 'qq_run', command: 'offline-only', args: [], env: [] }];
 const params = (id = 'call') => ({ sessionId: 'session', toolCall: { toolCallId: id, name: 'run_command', kind: 'execute', rawInput: { CommandLine: 'echo offline' } }, options });

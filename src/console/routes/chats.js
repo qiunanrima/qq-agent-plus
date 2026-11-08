@@ -25,6 +25,13 @@ export function registerChatRoutes(router, deps = {}) {
     throw new Error('registerChatRoutes 需要 router/json/readBody/emit/log/store/orchestrator/sender/onebot/updateConfig/管理器/getter');
   }
 
+  // Preserve QQ routes exactly; expose the same handlers for namespaced WeChat DMs.
+  const addConversationRoute = (method, pattern, handler) => {
+    router.add(method, pattern, handler);
+    const wx = new RegExp(pattern.source.replace('(group|private)_(\\d+)', '(private)_(wechat_[a-f0-9]{64})'), pattern.flags);
+    router.add(method, wx, handler);
+  };
+
   router.add('POST', '/api/runtime', async (req, res) => {
     const body = await readBody(req);
     if (!['observe', 'active'].includes(body.mode)) return json(res, 400, { error: 'Invalid mode' });
@@ -45,7 +52,7 @@ export function registerChatRoutes(router, deps = {}) {
     return json(res, 200, { ok: true, mode: body.mode });
   });
 
-  router.add('POST', /^\/api\/chats\/(group|private)_(\d+)\/(retry-failed|resolve-held)$/, async (req, res, params) => {
+  addConversationRoute('POST', /^\/api\/chats\/(group|private)_(\d+)\/(retry-failed|resolve-held)$/, async (req, res, params) => {
     const body = await readBody(req);
     const key = `${params[1]}:${params[2]}`;
     if (body.confirm !== true) return json(res, 409, { error: 'Explicit confirmation required' });
@@ -53,7 +60,7 @@ export function registerChatRoutes(router, deps = {}) {
     emit('chat-update', key);
     return json(res, 200, { ok: true, count });
   });
-  router.add('GET', /^\/api\/chats\/(group|private)_(\d+)\/runtime-control$/, async (req, res, params) => {
+  addConversationRoute('GET', /^\/api\/chats\/(group|private)_(\d+)\/runtime-control$/, async (req, res, params) => {
     const key = `${params[1]}:${params[2]}`;
     const meta = store.getChatMeta(key);
     const incidentPilot = getIncidentPilot();
@@ -71,7 +78,7 @@ export function registerChatRoutes(router, deps = {}) {
       held: meta.held
     });
   });
-  router.add('PUT', /^\/api\/chats\/(group|private)_(\d+)\/runtime-control$/, async (req, res, params) => {
+  addConversationRoute('PUT', /^\/api\/chats\/(group|private)_(\d+)\/runtime-control$/, async (req, res, params) => {
     const incidentPilot = getIncidentPilot();
     if (!incidentPilot?.active) {
       return json(res, 409, { error: '异常处理实验当前未启用' });
@@ -101,7 +108,7 @@ export function registerChatRoutes(router, deps = {}) {
     emit('chat-update', key);
     return json(res, 200, { ok: true, control, decision, backlog });
   });
-  router.add('GET', /^\/api\/chats\/(group|private)_(\d+)\/messages$/, async (req, res, params, url) => {
+  addConversationRoute('GET', /^\/api\/chats\/(group|private)_(\d+)\/messages$/, async (req, res, params, url) => {
     const chatKey = `${params[1]}:${params[2]}`;
     // 服务端游标分页：默认 500，普通上限 2000。旧客户端传 limit=100000 仍然兼容，但会被封顶。
     const requested = Number(url.searchParams.get('limit'));
@@ -130,7 +137,7 @@ export function registerChatRoutes(router, deps = {}) {
     });
   });
   // 全量导出：单独入口，流式写出，避免把十万条塞进控制台的一次响应。
-  router.add('GET', /^\/api\/chats\/(group|private)_(\d+)\/export$/, async (req, res, params, url) => {
+  addConversationRoute('GET', /^\/api\/chats\/(group|private)_(\d+)\/export$/, async (req, res, params, url) => {
     const chatKey = `${params[1]}:${params[2]}`;
     const format = String(url.searchParams.get('format') || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl';
     const safeName = chatKey.replace(':', '_');
@@ -215,12 +222,12 @@ export function registerChatRoutes(router, deps = {}) {
       return json(res, 502, { error: String(error?.message ?? error) });
     }
   });
-  router.add('POST', /^\/api\/chats\/(group|private)_(\d+)\/wake$/, async (req, res, params) => {
+  addConversationRoute('POST', /^\/api\/chats\/(group|private)_(\d+)\/wake$/, async (req, res, params) => {
     const chatKey = `${params[1]}:${params[2]}`;
     const result = orchestrator.requestManualWake(chatKey);
     return json(res, result.ok ? 202 : 409, result);
   });
-  router.add('GET', /^\/api\/chats\/(group|private)_(\d+)\/thread$/, async (req, res, params) => {
+  addConversationRoute('GET', /^\/api\/chats\/(group|private)_(\d+)\/thread$/, async (req, res, params) => {
     const chatKey = `${params[1]}:${params[2]}`;
     return json(res, 200, {
       chatKey,
@@ -229,13 +236,13 @@ export function registerChatRoutes(router, deps = {}) {
       checkpoint: store.latestThreadCheckpoint(chatKey)
     });
   });
-  router.add('DELETE', /^\/api\/chats\/(group|private)_(\d+)\/thread$/, async (req, res, params) => {
+  addConversationRoute('DELETE', /^\/api\/chats\/(group|private)_(\d+)\/thread$/, async (req, res, params) => {
     const chatKey = `${params[1]}:${params[2]}`;
     const closed = store.closeConversationThread(chatKey, 'operator');
     emit('chat-update', chatKey);
     return json(res, 200, { ok: true, closed });
   });
-  router.add('POST', /^\/api\/chats\/(group|private)_(\d+)\/test-send$/, async (req, res, params) => {
+  addConversationRoute('POST', /^\/api\/chats\/(group|private)_(\d+)\/test-send$/, async (req, res, params) => {
     const body = await readBody(req);
     const text = String(body.text ?? '').trim();
     if (!text) return json(res, 400, { error: '消息内容为空' });
@@ -253,7 +260,7 @@ export function registerChatRoutes(router, deps = {}) {
       return json(res, 502, { error: String(error?.message ?? error) });
     }
   });
-  router.add('POST', /^\/api\/chats\/(group|private)_(\d+)\/mark-read$/, async (req, res, params) => {
+  addConversationRoute('POST', /^\/api\/chats\/(group|private)_(\d+)\/mark-read$/, async (req, res, params) => {
     const chatKey = `${params[1]}:${params[2]}`;
     const drained = store.drainUnread(chatKey);
     return json(res, 200, { ok: true, marked: drained.length });

@@ -2373,7 +2373,7 @@ function buildApp({
   // 这里只注册，不再往本文件里加 handler。
   registerStorageRoutes(router, { json, sessions });
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
-  const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit });
+  const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit, log: moduleLog('agent-wechat') });
   registerAgentWechatRoutes(router, { runtime: agentWechat, getConfig, updateConfig, json, readBody, auditWrite });
 
   router.add('GET', '/healthz', async (req, res) => {

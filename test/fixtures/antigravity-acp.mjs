@@ -9,13 +9,13 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   if (!message.method) {
     if (mode === 'hang') continue;
     const allowed = message.result?.outcome?.optionId === 'once';
-    if (allowed && mcp) {
+    if ((allowed || mode === 'mcp-only') && mcp) {
       const result = await mcp.callTool('qq_probe', {});
       if (result.isError || result.content?.[0]?.text !== 'host-probe-ok') process.exit(4);
     }
     if (mode === 'pool-cancel') continue;
     send({ method: 'session/update', params: { sessionId, update: {
-      sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: allowed ? 'effect-confirmed' : 'effect-blocked' }
+      sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: mode === 'mcp-only' ? 'native-denied-mcp-ok' : allowed ? 'effect-confirmed' : 'effect-blocked' }
     } } });
     send({ id: promptId, result: { stopReason: 'end_turn' } });
     continue;
@@ -26,7 +26,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     if (mode === 'pool-probe' || mode === 'pool-cancel') sessionId = `session-${++sessionCount}`;
     const server = message.params?.mcpServers?.[0];
     if (message.params?.mcpServers?.length !== 1 || server?.name !== 'qq_run' || !server.command || !Array.isArray(server.env)) process.exit(3);
-    if (['mcp-probe', 'pool-probe', 'pool-cancel'].includes(mode)) {
+    if (['mcp-probe', 'pool-probe', 'pool-cancel', 'mcp-only'].includes(mode)) {
       mcp = new McpStdioClient({ id: server.name, command: server.command, args: server.args,
         env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])), timeoutMs: 3000,
         log: { info() {}, warn() {}, error() {} } });
@@ -49,7 +49,9 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       continue;
     }
     send({ id: 900, method: 'session/request_permission', params: { sessionId,
-      toolCall: { toolCallId: 'tool-1', name: 'run_command', kind: 'execute', rawInput: { CommandLine: 'echo offline-probe' } },
-      options: [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' }] } });
+      toolCall: mode === 'mcp-only' ? { toolCallId: 'tool-1', name: 'read_file', kind: 'read', rawInput: { Path: '/not-authorized' } }
+        : { toolCallId: 'tool-1', name: 'run_command', kind: 'execute', rawInput: { CommandLine: 'echo offline-probe' } },
+      options: [{ kind: 'allow_always', optionId: 'always' }, { kind: 'allow_once', optionId: 'once' },
+        ...(mode === 'mcp-only' ? [{ kind: 'reject_once', optionId: 'deny' }] : [])] } });
   } else send({ id, result: {} });
 }

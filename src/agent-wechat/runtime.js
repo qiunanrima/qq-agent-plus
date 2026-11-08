@@ -5,20 +5,23 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { AgentWechatApi } from './api.js';
 import { normalizeWechatConfig, validWxid } from './config.js';
 import { registerChannel, isWechatChat } from '../channels/registry.js';
+import { memoryDay, personaKey } from '../memory/hippocampus.js';
+import { COMMON_CHAT_TOOLS } from '../channels/tool-policy.js';
 import { sanitizeUserText, formatClockTime } from '../core/util.js';
 
 export const wechatChatKey = (account, wxid) => `private:wechat_${createHash('sha256').update(JSON.stringify([account, wxid])).digest('hex')}`;
 
 /** Protocol adapter only: messages enter the existing store/orchestrator. */
 export class AgentWechatChannel {
-  constructor({ dataDir, getConfig, store, orchestrator, emit = () => {}, api }) {
-    Object.assign(this, { getConfig, store, orchestrator, emit });
+  constructor({ dataDir, getConfig, store, orchestrator, emit = () => {}, log = () => {}, api }) {
+    Object.assign(this, { getConfig, store, orchestrator, emit, log });
     this.api = api || new AgentWechatApi(getConfig);
     this.file = path.join(dataDir, 'agent-wechat', 'ingress.json');
     this.state = null; this.controller = null; this.task = null; this.error = ''; this.online = false;
     this.sentCounts = new Map();
-    this.unregister = registerChannel('wechat', this);
+    this.unregister = null;
   }
+  attach() { this.unregister ||= registerChannel('wechat', this); }
   config() { return normalizeWechatConfig(this.getConfig().agentWechat); }
   read() {
     if (this.state) return this.state;
@@ -59,6 +62,56 @@ export class AgentWechatChannel {
       + '只使用本轮实际提供的工具。用 send_message 回复当前微信会话，用 finish 提交非空 summary 结束。'
       + '微信身份绑定只关联人物记忆，不授予 QQ 管理权限。当前仅支持文字，不可声称查看图片或操作 QQ。';
   }
+  toolsFor(key, definitions, { memory, persona, personalityMemory }) {
+    const target = () => this.linkedQq(key) || this.peer(key);
+    const source = () => this.linkedQq(key) ? `private:${this.linkedQq(key)}` : key;
+    const impressions = () => (memory.query?.(source(), 'memberImpression')?.memberImpression || [])
+      .filter(row => String(row.userId) === target()).map(({ content, origin, createdAt }) => ({ content, origin, createdAt }));
+    const personCards = () => (memory.hippocampus?.cards?.({ persona, chatKey: source() }) || [])
+      .filter(row => row.kind === 'skill' || String(row.subject) === target());
+    return definitions.filter(d => COMMON_CHAT_TOOLS.has(d.name)).map(def => {
+      if (def.name === 'send_message') return { ...def, description: '向当前微信私聊发送文字；messages 为字符串或字符串数组，不可指定其他目标。',
+        parameters: { type: 'object', properties: { messages: def.parameters.properties.messages }, required: ['messages'] } };
+      if (!['memory_query', 'person_memory_lookup', 'memory_card_list', 'memory_card_lookup', 'hippocampus_lookup', 'personality_lookup'].includes(def.name)) return def;
+      return { ...def, execute: async (ctx, args = {}) => {
+        if (!this.allowed(key) || ctx.signal?.aborted) return { isError: true, reportIncident: false, content: '当前微信会话已停止。' };
+        if (args.userId != null && String(args.userId) !== target() && String(args.userId) !== this.peer(key))
+          return { isError: true, reportIncident: false, content: '只能查询当前微信联系人及其明确绑定的 QQ 人物记忆。' };
+        let value;
+        if (def.name === 'memory_query' || def.name === 'person_memory_lookup') {
+          const query = String(args.query || '').slice(0, 300);
+          const limit = Math.min(20, Math.max(1, Number(args.limit) || 8));
+          const found = query && memory.search ? (memory.search(source(), query, { userId: target(), limit }).results || [])
+            .filter(row => String(row.userId) === target()).map(({ content, origin }) => ({ content, origin }))
+            : impressions().filter(row => !query || String(row.content).includes(query));
+          value = { userId: target(), memberImpression: found.slice(0, limit) };
+          if (def.name === 'person_memory_lookup') value.globalMemories = value.memberImpression;
+        } else if (def.name === 'memory_card_list' || def.name === 'memory_card_lookup') {
+          const rows = personCards().filter(row => !args.kind || row.kind === args.kind);
+          const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+          value = def.name === 'memory_card_list' ? { total: rows.length, indexes: rows.slice(offset, offset + 30).map(({ id, kind, subject, title }) => ({ id, kind, subject, title })), nextOffset: offset + 30 < rows.length ? offset + 30 : null }
+            : rows.filter(row => row.id === args.id).map(({ id, kind, subject, title, content }) => ({ id, kind, subject, title, content }));
+        } else if (def.name === 'hippocampus_lookup') {
+          const bound = this.linkedQq(key);
+          const today = memoryDay();
+          const yesterday = new Date(Date.parse(today) - 86400000).toISOString().slice(0, 10);
+          const rows = (memory.hippocampus?.episodes?.() || []).filter(row => row.persona === personaKey(persona)
+            && (row.chat === key || bound && memory.hippocampus.visible(row, source()) && JSON.parse(row.participants || '[]').some(p => String(p.id) === bound))
+            && (args.day ? row.day === (args.day === 'yesterday' ? yesterday : today) : row.day >= yesterday && row.day <= today));
+          const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+          const found = rows.filter(row => !args.query || String(row.summary).includes(String(args.query).slice(0, 80)));
+          value = { total: found.length, entries: found.slice(offset, offset + 20).map(({ day, summary }) => ({ day, summary })), nextOffset: offset + 20 < found.length ? offset + 20 : null };
+        } else {
+          const rows = (personalityMemory?.recallRows?.({ chatKey: key, persona }) || [])
+            .filter(row => !row.target_user_id || String(row.target_user_id) === target());
+          const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+          value = args.id ? rows.filter(row => row.id === args.id).map(({ kind, topic, content }) => ({ kind, topic, content }))
+            : { total: rows.length, indexes: rows.slice(offset, offset + 30).map(({ id, kind, topic }) => ({ id, kind, topic })), nextOffset: offset + 30 < rows.length ? offset + 30 : null };
+        }
+        return { content: JSON.stringify(value) };
+      } };
+    });
+  }
   status() {
     const c = this.config();
     return { enabled: c.enabled, graduated: c.graduated, running: !!this.controller, online: this.online, error: this.error,
@@ -67,6 +120,7 @@ export class AgentWechatChannel {
   async sync() {
     await this.stop();
     if (!this.config().enabled) return;
+    this.attach();
     const controller = this.controller = new AbortController();
     this.task = this.loop(controller.signal).catch(() => { this.error = '微信接入已停止，请检查本地服务与渠道设置'; })
       .finally(() => { this.online = false; if (this.controller === controller) this.controller = null; });
@@ -78,8 +132,9 @@ export class AgentWechatChannel {
       if (isWechatChat(key)) this.orchestrator.controllers.get(key)?.abort(Object.assign(new Error('微信设置改变'), { code: 'RUN_CANCELLED' }));
     }
     await this.task; this.controller = null; this.online = false;
+    this.unregister?.(); this.unregister = null;
   }
-  async dispose() { await this.stop(); this.unregister(); }
+  async dispose() { await this.stop(); }
   async loop(signal) {
     const c = this.config(), scope = `${c.endpoint}:${c.accountId}`;
     const journal = this.read().accounts[scope] ||= { cursor: '0', initialized: false };
@@ -120,7 +175,10 @@ export class AgentWechatChannel {
     const row = this.store.appendIncoming(chatKey, { mid: d.messageId, ts: Date.parse(event.createdAt),
       senderId: d.threadId, senderName: message.senderName || d.threadId,
       text: sanitizeUserText(message.body).slice(0, 8000), media: [], channel: 'wechat' });
-    if (!row.duplicate) { this.emit('chat-update', chatKey); this.orchestrator.onIncoming(chatKey, row); }
+    if (!row.duplicate) {
+      try { this.log(`[agent-wechat] 私聊已进入统一 Agent：${chatKey}`); } catch { /* Logging cannot suppress ingress. */ }
+      this.emit('chat-update', chatKey); this.orchestrator.onIncoming(chatKey, row);
+    }
   }
   async sendTextBatch(chatKey, messages, options = {}) {
     const wxid = this.peer(chatKey), list = Array.isArray(messages) ? messages : [messages];
@@ -154,6 +212,7 @@ export class AgentWechatChannel {
       const ts = Date.now();
       try { this.store.appendSelf(chatKey, { mid: result.serverId, text, ts, media: [] }); this.emit('chat-update', chatKey); } catch { /* already accepted */ }
       sent.push({ text, messageId: result.serverId, at: formatClockTime(ts) });
+      try { this.log(`[agent-wechat] 微信服务器已接受发送：${chatKey}；messageId=${result.serverId}`); } catch { /* Already accepted. */ }
     }
     return { sent, failed: [] };
   }

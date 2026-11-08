@@ -433,7 +433,7 @@ export async function chatCompletion({
     const release = watchTimeWindow(error => controller.abort(error));
     try {
       const result = await antigravityCompletion({ config: getConfig().antigravityCli, messages, tools, toolChoice,
-        signal: controller.signal, isEnabled: () => getConfig().antigravityCli?.enabled === true, mcpRun });
+        signal: controller.signal, isEnabled: () => getConfig().antigravityCli?.enabled === true && (mcpRun?.channelEnabled?.() ?? true), mcpRun });
       if (!usageTracked) recordUntracked(result, purpose);
       return result;
     } finally { release(); signal?.removeEventListener('abort', abort); }

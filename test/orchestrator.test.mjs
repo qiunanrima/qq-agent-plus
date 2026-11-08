@@ -202,6 +202,26 @@ describe('Orchestrator', () => {
     assert.deepEqual(listCliApprovals(), []);
   });
 
+  it('CLI failure before result keeps the CLI model and vendor instead of the API fallback label', async t => {
+    const { cfg, runner, store, sessions } = fixture(t);
+    cfg.allow.private = ['1']; cfg.api.model = 'deepseek-fallback';
+    cfg.conversation.replyGuardEnabled = false;
+    const workspace = fs.mkdtempSync(path.join(root, 'model-label-workspace-'));
+    cfg.antigravityCli = { ...cfg.antigravityCli, enabled: true, model: 'gemini-test', transport: 'json',
+      nativeApproval: false, qqApproval: false, workspace, executable: 'label-test-agy', timeoutMs: 3000 };
+    const originalSpawn = childProcess.spawn;
+    childProcess.spawn = (exe, args, options) => exe === 'label-test-agy'
+      ? originalSpawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-cli.mjs', import.meta.url)), 'exit'], options)
+      : originalSpawn(exe, args, options);
+    syncBuiltinESMExports();
+    t.after(() => { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); });
+    store.appendIncoming('private:1', { mid: 1, text: 'hello', senderId: '1', senderName: 'test' });
+    await runner.wake('private:1');
+    const detail = sessions.get(sessions.listSummaries(1)[0].id);
+    assert.match(detail.error, /Antigravity/);
+    assert.equal(detail.model, 'gemini-test'); assert.equal(detail.vendor, 'Antigravity CLI');
+  });
+
   it('MCP uses the normal send/audit/finish gates without replaying model text or launching another CLI', async (t) => {
     const { cfg, runner, append, sessions } = fixture(t);
     const workspace = fs.mkdtempSync(path.join(root, 'mcp-workspace-'));

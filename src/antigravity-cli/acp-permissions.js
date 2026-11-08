@@ -31,15 +31,19 @@ export function describeAcpPermission(toolCall) {
 export function createAcpPermissionHandler({ sessionId, mcpRun, workspace, controlRoot, signal, isEnabled, maxCalls, imageAccess }) {
   let calls = 0;
   const decisions = new Set();
-  const allowed = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.()
-    && (mcpRun.approvalAllowed?.('native') ?? true);
+  const active = () => !signal.aborted && isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.();
+  const allowed = () => active() && (mcpRun.approvalAllowed?.('native') ?? true);
   return async params => {
     const cancelled = { outcome: { outcome: 'cancelled' } };
-    if (!sessionId() || params?.sessionId !== sessionId() || !allowed()) return cancelled;
+    if (!sessionId() || params?.sessionId !== sessionId() || !active()) return cancelled;
     const description = describeAcpPermission(params.toolCall);
     const option = params.options?.find(item => item.kind === 'allow_once');
     if (!description || !option?.optionId) return cancelled;
     if (description.category === 'mcp') return { outcome: { outcome: 'selected', optionId: option.optionId } };
+    if (!allowed()) {
+      const reject = params.options?.find(item => item.kind === 'reject_once');
+      return reject?.optionId ? { outcome: { outcome: 'selected', optionId: reject.optionId } } : cancelled;
+    }
     const id = params.toolCall?.toolCallId;
     if (typeof id !== 'string' || !id) return cancelled;
     if (decisions.has(id)) return cancelled;

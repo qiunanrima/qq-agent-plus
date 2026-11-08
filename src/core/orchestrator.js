@@ -2151,10 +2151,7 @@ export class Orchestrator {
       complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true, usageSource: 'subagent' })
     }));
     toolDefs.push(...antigravityQuotaTools(getConfig), ...pluginToolDefs, ...mcpToolDefs);
-    if (channel) {
-      const permitted = new Set(['send_message', 'finish', 'persona_background_lookup']);
-      for (let i = toolDefs.length - 1; i >= 0; i--) if (!permitted.has(toolDefs[i].name)) toolDefs.splice(i, 1);
-    }
+    if (channel) toolDefs.splice(0, toolDefs.length, ...channel.toolsFor(chatKey, toolDefs, { memory: this.memory, persona, personalityMemory: this.personalityMemory }));
     const openAiTools = toOpenAiTools(toolDefs);
     const baseSystemPrompt = channel ? channel.systemPrompt(persona) : buildSystemPrompt({
       // 按群生效的人设（缺省 = 全局）
@@ -2296,13 +2293,13 @@ export class Orchestrator {
     session.userPrompt = (contextSnapshot ? `${contextSnapshot}\n\n` : '') + userPrompt;
     session.promptChars = systemPrompt.length + session.userPrompt.length
       + JSON.stringify(priorProviderMessages).length;
-    session.model = cfg.api.model;
+    session.model = cfg.antigravityCli?.enabled ? cfg.antigravityCli.model || 'Antigravity CLI（默认模型未确认）' : cfg.api.model;
     session.conversationMode = conversationCfg.mode;
     session.lifecycleContinuation = lifecycleContinuation;
     session.threadId = thread?.threadId || null;
     // 记录本次调用走的是哪个渠道（A6API / openrouter / 本地中转…）。
     // 同名模型在不同渠道是不同商品，用量与价格要分开统计。
-    session.vendor = vendorOfConfig(cfg);
+    session.vendor = cfg.antigravityCli?.enabled ? 'Antigravity CLI' : vendorOfConfig(cfg);
     session.chatName = chatName;
     session.livingMemory = {
       mode: livingRecall.mode || 'disabled',
@@ -2602,7 +2599,7 @@ export class Orchestrator {
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
       bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
-      if (channel) { mcpRun.platform = 'wechat'; mcpRun.approvalAllowed = () => false; }
+      if (channel) { mcpRun.platform = 'wechat'; mcpRun.approvalAllowed = () => false; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,

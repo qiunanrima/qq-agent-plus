@@ -8,6 +8,7 @@ import { createRunImageAccess } from './image-access.js';
 
 /** Per-process workspace avoids sharing MCP tokens or catalogs across chats. */
 export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, signal, isEnabled = () => true }) {
+  const useAcp = config.nativeApproval || mcpRun?.platform === 'wechat';
   if (!mcpRun?.chatKey || !mcpRun?.runId || typeof mcpRun.execute !== 'function' || typeof mcpRun.allowed !== 'function') {
     throw new Error('MCP requires an authorized host run');
   }
@@ -45,15 +46,17 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     const agentDir = path.join(workspace, '.agents', 'agents', config.agent);
     await fs.mkdir(agentDir, { recursive: true });
     const template = await fs.readFile(new URL('../../examples/antigravity/qq-mcp/agent.md', import.meta.url), 'utf8');
-    const agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/,
+    let agentTemplate = config.nativeApproval ? template.replace(/commandExecutionPolicy: off\r?\n/,
       'commandExecutionPolicy: sandbox\ntools:\n  - run_command\n  - read_file\n  - write_to_file\n  - replace_file_content\n')
       .replace('inheritCustomizations: false', 'inheritCustomizations: true')
       .replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
         '文件和前台命令仅在用户明确要求且管理员逐次批准后使用；禁止浏览器、原生子代理和后台命令。被拒绝后停止，不得换工具绕过。') : template;
+    if (useAcp) agentTemplate = agentTemplate.replace('inheritCustomizations: false', 'inheritCustomizations: true');
+    if (mcpRun?.platform === 'wechat') agentTemplate = agentTemplate.replaceAll('普通 QQ 聊天', '当前微信私聊').replaceAll('使用 QQ Agent', '使用共享 Agent');
     await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     await fs.writeFile(path.join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { qq_run: bridge.serverConfig } }), { mode: 0o600 });
     let hookCommand;
-    if (config.nativeApproval) {
+    if (useAcp) {
       const quote = value => {
         if (process.platform === 'win32') {
           if (/["%\r\n]/.test(value)) throw new Error('Unsafe approval hook path');

@@ -13,6 +13,9 @@ const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js
 const { ChatStore } = await import('../src/core/store.js');
 const { Orchestrator } = await import('../src/core/orchestrator.js');
 const { SessionRegistry } = await import('../src/core/sessions.js');
+const { COMMON_CHAT_TOOLS } = await import('../src/channels/tool-policy.js');
+const { buildToolDefs } = await import('../src/tools/tools.js');
+const { registerChatRoutes } = await import('../src/console/routes/chats.js');
 const { SendQueue } = await import('../src/onebot/sender.js');
 
 function fixture(t, overrides = {}) {
@@ -26,6 +29,7 @@ function fixture(t, overrides = {}) {
   const api = { request: async (...args) => { calls.push(args); return { state: 'accepted', destination: 'wxid_test', serverId: '99' }; } };
   const runner = { controllers: new Map(), onIncoming: (...a) => incoming.push(a) };
   const runtime = new AgentWechatChannel({ dataDir: dir, getConfig: () => cfg, store, orchestrator: runner, api });
+  if (cfg.agentWechat.enabled) runtime.attach();
   t.after(async () => { await runtime.dispose(); store.close(); });
   return { dir, cfg, store, calls, incoming, api, runner, runtime, key: wechatChatKey('test', 'wxid_test') };
 }
@@ -126,6 +130,38 @@ test('binding reads only the linked identity from hippocampus-inclusive views', 
   assert.ok(text.includes('喜欢茶')); assert.ok(!text.includes('其他人的资料'));
 });
 
+test('common tools are aligned while QQ-only writes stay absent; person queries remain identity-bound', async t => {
+  const f = fixture(t, { enabled: true, bindings: { wxid_test: '12345' } });
+  const memory = { query: () => ({ memberImpression: [{ userId: '12345', content: '喜欢茶' }, { userId: '67890', content: '其他人的记忆' }] }) };
+  const defs = f.runtime.toolsFor(f.key, buildToolDefs(), { memory, persona: {} });
+  for (const name of ['get_recent_messages', 'get_message_detail', 'memory_query', 'search_web', 'fetch_url']) assert.ok(defs.some(d => d.name === name), name);
+  for (const name of ['send_poke', 'send_voice', 'kick_group_member', 'send_sticker']) assert.ok(!defs.some(d => d.name === name), name);
+  const query = defs.find(d => d.name === 'memory_query');
+  const result = await query.execute({}, { userId: '12345' });
+  assert.ok(result.content.includes('喜欢茶')); assert.ok(!result.content.includes('其他人的记忆'));
+  assert.equal((await query.execute({}, { userId: '67890' })).isError, true);
+  f.cfg.agentWechat.bindings = {};
+  assert.equal((await query.execute({}, { userId: '12345' })).isError, true);
+});
+
+test('console routes reuse shared DM handlers for WeChat without accepting fake group or QQ IDs', async () => {
+  const routes = [], awakened = [];
+  const router = { add: (method, pattern, handler) => routes.push({ method, pattern, handler }) };
+  const noop = () => {};
+  registerChatRoutes(router, { json: (_res, status, body) => ({ status, body }), readBody: async () => ({}), emit: noop, log: noop,
+    store: {}, orchestrator: { requestManualWake: key => { awakened.push(key); return { ok: true }; } }, sender: {}, onebot: {},
+    updateConfig: noop, groupDigest: {}, adminBriefing: {}, getIncidentPilot: noop, getSlangPilot: noop });
+  const id = `wechat_${'a'.repeat(64)}`;
+  const match = url => routes.filter(r => r.method === 'POST' && r.pattern instanceof RegExp && r.pattern.test(url));
+  const wx = match(`/api/chats/private_${id}/wake`);
+  assert.equal(wx.length, 1);
+  assert.equal((await wx[0].handler({}, {}, wx[0].pattern.exec(`/api/chats/private_${id}/wake`))).status, 202);
+  assert.deepEqual(awakened, [`private:${id}`]);
+  assert.equal(match(`/api/chats/group_${id}/wake`).length, 0);
+  assert.equal(match('/api/chats/private_fakeQQ/wake').length, 0);
+  assert.equal(match('/api/chats/private_12345/wake').length, 1);
+});
+
 test('first activation skips old events and a saved cursor survives adapter restart', async t => {
   const f = fixture(t, { enabled: true });
   f.api.request = async route => route === '' ? { authenticated: true, connection: 'online' } : { items: [event()], nextCursor: '73' };
@@ -171,7 +207,7 @@ test('real shared Agent handles WeChat then QQ with their own tool catalogs and 
   await runner.wake(f.key);
   const first = sessions.listSummaries(10)[0]; assert.equal(sessions.get(first.id).status, 'done', JSON.stringify(sessions.get(first.id)));
   assert.ok(requests[0].messages[0].content.includes('微信私聊'));
-  assert.ok(requests[0].tools.every(tool => ['send_message', 'finish', 'persona_background_lookup'].includes(tool.function.name)));
+  assert.ok(requests[0].tools.every(tool => COMMON_CHAT_TOOLS.has(tool.function.name)));
   assert.equal(f.calls.filter(([p]) => p === '/sends').length, 1); assert.equal(qqSent.length, 0);
   f.store.appendIncoming('private:12345', { mid: 'qq-turn', text: '你好', senderId: '12345' });
   await runner.wake('private:12345'); assert.deepEqual(qqSent, ['你好呀']); assert.equal(requests.length, 4);

@@ -54,7 +54,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       const abort = () => { void connection.close(); };
       scopedSignal.addEventListener('abort', abort, { once: true });
       try {
-        const init = await connection.call('initialize', { protocolVersion: 1, clientCapabilities: native.capabilities, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
+        const init = await connection.call('initialize', { protocolVersion: 1, clientCapabilities: mcpRun.platform === 'wechat' && !config.nativeApproval ? {} : native.capabilities, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
         if (init?.protocolVersion !== 1) throw new Error('Unsupported ACP protocol');
         if (pool) invocation.retainWorkspace();
         return { peer: connection, dispose: () => invocation.releaseWorkspace() };

@@ -10,7 +10,7 @@ const clean = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 // 上海时间 03:00 换日，不依赖操作系统时区。
 export const memoryDay = (now = Date.now()) => new Date(now + 5 * 3600000).toISOString().slice(0, 10);
 const previousDay = (day) => new Date(Date.parse(day) - DAY).toISOString().slice(0, 10);
-const personaKey = (persona = {}) => crypto.createHash('sha256')
+export const personaKey = (persona = {}) => crypto.createHash('sha256')
   .update(JSON.stringify([persona.templateId || '', persona.botName || '', persona.roleText || '']))
   .digest('hex').slice(0, 24);
 

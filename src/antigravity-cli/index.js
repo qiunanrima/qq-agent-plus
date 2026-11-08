@@ -97,7 +97,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       args.splice(args.indexOf('--json-schema'), 2);
       args[args.indexOf('--settings') + 1] = JSON.stringify(invocation.settings);
       prompt = buildMcpPrompt({ messages, toolChoice, nativeApproval: cfg.nativeApproval, platform: mcpRun?.platform });
-      if (cfg.nativeApproval) {
+      if (cfg.nativeApproval || mcpRun?.platform === 'wechat') {
         return await acpCompletion({ config: cfg, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, {
           verify: verifyNative, pool: spawnProcess === spawn ? acpPool : undefined
         });
