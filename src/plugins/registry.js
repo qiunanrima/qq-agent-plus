@@ -836,7 +836,8 @@ export class PluginRegistry {
     const sender = this.getSender?.();
     if (sender?.sendTextBatch) {
       try {
-        await sender.sendTextBatch(`private:${owner}`, [text], {});
+        const result = await sender.sendTextBatch(`private:${owner}`, [text], {});
+        if (result?.failed?.length) throw new Error('发送队列报告通知未送达');
         return { delivered: true, error: '' };
       } catch (error) {
         errors.push(`WS 私聊：${error?.message ?? error}`);

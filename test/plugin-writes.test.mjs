@@ -596,4 +596,11 @@ test('免审批模式：结果未知通知管理员并保留配额；通知失�
   assert.equal(sent.ok, true);
   assert.equal(sent.ownerNotice.delivered, false);
   assert.equal(failedNotice.calls.length, 1);
+  const softFailure = makeRegistry({ ownerUin: '10001', manifestPatch: m,
+    sender: { sendTextBatch: async () => ({ sent: [], failed: [{ reason: 'blocked' }] }) }
+  });
+  const softResult = parse(await runTool(softFailure.registry, { bvid: 'UID4', text: '通知被拦截' }));
+  assert.equal(softResult.ok, true);
+  assert.equal(softResult.ownerNotice.delivered, false);
+  assert.equal(softFailure.calls.length, 1);
 });
