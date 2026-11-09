@@ -549,6 +549,13 @@ const tools = {
   },
 
   async account({ what, mediaId, page, cursor, kind, limit, mid } = {}, context = {}) {
+    const requested = String(what || '').trim().toLowerCase();
+    what = ['messages', 'inbox', 'sessions'].includes(requested)
+      ? (mid ? 'message_history' : 'message_sessions') : requested;
+    const supported = ['whoami', 'doctor', 'history', 'favorites', 'followings', 'notifications', 'message_sessions', 'message_history'];
+    if (!supported.includes(what)) {
+      throw new Error(`account.what 不支持 ${JSON.stringify(requested)}。支持：${supported.join(' / ')}。读取私信用 messages 工具：what=sessions 列会话，what=history 加 mid 读正文；不是没有私信接口。`);
+    }
     if (what === 'message_sessions' || what === 'message_history') {
       return tools.messages({ what: what === 'message_sessions' ? 'sessions' : 'history', mid, cursor, limit }, context);
     }
@@ -601,7 +608,7 @@ const tools = {
         results: (data?.data?.medias || []).map((item) => ({ bvid: item.bvid, title: item.title, author: item.upper?.name || '', url: item.bvid ? bvLink(item.bvid) : '' }))
       };
     }
-    throw new Error('what 只能是 whoami / doctor / history / favorites / followings');
+    throw new Error('账号查询未返回结果，请检查参数后重试');
   },
 
   // ── 扫码登录（聊天内完成，Cookie 进加密凭据、立即生效） ──

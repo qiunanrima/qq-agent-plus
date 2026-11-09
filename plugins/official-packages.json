@@ -39,8 +39,8 @@
       "sha256": "08fd0e0341cbd5cc3988fda9ae0484746541d8fee81ea0affa0f98c2f66daf9c"
     },
     "bilibili-lite": {
-      "version": "1.0.2",
-      "sha256": "ce89131e06ac81fd126ca0aea141b83f6de3adc4fc6203aa0d174fb3b6285621"
+      "version": "1.0.3",
+      "sha256": "99581951780b987a9064c8f7c6a2ceb25dbd1f5a82ac01c04e904811a80f6c40"
     }
   }
 }

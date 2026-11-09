@@ -26,7 +26,7 @@ test('轻量版与原版独立安装，删除的能力不出现在清单或运�
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'plugins', id, 'plugin.json'), 'utf8')).id, id);
   }
   const manifest = JSON.parse(fs.readFileSync('examples/plugins/bilibili-lite/plugin.json', 'utf8'));
-  assert.equal(manifest.tools.length, 9);
+  assert.equal(manifest.tools.length, 10);
   assert.equal(manifest.tools.find((t) => t.name === 'message_send').approvalMode, 'notify');
   assert.equal(manifest.quotas.message_send, 20);
   assert.equal(manifest.tools.find((t) => t.name === 'dynamic_publish').approvalMode, 'notify');
@@ -79,6 +79,7 @@ test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下�
   }
   for (const [name, args] of [
     ['account', { what: 'message_sessions', channel: 'console' }],
+    ['messages', { what: 'sessions', channel: 'console' }],
     ['dynamic_publish', { text: '正文', approved: { action: 'dynamic_publish', target: '' } }],
     ['message_send', { mid: '7', text: '你好' }]
   ]) await assert.rejects(() => host.callTool(name, args), /只有管理员/);
@@ -89,6 +90,12 @@ test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下�
   await assert.rejects(() => host.callTool('dynamic_publish', { text: ' ' }, owner), /正文不能为空/);
   await assert.rejects(() => host.callTool('message_send', { mid: '8', text: '不允许' }, owner), /发信白名单/);
   await assert.rejects(() => host.callTool('account', { what: 'message_history', mid: '8' }, owner), /收信白名单/);
+  await assert.rejects(() => host.callTool('account', { what: 'not_a_mode' }, owner), (error) => {
+    assert.match(error.message, /message_sessions/);
+    assert.match(error.message, /messages 工具/);
+    assert.match(error.message, /not_a_mode/);
+    return true;
+  });
   assert.equal(calls.length, 0, '坏参数与非管理员读取不应碰网络');
 
   const popular = await host.callTool('search', { kind: 'popular' });
@@ -106,16 +113,20 @@ test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下�
   assert.equal(posted.headers['content-type'], 'application/json');
   assert.equal(JSON.parse(posted.body).dyn_req.content.contents[0].raw_text, '测试动态');
 
-  const sessions = await host.callTool('account', { what: 'message_sessions', limit: 10, cursor: '1730000000000002' }, owner);
+  const sessions = await host.callTool('messages', { what: 'sessions', limit: 10, cursor: '1730000000000002' }, owner);
   assert.equal(sessions.results[0].lastMessage.seqno, '18446744073709551614');
   assert.equal(sessions.results[0].lastMessage.text, '你好');
   assert.equal(sessions.nextCursor, '1730000000000001');
   assert.equal(new URL(calls.at(-1).url).searchParams.get('end_ts'), '1730000000000002');
-  const history = await host.callTool('account', { what: 'message_history', mid: '7', cursor: '18446744073709551615' }, owner);
+  const history = await host.callTool('messages', { what: 'history', mid: '7', cursor: '18446744073709551615' }, owner);
   assert.equal(history.nextCursor, '18446744073709551614');
   assert.equal(history.results[0].text, '[已撤回]');
   assert.ok(!JSON.stringify(history).includes('撤回的秘密'));
   assert.equal(new URL(calls.at(-1).url).searchParams.get('end_seqno'), '18446744073709551615');
+  const legacy = await host.callTool('account', { what: 'message_sessions' }, owner);
+  assert.equal(legacy.results[0].lastMessage.text, '你好');
+  const alias = await host.callTool('account', { what: 'inbox', mid: '7' }, owner);
+  assert.equal(alias.mid, '7');
 
   const sent = await host.callTool('message_send', { mid: '7', text: '你好' }, {
     context: { approved: { action: 'message_send', target: '7' } }

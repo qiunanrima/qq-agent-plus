@@ -2,7 +2,7 @@
   "id": "bilibili-lite",
   "apiVersion": 2,
   "name": "B 站轻量版",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "搜索视频与热门榜单、查看视频详情/字幕语言/弹幕及 UP 主；扫码登录、账号查询与私信阅读；点赞/投币/收藏/关注/评论、发布纯文字动态、发送文字私信（动态和私信免审批并通知管理员；其他写操作需批准）。；可自动接收文字私信，收发 UID 白名单独立开关",
   "entry": "index.mjs",
   "capabilities": [
@@ -255,7 +255,7 @@
     },
     {
       "name": "account",
-      "description": "看当前登录账号与消息：whoami（我是谁/登录是否有效/主人绑定是否一致）、doctor（环境与登录自检）、notifications（未读回复/@/点赞）、history、favorites、followings。需要配置 Cookie。；message_sessions 私信会话列表，message_history 与指定 mid 的文字私信历史（仅管理员；不会标记已读）。",
+      "description": "账号查询：whoami/doctor 登录检查；history 观看历史；favorites 收藏夹；followings 关注；notifications 回复/@/点赞通知。私信请优先用 messages 工具（列会话或读正文）；兼容 message_sessions/message_history。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -306,6 +306,38 @@
         "required": [
           "what"
         ]
+      }
+    },
+    {
+      "name": "messages",
+      "description": "读取B站私信（不是回复/@/点赞通知）。what=sessions（默认）列出私信会话；what=history 并传对方 mid 读取文字私信正文。仅管理员/控制台可用，受收信UID白名单限制，读取不标记已读。要看私信优先用这个工具。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "what": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "history"
+            ],
+            "description": "sessions 列私信会话，history 读指定UID私信正文"
+          },
+          "mid": {
+            "type": "string",
+            "description": "history 必填：对方B站UID"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "上次对应结果的nextCursor，首次不填"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "返回条数，默认20"
+          }
+        },
+        "required": []
       }
     },
     {
