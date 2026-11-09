@@ -30,6 +30,8 @@ export function registerChatRoutes(router, deps = {}) {
     router.add(method, pattern, handler);
     const wx = new RegExp(pattern.source.replace('(group|private)_(\\d+)', '(group|private)_(wechat_[a-f0-9]{64})'), pattern.flags);
     router.add(method, wx, handler);
+    const bili = new RegExp(pattern.source.replace('(group|private)_(\\d+)', '(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})'), pattern.flags);
+    router.add(method, bili, handler);
   };
 
   router.add('POST', '/api/runtime', async (req, res) => {

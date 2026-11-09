@@ -520,7 +520,7 @@ export class PluginRegistry {
       const host = this.hosts.get(item.id);
       this.scheduleState.set(item.key, now);   // 先记时间：任务的异步执行不该让下一个 tick 重复触发
       this.lastUsedAt.set(item.id, now);
-      void host.runSchedule(item.name);
+      void host.runSchedule(item.name, { onResult: (result) => this.onScheduleResult?.(item.id, result) });
     }
   }
 
@@ -936,6 +936,15 @@ export class PluginRegistry {
     // 应按 channel 判断。写动作仍由上面的 tool.action 硬拦截（issue #21）。
     const result = await ready.callTool(toolName, args ?? {}, { timeoutMs: Number(tool.timeoutMs) || 30000, context: { channel: 'console', chatKey: '' } });
     return result && typeof result === 'object' ? result : {};
+  }
+
+  async sendBilibiliMessage(chatKey, mid, text) {
+    const match = /^private:bilibili_([1-9]\d{0,24})_([1-9]\d{0,24})$/.exec(chatKey);
+    if (!match || match[2] !== String(mid)) throw new Error('B 站会话目标不匹配');
+    const host = this.hosts.get('bilibili-lite');
+    const tool = host?.manifest?.tools?.find((t) => t.name === 'message_send');
+    if (!tool) throw new Error('B 站轻量版未启用');
+    return this.#callPlugin(host, tool, { mid, text }, { chatKey });
   }
 
   /**

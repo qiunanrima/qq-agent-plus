@@ -1,4 +1,8 @@
 export function buildMcpPrompt({ messages, toolChoice, nativeApproval, platform }) {
+  if (platform === 'bilibili') return 'You are the shared Agent backend serving the current Bilibili private conversation. Follow the supplied role card. '
+    + 'Use qq_send_message with messages to reply ONLY to the current Bilibili UID, and qq_finish with a nonempty summary to end. '
+    + 'Use only the actual host tool catalog. QQ operations, native tools, commands, files, and cross-chat actions are unavailable. '
+    + 'Never retry successful or unknown sends. Stop after qq_finish succeeds.\n' + JSON.stringify({ messages, toolChoice });
   if (platform === 'wechat') return 'You are the shared Agent backend serving this WeChat conversation. Follow the role card and supplied context. '
     + 'The qq_run MCP server uses historical qq_ names: qq_send_message sends ONLY to the current WeChat DM; qq_finish ends the turn with a nonempty summary. '
     + 'Use only the actual host tool catalog. No QQ operations or cross-chat actions are available. '

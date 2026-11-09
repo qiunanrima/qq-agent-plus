@@ -604,3 +604,26 @@ test('免审批模式：结果未知通知管理员并保留配额；通知失�
   assert.equal(softResult.ownerNotice.delivered, false);
   assert.equal(softFailure.calls.length, 1);
 });
+
+test('动态免审批：无收件目标也能执行，发布后通知完整正文，每日限额仍为5条', async () => {
+  clearPluginGrants(dataDir, 'demo');
+  const m = manifest();
+  delete m.tools[0].actionTarget;
+  m.tools[0].approvalMode = 'notify';
+  m.quotas.write = 5;
+  const notices = [];
+  const { registry, calls } = makeRegistry({ ownerUin: '10001', manifestPatch: m,
+    sender: { sendTextBatch: async (_key, texts) => { notices.push(...texts); } }
+  });
+  for (let i = 0; i < 5; i += 1) {
+    registry.lastWriteAt.set('demo', 0);
+    assert.equal(parse(await runTool(registry, { text: `动态正文${i}` })).ok, true);
+  }
+  assert.equal(calls.length, 5);
+  assert.equal(notices.length, 5);
+  assert.match(notices[0], /动态正文0/);
+  assert.equal(listPendingApprovals(dataDir).length, 0);
+  registry.lastWriteAt.set('demo', 0);
+  assert.match(parse(await runTool(registry, { text: '第六条' })).error, /配额|上限/);
+  assert.equal(calls.length, 5);
+});

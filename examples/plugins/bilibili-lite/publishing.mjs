@@ -1,5 +1,6 @@
 // 动态与私信：只经宿主 HTTP；审批、配额和写入审计由 manifest + 宿主执行。
 import crypto from 'node:crypto';
+import { allowsUid } from './message-policy.mjs';
 
 const IM = 'https://api.vc.bilibili.com';
 
@@ -49,7 +50,7 @@ function bodyText(value, maxBytes) {
   return text;
 }
 
-export function createPublishingTools({ httpJson, wbiUrl, requireLogin, requireWriteAuth, navIdentity, num }) {
+export function createPublishingTools({ httpJson, wbiUrl, requireLogin, requireWriteAuth, navIdentity, num, getSettings = () => ({}) }) {
   return {
     async dynamic_publish({ text } = {}, context = {}) {
       approvedWrite(context, 'dynamic_publish');
@@ -72,6 +73,7 @@ export function createPublishingTools({ httpJson, wbiUrl, requireLogin, requireW
       ownerOnly(context);
       if (!['sessions', 'history'].includes(what)) throw new Error('what 必须是 sessions 或 history');
       const target = what === 'history' ? decimal(mid, 'mid') : '';
+      if (target && !allowsUid(getSettings(), 'receive', target)) throw new Error('对方 UID 不在收信白名单');
       const offset = decimal(cursor, 'cursor', true);
       await requireLogin({ write: false });
       const query = new URLSearchParams({ size: String(num(limit, 20, 1, 50)), mobi_app: 'web' });
@@ -84,7 +86,7 @@ export function createPublishingTools({ httpJson, wbiUrl, requireLogin, requireW
         }
         const rows = (result.data.session_list || []).slice(0, num(limit, 20, 1, 50));
         return {
-          what, results: rows.map((item) => ({
+          what, results: rows.filter((item) => allowsUid(getSettings(), 'receive', String(item.talker_id))).map((item) => ({
             mid: String(item.talker_id ?? ''), unread: Number(item.unread_count) || 0,
             lastMessage: item.last_msg ? messageRow(item.last_msg) : null
           })),
@@ -109,14 +111,18 @@ export function createPublishingTools({ httpJson, wbiUrl, requireLogin, requireW
     async message_send({ mid, text } = {}, context = {}) {
       const target = decimal(mid, 'mid');
       approvedWrite(context, 'message_send', target);
+      if (!allowsUid(getSettings(), 'send', target)) throw new Error('对方 UID 不在发信白名单');
       const content = bodyText(text, 2000);
       const auth = await requireWriteAuth();
       const who = await navIdentity();
       if (!who.isLogin || !/^[1-9]\d*$/.test(who.mid)) throw new Error('登录态无效，请重新扫码登录');
+      const channelAccount = /^private:bilibili_([1-9]\d{0,24})_([1-9]\d{0,24})$/.exec(String(context.chatKey || ''));
+      if (channelAccount && (channelAccount[1] !== who.mid || channelAccount[2] !== target)) throw new Error('B 站登录账号或会话目标已变化，拒绝发送');
       const devId = crypto.randomUUID();
       const url = await wbiUrl('/web_im/v1/web_im/send_msg', {
         w_sender_uid: who.mid, w_receiver_id: target, w_dev_id: devId
       }, IM);
+      if (!allowsUid(getSettings(), 'send', target)) throw new Error('对方 UID 已从发信白名单移除');
       const result = await httpJson(url, {
         method: 'POST', auth: true,
         form: {

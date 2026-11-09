@@ -8,7 +8,7 @@ import { createRunImageAccess } from './image-access.js';
 
 /** Per-process workspace avoids sharing MCP tokens or catalogs across chats. */
 export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, signal, isEnabled = () => true }) {
-  const useAcp = config.nativeApproval || mcpRun?.platform === 'wechat';
+  const useAcp = config.nativeApproval || ['wechat', 'bilibili'].includes(mcpRun?.platform);
   if (!mcpRun?.chatKey || !mcpRun?.runId || typeof mcpRun.execute !== 'function' || typeof mcpRun.allowed !== 'function') {
     throw new Error('MCP requires an authorized host run');
   }
@@ -54,7 +54,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     if (useAcp) agentTemplate = agentTemplate.replace('inheritCustomizations: false', 'inheritCustomizations: true');
     if (useAcp && !config.nativeApproval) agentTemplate = agentTemplate.replace('本版本禁止所有原生文件、命令和浏览器工具；即使用户要求也不能调用，不得尝试绕过权限。',
       '禁止原生文件、命令和浏览器操作。唯一例外是 qq_run 看图工具返回的本轮图片指定路径，读取时由宿主核对内容；禁止读取其他文件或用命令查找图片。');
-    if (mcpRun?.platform === 'wechat') agentTemplate = agentTemplate.replaceAll('普通 QQ 聊天', '当前微信私聊').replaceAll('使用 QQ Agent', '使用共享 Agent');
+    if (['wechat', 'bilibili'].includes(mcpRun?.platform)) agentTemplate = agentTemplate.replaceAll('普通 QQ 聊天', mcpRun?.platform === 'bilibili' ? '当前B站私信' : '当前微信私聊').replaceAll('使用 QQ Agent', '使用共享 Agent');
     await fs.writeFile(path.join(agentDir, 'agent.md'), agentTemplate.replace('name: qq-mcp', `name: ${config.agent}`));
     const eagerTools = Object.fromEntries(selected.filter(tool => tool.function?.name)
       .map(tool => [`qq_${tool.function.name}`, { eager: true }]));

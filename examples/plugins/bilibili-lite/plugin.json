@@ -2,8 +2,8 @@
   "id": "bilibili-lite",
   "apiVersion": 2,
   "name": "B 站轻量版",
-  "version": "1.0.1",
-  "description": "搜索视频与热门榜单、查看视频详情/字幕语言/弹幕及 UP 主；扫码登录、账号查询与私信阅读；点赞/投币/收藏/关注/评论、发布纯文字动态、发送文字私信（私信免审批、每日20条并通知管理员；其他写操作需批准）。",
+  "version": "1.0.2",
+  "description": "搜索视频与热门榜单、查看视频详情/字幕语言/弹幕及 UP 主；扫码登录、账号查询与私信阅读；点赞/投币/收藏/关注/评论、发布纯文字动态、发送文字私信（动态和私信免审批并通知管理员；其他写操作需批准）。；可自动接收文字私信，收发 UID 白名单独立开关",
   "entry": "index.mjs",
   "capabilities": [
     "tools",
@@ -13,7 +13,9 @@
     "approval",
     "quota",
     "send",
-    "log"
+    "log",
+    "storage",
+    "schedule"
   ],
   "httpDomains": [
     "bilibili.com",
@@ -81,6 +83,55 @@
           }
         ],
         "description": ""
+      },
+      {
+        "key": "messages",
+        "title": "私信接收与白名单",
+        "description": "收信与发信独立。白名单开关启用但名单为空时拒绝全部 UID。UID 用空格或逗号分隔；关闭某方向白名单表示不限制该方向 UID。",
+        "fields": [
+          {
+            "key": "receiveEnabled",
+            "label": "自动接收私信并交给 AI",
+            "type": "boolean",
+            "default": false,
+            "help": "按下方间隔检查新文字私信；首次启用建立基线，不回复旧记录。发信需另外打开写开关。"
+          },
+          {
+            "key": "pollIntervalMinutes",
+            "label": "私信检查间隔（分钟）",
+            "type": "number",
+            "default": 1,
+            "min": 1,
+            "max": 60,
+            "help": "1–60分钟，检查接口不调用AI；有新私信才唤醒AI。保存设置后下个调度周期应用。"
+          },
+          {
+            "key": "receiveWhitelistEnabled",
+            "label": "启用收信 UID 白名单",
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "receiveUids",
+            "label": "收信白名单 UID",
+            "type": "text",
+            "default": "",
+            "help": "最多100个 B 站 UID，空格或逗号分隔"
+          },
+          {
+            "key": "sendWhitelistEnabled",
+            "label": "启用发信 UID 白名单",
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "sendUids",
+            "label": "发信白名单 UID",
+            "type": "text",
+            "default": "",
+            "help": "最多100个 B 站 UID，空格或逗号分隔；与收信名单互不影响"
+          }
+        ]
       }
     ]
   },
@@ -99,8 +150,8 @@
     },
     {
       "action": "dynamic_publish",
-      "label": "发布文字动态",
-      "description": "以登录账号公开发布动态，需批准完整正文",
+      "label": "发布文字动态（免审批，发布后通知）",
+      "description": "开启后免逐条审批，每日最多5条；发布后通知管理员完整正文",
       "defaultUses": 1
     },
     {
@@ -362,7 +413,7 @@
     },
     {
       "name": "dynamic_publish",
-      "description": "以当前登录账号发布纯文字 B 站动态。需开启动态发布开关并由管理员批准完整正文；请求结果不明时先到 B 站核对，不可自动重发。",
+      "description": "以当前登录账号发布纯文字 B 站动态。需开启动态发布开关，免逐条审批，每日最多5条，发布后通知管理员完整正文。结果未知时先到 B 站核对，不可自动重发。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -376,7 +427,8 @@
         ]
       },
       "action": "dynamic_publish",
-      "actionPreview": "text"
+      "actionPreview": "text",
+      "approvalMode": "notify"
     },
     {
       "name": "message_send",
@@ -405,7 +457,13 @@
     }
   ],
   "engines": {
-    "minVersion": "0.9.16"
+    "minVersion": "0.9.17"
   },
-  "httpMaxBytes": 200000
+  "httpMaxBytes": 200000,
+  "schedule": [
+    {
+      "name": "inbox",
+      "everyMs": 60000
+    }
+  ]
 }

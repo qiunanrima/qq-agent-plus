@@ -384,9 +384,10 @@ export class PluginHost {
   }
 
   /** 周期任务由宿主驱动（这样插件重启后周期不会丢），失败不向上抛。 */
-  async runSchedule(name) {
+  async runSchedule(name, { onResult } = {}) {
     try {
-      await this.#request(HOST_METHODS.schedule, { name: String(name ?? '') }, this.timeouts.callTimeoutMs);
+      const result = await this.#request(HOST_METHODS.schedule, { name: String(name ?? '') }, this.timeouts.callTimeoutMs);
+      await onResult?.(result);
       return true;
     } catch (error) {
       this.log(`[plugin:${this.id}] 周期任务 ${name} 失败：${error?.message ?? error}`);

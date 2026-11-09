@@ -1,4 +1,4 @@
-import { channelForChat, isWechatChat } from '../channels/registry.js';
+import { channelForChat, isExternalChat } from '../channels/registry.js';
 import { getConfig } from './config.js';
 import { isTimeActive } from './time-gate.js';
 import { idList } from './list.js';
@@ -7,7 +7,7 @@ import { idList } from './list.js';
 export { idList };
 
 export function chatAllowed(chatKey, cfg = getConfig()) {
-  if (isWechatChat(chatKey)) { try { return channelForChat(chatKey)?.allowed(chatKey) === true; } catch { return false; } }
+  if (isExternalChat(chatKey)) { try { return channelForChat(chatKey)?.allowed(chatKey) === true; } catch { return false; } }
   const [kind, id] = String(chatKey).split(':');
   if (!['group', 'private'].includes(kind) || !/^\d+$/.test(id || '')) return false;
   const field = kind === 'group' ? 'groups' : 'private';

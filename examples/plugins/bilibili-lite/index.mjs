@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { mergeLoginTokens } from './login-tokens.mjs';
 import { resolveVideoQuery } from './video-ref.mjs';
 import { createPublishingTools } from './publishing.mjs';
+import { createInbox } from './inbox.mjs';
 
 const send = (message) => { process.stdout.write(`${JSON.stringify(message)}\n`); };
 
@@ -414,7 +415,7 @@ async function notificationsFeed({ kind, limit } = {}) {
 }
 
 const tools = {
-  ...createPublishingTools({ httpJson, wbiUrl, requireLogin, requireWriteAuth, navIdentity, num }),
+  ...createPublishingTools({ httpJson, wbiUrl, requireLogin, requireWriteAuth, navIdentity, num, getSettings: () => settings }),
   async search({ keyword, page, order, kind } = {}) {
     if (kind && kind !== 'search') {
       if (!['popular', 'ranking', 'weekly'].includes(kind)) throw new Error('kind 必须是 search/popular/ranking/weekly');
@@ -912,6 +913,12 @@ async function probeStatus() {
   };
 }
 
+const inbox = createInbox({ callHost, httpJson, navIdentity, getSettings: () => settings });
+tools.inbox_ack = async ({ checkpoint } = {}, context = {}) => {
+  if (context.channel !== 'console') throw new Error('收信确认仅限宿主');
+  return inbox.ack(checkpoint);
+};
+
 let buffer = '';
 process.stdin.on('data', (chunk) => {
   buffer += chunk.toString('utf8');
@@ -942,7 +949,9 @@ process.stdin.on('data', (chunk) => {
       } else if (message?.method === 'ping') {
         send({ id: message.id, result: {} });
       } else if (message?.method === 'schedule') {
-        send({ id: message.id, result: {} });
+        Promise.resolve().then(() => inbox.poll())
+          .then((result) => send({ id: message.id, result }))
+          .catch((error) => send({ id: message.id, error: { code: 'E_INBOX', message: String(error?.message || error) } }));
       } else if (message?.method === 'shutdown') {
         send({ id: message.id, result: {} });
         setTimeout(() => process.exit(0), 10);

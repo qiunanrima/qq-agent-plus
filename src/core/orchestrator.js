@@ -1,4 +1,4 @@
-import { channelForChat, isWechatChat } from '../channels/registry.js';
+import { channelForChat, isExternalChat } from '../channels/registry.js';
 import { wechatBindingContext } from '../agent-wechat/config.js';
 import { crossPlatformMemoryTools } from '../agent-wechat/memory-bridge.js';
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
@@ -551,7 +551,7 @@ export class Orchestrator {
    * 这里只给一次机会，避免变成刷屏。
    */
   #maybeScheduleFollowUp(chatKey, session) {
-    if (isWechatChat(chatKey)) return;
+    if (isExternalChat(chatKey)) return;
     try {
       const cfgNow = getConfig();
       // 主动私聊默认关闭：补话也不能绕过这个范围开关。
@@ -1508,7 +1508,7 @@ export class Orchestrator {
       if (session.perception) this.perception.consume(session.perception, session.episodeSummary || session.handoffDraft?.summary || lastSentText(session));
       // 已读回执（platform.readReceipts，默认关）：这批处理完就在 QQ 里标已读，
       // 各端未读数不再堆积；默认关是因为它会改变"你自己打开机器人 QQ 时的未读观感"。
-      if (!isWechatChat(chatKey) && getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
+      if (!isExternalChat(chatKey) && getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
       const status = session.sent.length > 0 ? 'done' : 'noreply';
       this.sessions.finish(session.id, status);
       try {
@@ -2606,7 +2606,7 @@ export class Orchestrator {
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
       bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
-      if (channel) { mcpRun.platform = 'wechat'; mcpRun.approvalAllowed = category => category === 'native' && channel.allowed(chatKey) && channel.config().nativeApproval === true; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
+      if (channel) { mcpRun.platform = channel.platform || 'wechat'; mcpRun.approvalAllowed = category => category === 'native' && channel.allowed(chatKey) && channel.config().nativeApproval === true; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
         messages,
@@ -3320,7 +3320,7 @@ export class Orchestrator {
     const prefix = scope === 'private' ? 'private:' : 'group:';
     const privateInitiatives = scope === 'private' ? readProactiveState(PROACTIVE_STATE_FILE).privateInitiatives : {};
     return proactiveCandidates({
-      chatKeys: this.store.listChats().filter((key) => !isWechatChat(key) && String(key).startsWith(prefix)),
+      chatKeys: this.store.listChats().filter((key) => !isExternalChat(key) && String(key).startsWith(prefix)),
       cfg,
       metaOf: (chatKey) => this.store.getChatMeta(chatKey),
       canWake: (chatKey) => canRun(chatKey),

@@ -22,14 +22,14 @@ test('轻量版与原版独立安装，删除的能力不出现在清单或运�
   const { installPlugin } = await import('../src/plugins/install.js');
   for (const id of ['bilibili', 'bilibili-lite']) {
     const packed = packPluginDir({ dir: path.resolve('examples/plugins', id) });
-    await installPlugin({ id, tarball: packed.buffer, dataDir, hostVersion: '0.9.16', log: () => {} });
+    await installPlugin({ id, tarball: packed.buffer, dataDir, hostVersion: '0.9.17', log: () => {} });
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'plugins', id, 'plugin.json'), 'utf8')).id, id);
   }
   const manifest = JSON.parse(fs.readFileSync('examples/plugins/bilibili-lite/plugin.json', 'utf8'));
   assert.equal(manifest.tools.length, 9);
   assert.equal(manifest.tools.find((t) => t.name === 'message_send').approvalMode, 'notify');
   assert.equal(manifest.quotas.message_send, 20);
-  assert.equal(manifest.tools.find((t) => t.name === 'dynamic_publish').approvalMode, undefined);
+  assert.equal(manifest.tools.find((t) => t.name === 'dynamic_publish').approvalMode, 'notify');
   assert.ok(!manifest.capabilities.includes('media'));
   assert.ok(!manifest.approvals.some((a) => a.action === 'danmaku'));
   assert.ok(!manifest.settings.groups.some((g) => g.key === 'playback'));
@@ -45,7 +45,7 @@ test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下�
   }, ['sessdata', 'bili_jct', 'dedeuserid']);
   const calls = [];
   let mode = 'ok';
-  const host = await startHost('bilibili-lite', {}, {
+  const host = await startHost('bilibili-lite', { receiveUids: '7', sendUids: '7' }, {
     httpMock: async (request) => {
       calls.push(request);
       const url = new URL(request.url);
@@ -87,6 +87,8 @@ test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下�
     await assert.rejects(() => host.callTool('message_send', args, owner), /正整数字符串|正文过长/);
   }
   await assert.rejects(() => host.callTool('dynamic_publish', { text: ' ' }, owner), /正文不能为空/);
+  await assert.rejects(() => host.callTool('message_send', { mid: '8', text: '不允许' }, owner), /发信白名单/);
+  await assert.rejects(() => host.callTool('account', { what: 'message_history', mid: '8' }, owner), /收信白名单/);
   assert.equal(calls.length, 0, '坏参数与非管理员读取不应碰网络');
 
   const popular = await host.callTool('search', { kind: 'popular' });
@@ -127,6 +129,11 @@ test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下�
   assert.equal(form.get('msg[receiver_id]'), '7');
   assert.deepEqual(JSON.parse(form.get('msg[content]')), { content: '你好' });
   assert.ok(calls.every((r) => !r.url.includes('update_ack')));
+  const postCount = calls.filter(r => r.method === 'POST').length;
+  await assert.rejects(() => host.callTool('message_send', { mid: '7', text: '账号已换' }, {
+    context: { chatKey: 'private:bilibili_999_7', approved: { action: 'message_send', target: '7' } }
+  }), /账号或会话目标已变化/);
+  assert.equal(calls.filter(r => r.method === 'POST').length, postCount);
 
   for (mode of ['timeout', 'broken', 'missing']) {
     for (const [name, args] of [['dynamic_publish', { text: '测试' }], ['message_send', { mid: '7', text: '测试' }]]) {

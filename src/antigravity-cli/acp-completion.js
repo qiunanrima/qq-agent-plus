@@ -62,7 +62,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       const abort = () => { void connection.close(); };
       scopedSignal.addEventListener('abort', abort, { once: true });
       try {
-        const init = await connection.call('initialize', { protocolVersion: 1, clientCapabilities: mcpRun.platform === 'wechat' && !config.nativeApproval ? {} : native.capabilities, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
+        const init = await connection.call('initialize', { protocolVersion: 1, clientCapabilities: ['wechat', 'bilibili'].includes(mcpRun.platform) && !config.nativeApproval ? {} : native.capabilities, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
         if (init?.protocolVersion !== 1) throw new Error('Unsupported ACP protocol');
         if (pool) invocation.retainWorkspace();
         const capabilities = init.agentCapabilities?.sessionCapabilities || init.agentCapabilities?.session_capabilities;
@@ -122,7 +122,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     if (invocation.finished()) hostFinished = true;
     // A protocol-only turn must leave either a host tool result or model text.
     // An empty end_turn is not evidence that the incoming message was handled.
-    if (mcpRun.platform === 'wechat' && !hostFinished && !response.trim() && invocation.calls() === 0) {
+    if (['wechat', 'bilibili'].includes(mcpRun.platform) && !hostFinished && !response.trim() && invocation.calls() === 0) {
       const denied = deniedTools.size ? `; denied tools: ${[...deniedTools].join(', ')}` : '';
       const error = new Error(`Antigravity ACP returned an empty turn without calling host tools${denied}`);
       error.code = 'ANTIGRAVITY_ACP_EMPTY_RESULT';

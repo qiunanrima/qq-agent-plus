@@ -16,3 +16,10 @@ test('disabled native mode remains QQ-only and never advertises command support'
   assert.doesNotMatch(prompt, /Configured native tools/);
   assert.match(prompt, /Stop after qq_finish succeeds/);
 });
+
+test('Bilibili Agent prompt restricts replies to the current UID without QQ or native permissions', () => {
+  const prompt = buildMcpPrompt({ messages: [], toolChoice: 'auto', nativeApproval: true, platform: 'bilibili' });
+  assert.match(prompt, /current Bilibili UID/);
+  assert.match(prompt, /native tools, commands, files, and cross-chat actions are unavailable/);
+  assert.match(prompt, /Never retry successful or unknown sends/);
+});

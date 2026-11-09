@@ -44,6 +44,7 @@ import { handlePrivateCliApproval } from '../antigravity-cli/private-approvals.j
 import { GroupGameManager } from '../features/group-game.js';
 import { ReminderStore } from '../core/reminders.js';
 import { PluginRegistry } from '../plugins/registry.js';
+import { BilibiliChannel } from '../plugins/bilibili-channel.js';
 import { McpManager } from '../mcp/manager.js';
 import { registerKnowledgeRoutes } from './routes/knowledge.js';
 import { registerMemeRoutes } from './routes/memes.js';
@@ -2375,6 +2376,7 @@ function buildApp({
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
   const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit, log: moduleLog('agent-wechat') });
   registerAgentWechatRoutes(router, { runtime: agentWechat, getConfig, updateConfig, json, readBody, auditWrite });
+  const bilibiliChannel = new BilibiliChannel({ registry: pluginRegistry, store, orchestrator, getConfig, emit, log });
 
   router.add('GET', '/healthz', async (req, res) => {
     // 给拨测/uptime 监控用：无鉴权，但只含版本与连接状态，不带任何配置
@@ -3598,6 +3600,7 @@ function buildApp({
     }
     try {
       const rulesBeforeStart = [...indexRevokedRules()].sort().join('\n');
+      bilibiliChannel.start();
       await pluginRegistry.start();
       pluginsStarted = true;
       // 暖加载可能恰好在 start 期间完成（pluginsStarted 还是 false，那次没有触发重排）：
@@ -3631,6 +3634,7 @@ function buildApp({
   }
 
   async function stop() {
+    bilibiliChannel.stop();
     await agentWechat.dispose().catch(() => {});
     try {
       pluginsStarted = false;
