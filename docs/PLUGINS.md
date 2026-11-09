@@ -319,6 +319,8 @@ HTTP 能力新增可选 `redirect: 'manual'`，返回中间响应的 `location`�
 手动跟随的下一次请求仍独立通过全部网络守卫。
 
 `examples/plugins/bilibili` 是完整的 v2 例子：读接口、DASH 下载合流、写操作（授权 + 配额）。
+v1.1.3 增加纯文字动态和文字私信，需宿主 0.9.15+（审批执行修复；插件本身已收敛到 12 个工具）；
+设置、审批与回滚见 [B 站插件说明](BILIBILI.md)。
 它的用法与限制见 [BILIBILI.md](BILIBILI.md)。
 
 形状最小到能照抄：

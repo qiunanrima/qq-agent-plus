@@ -1029,7 +1029,9 @@ export class PluginRegistry {
     if (!tool || tool.action !== pending.action) return { ok: false, message: '插件工具或动作已变化，未重试' };
     const targetKeys = Array.isArray(tool.actionTarget) ? tool.actionTarget : (tool.actionTarget ? [tool.actionTarget] : []);
     const values = [...new Set(targetKeys.map((key) => normalizeTarget(retry.args?.[key])).filter(Boolean))];
-    if (values.length !== 1 || values[0] !== pending.target) {
+    if (targetKeys.length
+      ? values.length !== 1 || values[0] !== pending.target
+      : Boolean(pending.target)) {
       return { ok: false, message: '原始请求的目标与待批不一致，未重试' };
     }
     try {

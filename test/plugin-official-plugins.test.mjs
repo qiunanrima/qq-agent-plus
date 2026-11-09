@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { writePluginSecrets } from '../src/plugins/secrets.js';
 
 // 与 test/plugins.test.mjs 同一套做法：数据目录指到临时目录，退出时清掉
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-official-plugins-'));
@@ -31,6 +32,101 @@ const IDS = Object.keys(ANCHORS.packages || {}).sort();
 // 这五个是本轮新增的（有自己的坏参数/守卫用例）；它们在 IDS 里也要在，两边不许漂移
 const NEW_IDS = ['translate', 'hot-topics', 'exchange-rate', 'ip-info', 'rss'];
 const dirOf = (id) => path.join(process.cwd(), 'examples', 'plugins', id);
+
+test('B站发布与私信：真实插件进程通过宿主 HTTP，审批上下文、分页、大整数和未知写结果', async (t) => {
+  writePluginSecrets(dataDir, 'bilibili', {
+    sessdata: 'test-session', bili_jct: 'test-csrf', dedeuserid: '999'
+  }, ['sessdata', 'bili_jct', 'dedeuserid']);
+  const calls = [];
+  let mode = 'ok';
+  const host = await startHost('bilibili', {}, {
+    httpMock: async (request) => {
+      calls.push(request);
+      const url = new URL(request.url);
+      const reply = (data) => ({ status: 200, body: JSON.stringify({ code: 0, data }) });
+      if (url.pathname === '/x/web-interface/nav') return reply({
+        isLogin: true, mid: 42,
+        wbi_img: { img_url: 'https://i0.hdslb.com/abcdefghijklmnopqrstuvwxyz123456.png', sub_url: 'https://i0.hdslb.com/123456abcdefghijklmnopqrstuvwxyz.png' }
+      });
+      if (request.method === 'POST' && mode === 'timeout') throw new Error('request timed out');
+      if (request.method === 'POST' && mode === 'broken') return { status: 200, body: '<html>gateway</html>' };
+      if (url.pathname === '/x/dynamic/feed/create/dyn') return reply(mode === 'missing' ? {} : { dyn_id_str: '1063487284684259332' });
+      if (url.pathname === '/web_im/v1/web_im/send_msg') return reply(mode === 'missing' ? {} : { msg_key: '6984393491767669026' });
+      if (url.pathname === '/x/web-interface/popular') return reply({ list: [{ bvid: 'BV1xx411c7mD', title: '热门测试' }] });
+      if (url.pathname === '/x/web-interface/view') return reply({ aid: 170001, bvid: 'BV1xx411c7mD', cid: 42, owner: {}, stat: {}, pages: [] });
+      if (url.pathname === '/x/v1/dm/list.so') return { status: 200, body: '<i><d p="1,1">测试弹幕</d></i>' };
+      if (url.pathname.endsWith('/get_sessions')) return {
+        status: 200,
+        body: '{"code":0,"data":{"session_list":[{"talker_id":7,"session_ts":1730000000000001,"unread_count":2,"last_msg":{"sender_uid":7,"msg_type":1,"content":"{\\"content\\":\\"你好\\"}","msg_seqno":18446744073709551614}}],"has_more":1}}'
+      };
+      if (url.pathname.endsWith('/fetch_session_msgs')) return {
+        status: 200,
+        body: '{"code":0,"data":{"messages":[{"sender_uid":7,"msg_type":1,"msg_status":1,"content":"{\\"content\\":\\"撤回的秘密\\"}","msg_seqno":18446744073709551614}],"min_seqno":18446744073709551614,"has_more":1}}'
+      };
+      throw new Error(`未预期请求：${url.pathname}`);
+    }
+  });
+  t.after(() => host.stop());
+  const owner = { context: { senderIsOwner: true } };
+  for (const [name, args] of [
+    ['account', { what: 'message_sessions', channel: 'console' }],
+    ['dynamic_publish', { text: '正文', approved: { action: 'dynamic_publish', target: '' } }],
+    ['message_send', { mid: '7', text: '你好' }]
+  ]) await assert.rejects(() => host.callTool(name, args), /只有管理员/);
+  assert.equal(calls.length, 0);
+  for (const args of [{ mid: 'https://example.com', text: 'x' }, { mid: '7', text: '中'.repeat(1000) }, { mid: 7, text: 'x' }]) {
+    await assert.rejects(() => host.callTool('message_send', args, owner), /正整数字符串|正文过长/);
+  }
+  await assert.rejects(() => host.callTool('dynamic_publish', { text: ' ' }, owner), /正文不能为空/);
+  assert.equal(calls.length, 0, '坏参数与非管理员读取不应碰网络');
+
+  const popular = await host.callTool('search', { kind: 'popular' });
+  assert.equal(popular.results[0].bvid, 'BV1xx411c7mD');
+  const video = await host.callTool('video', { bvid: 'BV1xx411c7mD', withComments: false, withDanmaku: true });
+  assert.equal(video.danmaku[0].text, '测试弹幕');
+
+  const dynamic = await host.callTool('dynamic_publish', { text: '测试动态' }, {
+    context: { approved: { action: 'dynamic_publish', target: '' } }
+  });
+  assert.equal(dynamic.id, '1063487284684259332');
+  const posted = calls.at(-1);
+  assert.equal(posted.method, 'POST');
+  assert.equal(new URL(posted.url).searchParams.get('csrf'), 'test-csrf');
+  assert.equal(posted.headers['content-type'], 'application/json');
+  assert.equal(JSON.parse(posted.body).dyn_req.content.contents[0].raw_text, '测试动态');
+
+  const sessions = await host.callTool('account', { what: 'message_sessions', limit: 10, cursor: '1730000000000002' }, owner);
+  assert.equal(sessions.results[0].lastMessage.seqno, '18446744073709551614');
+  assert.equal(sessions.results[0].lastMessage.text, '你好');
+  assert.equal(sessions.nextCursor, '1730000000000001');
+  assert.equal(new URL(calls.at(-1).url).searchParams.get('end_ts'), '1730000000000002');
+  const history = await host.callTool('account', { what: 'message_history', mid: '7', cursor: '18446744073709551615' }, owner);
+  assert.equal(history.nextCursor, '18446744073709551614');
+  assert.equal(history.results[0].text, '[已撤回]');
+  assert.ok(!JSON.stringify(history).includes('撤回的秘密'));
+  assert.equal(new URL(calls.at(-1).url).searchParams.get('end_seqno'), '18446744073709551615');
+
+  const sent = await host.callTool('message_send', { mid: '7', text: '你好' }, {
+    context: { approved: { action: 'message_send', target: '7' } }
+  });
+  assert.equal(sent.ok, true);
+  const message = calls.at(-1);
+  const form = new URLSearchParams(message.body);
+  assert.equal(new URL(message.url).origin, 'https://api.vc.bilibili.com');
+  assert.ok(new URL(message.url).searchParams.get('w_rid'));
+  assert.equal(form.get('msg[sender_uid]'), '42', '发送者取实际 nav，不信任 Cookie 中的 UID');
+  assert.equal(form.get('msg[receiver_id]'), '7');
+  assert.deepEqual(JSON.parse(form.get('msg[content]')), { content: '你好' });
+  assert.ok(calls.every((r) => !r.url.includes('update_ack')));
+
+  for (mode of ['timeout', 'broken', 'missing']) {
+    for (const [name, args] of [['dynamic_publish', { text: '测试' }], ['message_send', { mid: '7', text: '测试' }]]) {
+      const before = calls.filter((r) => r.method === 'POST').length;
+      await assert.rejects(() => host.callTool(name, args, owner), (e) => e.code === 'E_WRITE_UNKNOWN');
+      assert.equal(calls.filter((r) => r.method === 'POST').length, before + 1, '未知写结果绝不重试');
+    }
+  }
+});
 
 /** 读 manifest 并断言它合法（dir 用绝对路径 —— 校验要拿它验 entry 不越界）。 */
 function manifestOf(id) {
@@ -66,6 +162,15 @@ test('官方插件：manifest 合法，id 与目录名一致，联网的都声�
     assert.ok(manifest.capabilities.includes('http'), `${id} 要联网就必须声明 http 能力`);
     assert.ok(manifest.capabilities.includes('tools'), `${id} 声明了工具就得带上 tools 能力`);
   }
+});
+
+test('插件工具预算：16 个可装，17 个仍拒绝', () => {
+  const raw = JSON.parse(fs.readFileSync(path.join(dirOf('bilibili'), 'plugin.json'), 'utf8'));
+  const tools = Array.from({ length: 17 }, (_, i) => ({ name: `tool_${i}`, description: '测试工具', parameters: { type: 'object', properties: {} } }));
+  assert.equal(parsePluginManifest({ ...raw, tools: tools.slice(0, 16) }, { dir: dirOf('bilibili') }).ok, true);
+  const denied = parsePluginManifest({ ...raw, tools }, { dir: dirOf('bilibili') });
+  assert.equal(denied.ok, false);
+  assert.match(denied.error, /16/);
 });
 
 test('官方插件：不自己发请求（没有裸 fetch、没直接开 http(s)，且请求都走 cap.http.request）', () => {
@@ -148,14 +253,14 @@ test('B站插件：主人 UID 绑定、whoami 与一键三连已声明，所有�
   assert.ok(accountTool.parameters.properties.what.enum.includes('notifications'), 'account 要支持 notifications（未读回复/@/赞）');
   const commentTool = manifest.tools.find((tool) => tool.name === 'comment');
   assert.ok(commentTool.parameters.properties.rpid, 'comment 要支持 rpid（内联回复具体评论）');
-  assert.equal(manifest.version, '1.1.1');
-  for (const name of ['video', 'danmaku']) {
+  assert.equal(manifest.version, '1.1.3');
+  assert.equal(manifest.tools.length, 12);
+  for (const name of ['video']) {
     assert.equal(manifest.tools.find((tool) => tool.name === name)?.timeoutMs, 30000,
       `${name} 走短链时可能先跟随一次重定向，默认 20 秒太紧`);
   }
-  const danmakuTool = manifest.tools.find((tool) => tool.name === 'danmaku');
-  assert.equal(danmakuTool.parameters.properties.text, undefined, 'danmaku 只读，发送参数应只在 danmaku_send');
-  assert.equal(danmakuTool.parameters.properties.progressMs, undefined, 'danmaku 只读，时间参数应只在 danmaku_send');
+  assert.equal(manifest.tools.find((tool) => tool.name === 'danmaku'), undefined);
+  assert.ok(manifest.tools.find((tool) => tool.name === 'video').parameters.properties.withDanmaku);
   const loginTool = manifest.tools.find((tool) => tool.name === 'login');
   assert.equal(loginTool.parameters.properties.channel, undefined,
     'channel 必须由宿主 context 注入，不能作为模型可控参数');

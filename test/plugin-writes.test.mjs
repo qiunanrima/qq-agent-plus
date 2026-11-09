@@ -525,3 +525,20 @@ test('QQ 指令：待批列表、多条必须带编号、同意 N 次', () => {
   assert.equal(status.approvals.write.usesLeft, 5, 'QQ 也应能一次批准多次');
   rejectPendingApproval(dataDir, p2.id);
 });
+
+test('没有目标参数的发布动作：批准正文后自动执行一次，仍绑定完整正文', async () => {
+  const m = manifest();
+  delete m.tools[0].actionTarget;
+  const { registry, calls } = makeRegistry({ ownerUin: '10001', manifestPatch: m });
+  const text = '待发布的完整正文';
+  assert.equal(parse(await runTool(registry, { text })).needsApproval, true);
+  const pending = listPendingApprovals(dataDir).find((p) => p.pluginId === 'demo' && p.preview === text);
+  assert.ok(pending);
+  assert.equal(pending.target, '');
+  assert.equal(registry.handleOwnerApprovalText(`同意 ${pending.id}`, '10001').handled, true);
+  await tick();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args.text, text);
+  assert.deepEqual(calls[0].context.approved, { action: 'write', target: '' });
+  assert.equal(checkApproval(dataDir, 'demo', 'write', { target: '', preview: '另一份正文' }).approved, false);
+});
