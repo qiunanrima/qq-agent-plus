@@ -8,6 +8,10 @@ export function isAcknowledgedClose(session, entries) {
   return entries.every(entry => {
     if (entry.media?.length) return false;
     const text = String(entry.text || '').trim().replace(/[。！!，,～~\s]+$/u, '');
-    return /^(?:ok|okay|好的?|好[呀哒嘞哦喔]|欧克|收到|嗯[嗯呢]?|行|可以|谢谢(?:啦|你)?|晚安|拜拜)$/iu.test(text);
+    return /^(?:ok|okay|好的?|好[呀哒嘞哦喔]|欧克|收到|嗯[嗯呢]?|行|可以|谢谢(?:啦|你)?|晚安|拜拜)$/iu.test(text)
+      // A replayed approval command may legitimately finish silently after its
+      // direct handler already replied. This never grants or repeats approval.
+      || /^(?:同意|批准|拒绝)\s+ap_[\w-]+(?:\s+\d{1,2})?$/u.test(text)
+      || /^(?:同意|批准|拒绝)\s*CLI\s+[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/iu.test(text);
   });
 }
