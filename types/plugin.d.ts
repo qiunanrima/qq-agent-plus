@@ -34,6 +34,8 @@ export interface PluginTool {
   action?: string;
   actionTarget?: string | string[];
   actionPreview?: string;
+  /** notify：免逐条审批，保留写开关、配额、间隔与审计，执行后通知管理员。 */
+  approvalMode?: 'required' | 'notify';
   timeoutMs?: number;
 }
 

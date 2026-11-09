@@ -321,6 +321,9 @@ HTTP 能力新增可选 `redirect: 'manual'`，返回中间响应的 `location`�
 `examples/plugins/bilibili` 是完整的 v2 例子：读接口、DASH 下载合流、写操作（授权 + 配额）。
 独立轻量版 `examples/plugins/bilibili-lite` 保留查询、互动、文字动态与私信，移除发弹幕、视频发送和视频理解；
 与原版 ID、设置和凭据分离，详见 [轻量版说明](BILIBILI-LITE.md)。
+宿主 0.9.16 起，写工具可声明 `approvalMode: "notify"`：保留写开关、目标/正文校验、
+60 秒间隔、每日配额和审计，免逐条审批，执行后私聊通知 `admin.ownerUin`。
+未声明时仍默认要求批准；该字段变化属于权限变化，升级须确认。
 它的用法与限制见 [BILIBILI.md](BILIBILI.md)。
 
 形状最小到能照抄：

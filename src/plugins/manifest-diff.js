@@ -31,6 +31,7 @@ function toolSignature(tool) {
       ? tool.actionTarget.map(String)
       : String(tool?.actionTarget || ''),
     actionPreview: String(tool?.actionPreview || ''),
+    ...(tool?.approvalMode === 'notify' ? { approvalMode: 'notify' } : {}),
     parameters: tool?.parameters || {}
   };
 }

@@ -2,8 +2,8 @@
   "id": "bilibili-lite",
   "apiVersion": 2,
   "name": "B 站轻量版",
-  "version": "1.0.0",
-  "description": "搜索视频与热门榜单、查看视频详情/字幕语言/弹幕及 UP 主；扫码登录、账号查询与私信阅读；点赞/投币/收藏/关注/评论、发布纯文字动态、发送文字私信（写操作需管理员批准并限额）。",
+  "version": "1.0.1",
+  "description": "搜索视频与热门榜单、查看视频详情/字幕语言/弹幕及 UP 主；扫码登录、账号查询与私信阅读；点赞/投币/收藏/关注/评论、发布纯文字动态、发送文字私信（私信免审批、每日20条并通知管理员；其他写操作需批准）。",
   "entry": "index.mjs",
   "capabilities": [
     "tools",
@@ -105,8 +105,8 @@
     },
     {
       "action": "message_send",
-      "label": "发送文字私信",
-      "description": "以登录账号向指定 UID 发私信，并标记会话已读；需批准接收人和完整正文",
+      "label": "发送文字私信（免审批，发送后通知）",
+      "description": "开启后免逐条审批，每日最多20条；发送后通知管理员收件 UID 和正文",
       "defaultUses": 1
     }
   ],
@@ -114,7 +114,7 @@
     "interact": 30,
     "comment": 10,
     "dynamic_publish": 5,
-    "message_send": 10
+    "message_send": 20
   },
   "tools": [
     {
@@ -380,7 +380,7 @@
     },
     {
       "name": "message_send",
-      "description": "以当前登录账号给指定 B 站 UID 发一条文字私信。需单独开启并由管理员批准接收人和完整正文。发送会将会话标记已读。接口接受不代表送达；结果不明时不可自动重发。",
+      "description": "以当前登录账号向指定 B 站 UID 发文字私信。免逐条审批；需开启私信发送开关，每日最多20条，发送后私聊通知管理员收件 UID 和正文。发送会标记会话已读；结果未知时不可重发。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -400,11 +400,12 @@
       },
       "action": "message_send",
       "actionTarget": "mid",
-      "actionPreview": "text"
+      "actionPreview": "text",
+      "approvalMode": "notify"
     }
   ],
   "engines": {
-    "minVersion": "0.9.15"
+    "minVersion": "0.9.16"
   },
   "httpMaxBytes": 200000
 }

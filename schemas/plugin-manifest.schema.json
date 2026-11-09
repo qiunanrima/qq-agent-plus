@@ -36,6 +36,7 @@
           "action": { "type": "string" },
           "actionTarget": { "type": ["string", "array"] },
           "actionPreview": { "type": "string" },
+          "approvalMode": { "type": "string", "enum": ["required", "notify"] },
           "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 300000 }
         }
       }

@@ -22,11 +22,14 @@ test('轻量版与原版独立安装，删除的能力不出现在清单或运�
   const { installPlugin } = await import('../src/plugins/install.js');
   for (const id of ['bilibili', 'bilibili-lite']) {
     const packed = packPluginDir({ dir: path.resolve('examples/plugins', id) });
-    await installPlugin({ id, tarball: packed.buffer, dataDir, hostVersion: '0.9.15', log: () => {} });
+    await installPlugin({ id, tarball: packed.buffer, dataDir, hostVersion: '0.9.16', log: () => {} });
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'plugins', id, 'plugin.json'), 'utf8')).id, id);
   }
   const manifest = JSON.parse(fs.readFileSync('examples/plugins/bilibili-lite/plugin.json', 'utf8'));
   assert.equal(manifest.tools.length, 9);
+  assert.equal(manifest.tools.find((t) => t.name === 'message_send').approvalMode, 'notify');
+  assert.equal(manifest.quotas.message_send, 20);
+  assert.equal(manifest.tools.find((t) => t.name === 'dynamic_publish').approvalMode, undefined);
   assert.ok(!manifest.capabilities.includes('media'));
   assert.ok(!manifest.approvals.some((a) => a.action === 'danmaku'));
   assert.ok(!manifest.settings.groups.some((g) => g.key === 'playback'));

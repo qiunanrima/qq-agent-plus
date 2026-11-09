@@ -127,6 +127,12 @@ function validateTool(raw, index) {
   // 写操作声明（v2.1）：这个工具执行哪个动作（必须出现在 approvals 里）、
   // 目标与预览取自哪个参数。宿主据此在调插件**之前**做"开关→对象级批准→配额"三层拦截。
   const action = str(raw.action);
+  if (raw.approvalMode !== undefined) {
+    if (!action || !['required', 'notify'].includes(raw.approvalMode)) {
+      return { error: `${where}.approvalMode 必须是 required/notify，且必须声明 action` };
+    }
+    tool.approvalMode = raw.approvalMode;
+  }
   if (action) {
     if (!ACTION_RE.test(action)) return { error: `${where}.action 只能是小写字母开头的字母/数字/下划线` };
     tool.action = action;

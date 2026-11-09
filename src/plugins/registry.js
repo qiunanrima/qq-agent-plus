@@ -733,7 +733,12 @@ export class PluginRegistry {
     // 批准绑定 (动作, 目标, 预览内容, 当前 manifest)：评论/弹幕换了正文就必须重新批准；
     // 插件升级后权限面变化，旧版本的批准也不能继续用。
     const manifestHash = hashManifest(host.manifest);
-    const approval = checkApproval(this.dataDir, host.id, action, { consume: true, target, preview, manifestHash });
+    const notifyOnly = tool.approvalMode === 'notify';
+    if (notifyOnly && !/^\d{5,15}$/.test(readOwnerUin(this.getConfig()) || '')) {
+      return denied('免审批发送需要先配置有效的管理员 QQ（admin.ownerUin），以便发送后通知');
+    }
+    const approval = notifyOnly ? { approved: true }
+      : checkApproval(this.dataDir, host.id, action, { consume: true, target, preview, manifestHash });
     if (!approval.approved) {
       // 待批也要限流：否则模型可以在未批准状态下连续刷待批，绕过 60 秒下限，
       // 并且每来一次都再私聊 owner。这里用独立的 lastPendingAt，不占 lastWriteAt ——
@@ -852,6 +857,18 @@ export class PluginRegistry {
     if (fallback?.ok === true) return { delivered: true, error: '' };
     errors.push(`HTTP 直发：${fallback?.detail || '失败'}`);
     return { delivered: false, error: errors.join('；') };
+  }
+
+  async #notifyWriteResult(host, tool, gate, args, unknown = false) {
+    const text = [
+      `插件「${host.manifest.name || host.id}」${unknown ? '发送结果未知，请到平台核对，勿重复发送' : `已执行 ${tool.action}（平台接口已接受，不代表对方已读）`}`,
+      gate.target ? `收件 UID：${gate.target}` : '',
+      tool.actionPreview ? `正文：${String(args?.[tool.actionPreview] ?? '').slice(0, 6000)}` : ''
+    ].filter(Boolean).join('\n');
+    const notice = await this.#sendOwnerNotice(sanitizeUserText(text))
+      .catch((error) => ({ delivered: false, error: String(error?.message || error) }));
+    if (!notice.delivered) this.log(`插件 ${host.id} 写后管理员通知失败：${notice.error}`);
+    return notice;
   }
 
   async #notifyOwnerApproval(pending) {
@@ -1116,7 +1133,9 @@ export class PluginRegistry {
           this.log(`写审计落盘失败（${host.id}/${tool.action}）：${error?.message ?? error}`);
         }
       }
-      const text = JSON.stringify(sanitizeDeep({ ok: true, ...payload }));
+      const ownerNotice = gate?.proceed === true && tool.approvalMode === 'notify' && payload.ok !== false && !payload.skipped
+        ? await this.#notifyWriteResult(host, tool, gate, args) : null;
+      const text = JSON.stringify(sanitizeDeep({ ok: true, ...payload, ...(ownerNotice ? { ownerNotice } : {}) }));
       return {
         content: text.length > MAX_PLUGIN_RESULT_CHARS
           ? `${text.slice(0, MAX_PLUGIN_RESULT_CHARS)}\n…（结果太长已截断：原 ${text.length} 字符，上限 ${MAX_PLUGIN_RESULT_CHARS}）`
@@ -1132,11 +1151,14 @@ export class PluginRegistry {
         settled = true;
         try { this.#settleWrite(host, tool, gate, { ok: false, note: message }, { unknown: uncertain }); } catch { /* 审计失败不遮挡原错误 */ }
         if (uncertain) {
+          const ownerNotice = tool.approvalMode === 'notify'
+            ? await this.#notifyWriteResult(host, tool, gate, args, true) : null;
           return {
             content: JSON.stringify({
               error: sanitizeUserText(`写操作结果未知（${message}）：可能已经生效，不要重试。`
                 + `先在控制台「最近写操作」核对，需要再写请重新发起（插件 ${host.id}，动作 ${tool.action}）`),
-              uncertain: true
+              uncertain: true,
+              ...(ownerNotice ? { ownerNotice } : {})
             }),
             isError: true
           };

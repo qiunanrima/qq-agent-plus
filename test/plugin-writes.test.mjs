@@ -542,3 +542,58 @@ test('没有目标参数的发布动作：批准正文后自动执行一次，�
   assert.deepEqual(calls[0].context.approved, { action: 'write', target: '' });
   assert.equal(checkApproval(dataDir, 'demo', 'write', { target: '', preview: '另一份正文' }).approved, false);
 });
+
+test('免审批通知模式：不产生待批，发送后通知管理员，第21条被每日配额拦截', async () => {
+  clearPluginGrants(dataDir, 'demo');
+  const m = manifest();
+  m.tools[0].approvalMode = 'notify';
+  m.quotas.write = 20;
+  const notices = [];
+  const sender = { sendTextBatch: async (key, texts) => { notices.push({ key, texts }); } };
+  const { registry, calls } = makeRegistry({ ownerUin: '10001', manifestPatch: m, sender });
+  for (let i = 0; i < 20; i += 1) {
+    registry.lastWriteAt.set('demo', 0);
+    const result = parse(await runTool(registry, { bvid: `UID${i}`, text: `正文${i}` }));
+    assert.equal(result.ok, true);
+    assert.equal(result.ownerNotice.delivered, true);
+  }
+  assert.equal(calls.length, 20);
+  assert.equal(notices.length, 20);
+  assert.equal(notices[0].key, 'private:10001');
+  assert.match(notices[0].texts[0], /UID0/);
+  assert.match(notices[0].texts[0], /正文0/);
+  assert.equal(listPendingApprovals(dataDir).length, 0);
+  registry.lastWriteAt.set('demo', 0);
+  const denied = parse(await runTool(registry, { bvid: 'UID21', text: '超额' }));
+  assert.match(denied.error, /配额|上限/);
+  assert.equal(calls.length, 20);
+  assert.equal(notices.length, 20);
+  assert.equal(makeRegistry({ switchOn: false, manifestPatch: m }).registry.toolDefsFor().length, 0);
+});
+
+test('免审批模式：结果未知通知管理员并保留配额；通知失败不能让已发送请求重发', async () => {
+  clearPluginGrants(dataDir, 'demo');
+  const m = manifest();
+  m.tools[0].approvalMode = 'notify';
+  m.quotas.write = 20;
+  const notices = [];
+  const unknown = makeRegistry({ ownerUin: '10001', manifestPatch: m,
+    behavior: { throw: 'request timed out', throwCode: 'E_WRITE_UNKNOWN' },
+    sender: { sendTextBatch: async (_key, texts) => { notices.push(...texts); } }
+  });
+  const result = parse(await runTool(unknown.registry, { bvid: 'UID1', text: '可能已发' }));
+  assert.equal(result.uncertain, true);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /结果未知/);
+  assert.equal(grantsStatus(dataDir, 'demo', m).quota.write.used, 1);
+  const missing = makeRegistry({ manifestPatch: m });
+  assert.match(parse(await runTool(missing.registry, { bvid: 'UID2', text: 'x' })).error, /管理员 QQ/);
+  assert.equal(missing.calls.length, 0);
+  const failedNotice = makeRegistry({ ownerUin: '10001', manifestPatch: m,
+    sender: { sendTextBatch: async () => { throw new Error('通知渠道失败'); } }
+  });
+  const sent = parse(await runTool(failedNotice.registry, { bvid: 'UID3', text: '已经发送' }));
+  assert.equal(sent.ok, true);
+  assert.equal(sent.ownerNotice.delivered, false);
+  assert.equal(failedNotice.calls.length, 1);
+});

@@ -53,6 +53,16 @@ test('diff：同一份 manifest 不算权限变化，哈希稳定', () => {
   assert.equal(hashManifest(a), hashManifest(b));
 });
 
+test('审批变成仅通知属于权限变化，默认审批哈希保持一致', () => {
+  const a = manifest('1.0.0');
+  const b = structuredClone(a);
+  b.tools[0].approvalMode = 'required';
+  assert.equal(hashManifest(a), hashManifest(b));
+  b.tools[0].approvalMode = 'notify';
+  assert.notEqual(hashManifest(a), hashManifest(b));
+  assert.equal(diffManifests(a, b).permissionChanged, true);
+});
+
 test('diff：新增能力 / 改 actionTarget / 新增 secret / 换发布者都要重授权', () => {
   const base = manifest('1.0.0');
   assert.equal(diffManifests(base, manifest('1.1.0', { capabilities: ['tools', 'approval', 'observe'] })).permissionChanged, true);
