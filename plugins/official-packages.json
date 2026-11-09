@@ -7,8 +7,8 @@
       "sha256": "e6b7d98b89bf8b404a38089a9d9b5db2b9cda8ec008b0f6b060821627e9bf6d8"
     },
     "bilibili": {
-      "version": "1.1.3",
-      "sha256": "0d063b86a4127ea2d030daf9fa7b1ec83058d4456ac4869b2c26c31439535e2c"
+      "version": "1.1.1",
+      "sha256": "f464873da4e8b58b3ce5d4f418f6a01ec26ad7fb8e3c8e23e358c8fff144608d"
     },
     "exchange-rate": {
       "version": "1.0.0",
@@ -37,6 +37,10 @@
     "weather": {
       "version": "1.0.0",
       "sha256": "08fd0e0341cbd5cc3988fda9ae0484746541d8fee81ea0affa0f98c2f66daf9c"
+    },
+    "bilibili-lite": {
+      "version": "1.0.0",
+      "sha256": "445ad4d587fa197624d8063f852e6892c1de2393bfe081e64074892ba7504d2d"
     }
   }
 }

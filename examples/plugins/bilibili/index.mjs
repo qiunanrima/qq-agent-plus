@@ -4,13 +4,12 @@
 //   1) 需要 Cookie（SESSDATA + bili_jct）；
 //   2) 需要管理员在插件详情里批准（一张有时限、有次数的通行证）；
 //   3) 消耗当天配额（宿主侧计数，跨天归零）。
-// 动态发布与文字私信同样经过宿主审批与配额；私信内容仅管理员可读。
+// 投稿/发动态**不在本插件范围内**：那需要一个完整的创作者工具链，风险与维护成本都不是一个插件该背的。
 //
 // 视频下载走宿主的 media 能力（宿主校验 SSRF、限体积、ffmpeg 合流），插件进程不执行命令、也拿不到别的目录。
 import crypto from 'node:crypto';
 import { mergeLoginTokens } from './login-tokens.mjs';
 import { resolveVideoQuery } from './video-ref.mjs';
-import { createPublishingTools } from './publishing.mjs';
 
 const send = (message) => { process.stdout.write(`${JSON.stringify(message)}\n`); };
 
@@ -188,16 +187,11 @@ function biliError(code, message) {
 
 /** 写请求发出后遇到的 5xx/超时/非 JSON：可能已经写成功，必须让宿主按"结果未知"处理。 */
 function isUncertainWriteError(error) {
-  return /HTTP 5\d\d|timed out|timeout|超时|ECONNRESET|EPIPE|fetch failed|network|socket hang up|不是.*JSON|缺少业务响应码/i
+  return /HTTP 5\d\d|timed out|timeout|超时|ECONNRESET|EPIPE|fetch failed|network|socket hang up|不是 JSON/i
     .test(String(error?.message || error));
 }
 
-async function httpJson(url, { method = 'GET', form = null, json = null, query = null, auth = false, allowCodes = [], headers = {}, asText = false, decompress = false, withSetCookies = false } = {}) {
-  if (query) {
-    const target = new URL(url);
-    for (const [key, value] of Object.entries(query)) target.searchParams.set(key, value);
-    url = target.href;
-  }
+async function httpJson(url, { method = 'GET', form = null, auth = false, allowCodes = [], headers = {}, asText = false, decompress = false, withSetCookies = false } = {}) {
   const header = { 'user-agent': UA, referer: REFERER, 'accept-encoding': 'identity', ...headers };
   if (auth) {
     const state = await authState();
@@ -214,12 +208,7 @@ async function httpJson(url, { method = 'GET', form = null, json = null, query =
     header['content-type'] = 'application/x-www-form-urlencoded';
     header.origin = REFERER.slice(0, -1);
   }
-  if (json) {
-    body = JSON.stringify(json);
-    header['content-type'] = 'application/json';
-    header.origin = REFERER.slice(0, -1);
-  }
-  if (form || json) logHost(`${verbMethod} ${new URL(url).host}${new URL(url).pathname}`);
+  if (form) logHost(`${verbMethod} ${new URL(url).host}${new URL(url).pathname}`);
   // 读路径整体重试一次（含 B 站业务码 -352/-509 与 HTTP 412 的风控判定）；
   // 写路径绝不重试 —— "也许已经发出去了"的请求重发就是重复写入。
   const attempt = async () => {
@@ -229,20 +218,8 @@ async function httpJson(url, { method = 'GET', form = null, json = null, query =
     if (status !== 200) throw new Error(`B 站接口返回 HTTP ${status || '?'}`);
     if (asText) return text;
     let data;
-    try {
-      data = JSON.parse(text, (key, value, context) => {
-        // 动态 ID、私信序号等超过安全整数时从 JSON 原文保留，不能先舍入再 String。
-        if (typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)) {
-          if (!context?.source) throw new Error('当前 Node 不支持无损 JSON 整数解析');
-          return context.source;
-        }
-        return value;
-      });
-    } catch { throw new Error('B 站接口返回的不是有效 JSON（可能被风控，或当前 Node 无法无损解析大整数）'); }
-    if (data?.code === undefined || data.code === null || !Number.isFinite(Number(data.code))) {
-      throw new Error('B 站接口缺少业务响应码');
-    }
-    const code = Number(data.code);
+    try { data = JSON.parse(text); } catch { throw new Error('B 站接口返回的不是 JSON（可能被风控或需要登录）'); }
+    const code = Number(data?.code);
     if (code !== 0 && !allowCodes.includes(code)) throw biliError(code, data?.message);
     // Set-Cookie（登录 poll 的凭据在响应头里）透传给调用方
     if (Array.isArray(result?.setCookies) && result.setCookies.length) data.setCookies = result.setCookies;
@@ -290,14 +267,14 @@ async function wbiMixinKey() {
   return mixin;
 }
 
-async function wbiUrl(path, params = {}, origin = API) {
+async function wbiUrl(path, params = {}) {
   const mixin = await wbiMixinKey();
   const signed = { ...params, wts: Math.floor(Date.now() / 1000) };
   const query = Object.keys(signed).sort()
     .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(String(signed[key]))}`)
     .join('&');
   const rid = crypto.createHash('md5').update(query + mixin).digest('hex');
-  return `${origin}${path}?${query}&w_rid=${rid}`;
+  return `${API}${path}?${query}&w_rid=${rid}`;
 }
 
 // ── 数据整形 ─────────────────────────────────────────────────────────────
@@ -414,12 +391,7 @@ async function notificationsFeed({ kind, limit } = {}) {
 }
 
 const tools = {
-  ...createPublishingTools({ httpJson, wbiUrl, requireLogin, requireWriteAuth, navIdentity, num }),
-  async search({ keyword, page, order, kind } = {}) {
-    if (kind && kind !== 'search') {
-      if (!['popular', 'ranking', 'weekly'].includes(kind)) throw new Error('kind 必须是 search/popular/ranking/weekly');
-      return tools.popular({ kind });
-    }
+  async search({ keyword, page, order } = {}) {
     const text = String(keyword || '').trim();
     if (!text) throw new Error('keyword 不能为空');
     const orderValue = ['relevance', 'click', 'pubdate'].includes(order) ? order : 'relevance';
@@ -447,13 +419,9 @@ const tools = {
     };
   },
 
-  async video({ bvid, withComments = true, withSubtitles = false, withDanmaku = false } = {}) {
+  async video({ bvid, withComments = true, withSubtitles = false } = {}) {
     const info = await viewOf(bvid);
     const result = { ...info, url: bvLink(info.bvid), authorUrl: userLink(info.mid) };
-    if (withDanmaku) {
-      try { result.danmaku = (await tools.danmaku({ bvid: info.bvid })).results; }
-      catch (error) { result.danmakuError = String(error?.message || error); }
-    }
     if (withComments) {
       const count = num(setting('commentCount', 20), 20, 5, 50);
       try {
@@ -547,10 +515,7 @@ const tools = {
     };
   },
 
-  async account({ what, mediaId, page, cursor, kind, limit, mid } = {}, context = {}) {
-    if (what === 'message_sessions' || what === 'message_history') {
-      return tools.messages({ what: what === 'message_sessions' ? 'sessions' : 'history', mid, cursor, limit }, context);
-    }
+  async account({ what, mediaId, page, cursor, kind, limit } = {}, context = {}) {
     // 历史/收藏/关注/未读通知是管理员账号的私人数据：聊天里的模型不能替群友读。
     // 控制台直调走已鉴权的 callConsoleTool，带 context.channel='console'。
     if (['history', 'favorites', 'followings', 'notifications'].includes(String(what || ''))
