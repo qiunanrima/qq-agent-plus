@@ -1,3 +1,5 @@
+import { usesCodex } from '../codex-cli/config.js';
+import { codexCompletion } from '../codex-cli/index.js';
 // OpenAI 兼容 Chat Completions 客户端（非流式）。
 // 支持工具调用、usage 统计和可选模型。
 import { getConfig } from '../core/config.js';
@@ -114,6 +116,7 @@ function effectiveApi() {
  *   - 主动中止（abort）
  */
 export function isRetryableError(error) {
+  if (error?.code === 'CODEX_NO_RETRY') return false;
   if (error?.code === 'ANTIGRAVITY_NO_RETRY') return false;
   if (error?.code === 'TIME_CONTROL_INACTIVE') return false;
   const msg = String(error?.message ?? error ?? '');
@@ -345,7 +348,7 @@ function pickFallback(args) {
 export async function chatCompletionWithRetry(args, retries = 2) {
   llmRuntimeStats.requests += 1;
   // CLI outcomes are never replayed or sent to an HTTP fallback.
-  if (usesAntigravity(getConfig(), args)) {
+  if (usesAntigravity(getConfig(), args) || usesCodex(getConfig(), args)) {
     try { return await chatCompletion(args); }
     catch (error) { llmRuntimeStats.failures += 1; throw error; }
   }
@@ -424,7 +427,8 @@ export async function chatCompletion({
   mcpRun = null
 }) {
   assertTimeAllowed();
-  if (usesAntigravity(getConfig(), { purpose, overrides })) {
+  const codex = usesCodex(getConfig(), { purpose, overrides });
+  if (codex || usesAntigravity(getConfig(), { purpose, overrides })) {
     llmRuntimeStats.attempts += 1;
     const controller = new AbortController();
     const abort = () => controller.abort(signal.reason);
@@ -432,8 +436,9 @@ export async function chatCompletion({
     if (signal?.aborted) abort();
     const release = watchTimeWindow(error => controller.abort(error));
     try {
-      const result = await antigravityCompletion({ config: getConfig().antigravityCli, messages, tools, toolChoice,
-        signal: controller.signal, isEnabled: () => getConfig().antigravityCli?.enabled === true && (mcpRun?.channelEnabled?.() ?? true), mcpRun });
+      const backend = codex ? 'codexCli' : 'antigravityCli';
+      const result = await (codex ? codexCompletion : antigravityCompletion)({ config: getConfig()[backend], messages, tools, toolChoice,
+        signal: controller.signal, isEnabled: () => getConfig()[backend]?.enabled === true && (mcpRun?.channelEnabled?.() ?? true), mcpRun });
       if (!usageTracked) recordUntracked(result, purpose);
       return result;
     } finally { release(); signal?.removeEventListener('abort', abort); }

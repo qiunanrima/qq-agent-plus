@@ -65,6 +65,7 @@ For the current modules:
 
 | Feature | Runtime switch | Graduation switch | Owned page |
 | --- | --- | --- | --- |
+| Codex CLI | `codexCli.enabled` | `codexCli.graduated` | `codex-cli` / Codex CLI |
 | WeChat channel | `agentWechat.enabled` | `agentWechat.graduated` | `agent-wechat` / 微信接入 |
 | Person impressions | `identityPilot.enabled` | `identityPilot.graduated` | `identity` / 人物印象 |
 | Automatic friend handling | retired 2026-09-25（整体退役，见 docs/KNOWN-ISSUES.md） | retired | `friends` / 好友管理（仅入站审批） |

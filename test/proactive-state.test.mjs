@@ -65,7 +65,7 @@ test('主动循环为群聊和私聊分别排程，候选也按范围过滤', ()
     '私聊错开 30 秒启动，避免重启后同一秒成对开口');
   assert.match(source, /const candidates = this\.#proactiveCandidates\(cfg, scope\)/,
     '调用点必须带 scope；只匹配方法定义会把“调用点漏传 scope”放过去');
-  assert.match(source, /chatKeys: this\.store\.listChats\(\)\.filter\(\(key\) => String\(key\)\.startsWith\(prefix\)\)/);
+  assert.match(source, /chatKeys: this\.store\.listChats\(\)\.filter\(\(key\) => !isExternalChat\(key\) && String\(key\)\.startsWith\(prefix\)\)/);
 });
 
 test('per-chat 模式各会话独立记录，写范围不会清掉会话记录', (t) => {

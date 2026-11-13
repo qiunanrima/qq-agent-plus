@@ -63,5 +63,8 @@
     "espree": "^11.2.0",
     "globals": "^17.13.0",
     "happy-dom": "^21.0.4"
+  },
+  "config": {
+    "dockerImageVersion": "0.9.14"
   }
 }

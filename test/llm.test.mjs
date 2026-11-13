@@ -63,6 +63,21 @@ describe('LLM client', () => {
     assert.equal(httpCalls, 0);
   });
 
+  it('Codex failures never retry or fall back to HTTP', async t => {
+    const { getConfig } = await import('../src/core/config.js');
+    const previous = structuredClone(getConfig()), original = globalThis.fetch;
+    t.after(() => { setRuntimeConfig(previous); globalThis.fetch = original; });
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; throw new Error('Unexpected fallback'); };
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.codexCli = { ...cfg.codexCli, enabled: true, workspace: __dir };
+    setRuntimeConfig(cfg);
+    const { llmRuntimeStats } = await import('../src/llm/llm.js');
+    const attempts = llmRuntimeStats.attempts;
+    await assert.rejects(chatCompletionWithRetry({ purpose: 'chat', messages: [], mcpRun: { chatKey: 'test', runId: 'run', allowed: () => true, execute() {} } }, 3), e => e.code === 'CODEX_NO_RETRY');
+    assert.equal(llmRuntimeStats.attempts - attempts, 1); assert.equal(calls, 0);
+  });
+
   it('reads cached input tokens from supported provider response shapes', () => {
     assert.equal(cachedTokensOfUsage({
       prompt_tokens_details: { cached_tokens: 120 }

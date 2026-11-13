@@ -1,3 +1,4 @@
+import { registerCodexRoutes } from '../codex-cli/routes.js';
 import { assetToken, rewriteAssetUrls } from './static-assets.js';
 // Linux 服务总装：OneBot 事件接入 → 存储 → 编排器；HTTP API + SSE 给 UI。
 import http from 'node:http';
@@ -2373,6 +2374,7 @@ function buildApp({
   // 存储占用接口（/api/storage、/api/storage/compress）。按领域拆在 console/storage.js，
   // 这里只注册，不再往本文件里加 handler。
   registerStorageRoutes(router, { json, sessions });
+  registerCodexRoutes(router, { json, getConfig });
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
   const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit, log: moduleLog('agent-wechat') });
   registerAgentWechatRoutes(router, { runtime: agentWechat, getConfig, updateConfig, json, readBody, auditWrite });

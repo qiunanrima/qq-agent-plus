@@ -49,15 +49,20 @@ if (versionHeadings.length && versionHeadings[0] !== version) {
   fail('CHANGES 里找不到版本章节');
 }
 
-// 2) 镜像 pin：compose/README/README.en/DOCKER 必须与 package.json 一致
+// 2) Source-only development keeps the last published image pin. Tagged releases
+// must still synchronize it with package.version before publication.
+const imageVersion = pkg.config?.dockerImageVersion || version;
+if (!/^\d+\.\d+\.\d+$/.test(imageVersion)) fail('dockerImageVersion 必须为明确版本');
+if ((!args.has('--allow-unreleased') || tagSpecified) && imageVersion !== version) fail('正式发布前必须同步 dockerImageVersion 与源码版本');
+notes.push('Docker 镜像 pin ' + imageVersion);
 const compose = read('docker-compose.yml');
-if (!compose.includes(`wangxinhong/qq-agent-plus:${version}`)) {
-  fail(`docker-compose.yml 的 Agent 镜像 pin 不是 ${version}`);
+if (!compose.includes(`wangxinhong/qq-agent-plus:${imageVersion}`)) {
+  fail(`docker-compose.yml 的 Agent 镜像 pin 不是 ${imageVersion}`);
 }
 for (const rel of ['README.md', 'README.en.md', 'docs/DOCKER.md']) {
   const tags = [...read(rel).matchAll(/qq-agent-plus:(\d+\.\d+\.\d+)/g)].map((m) => m[1]);
   if (!tags.length) fail(`${rel} 里没有镜像 tag 示例`);
-  const stale = [...new Set(tags)].filter((tag) => tag !== version);
+  const stale = [...new Set(tags)].filter((tag) => tag !== imageVersion);
   if (stale.length) fail(`${rel} 里还有旧镜像 tag：${stale.join(', ')}`);
 }
 

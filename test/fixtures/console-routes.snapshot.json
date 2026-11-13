@@ -13,6 +13,12 @@
   },
   {
     "method": "GET",
+    "path": "/api/codex-cli/status",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
     "path": "/api/antigravity-cli/approvals",
     "auth": true,
     "keyEndpoint": false
@@ -324,6 +330,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "POST",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/(retry-failed|resolve-held)$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "GET",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/runtime-control$/",
     "auth": true,
@@ -336,6 +348,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "GET",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/runtime-control$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "PUT",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/runtime-control$/",
     "auth": true,
@@ -344,6 +362,12 @@
   {
     "method": "PUT",
     "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/runtime-control$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "PUT",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/runtime-control$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -361,6 +385,12 @@
   },
   {
     "method": "GET",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/messages$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/export$/",
     "auth": true,
     "keyEndpoint": false
@@ -368,6 +398,12 @@
   {
     "method": "GET",
     "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/export$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/export$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -390,6 +426,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "POST",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/wake$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "GET",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/thread$/",
     "auth": true,
@@ -402,6 +444,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "GET",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/thread$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "DELETE",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/thread$/",
     "auth": true,
@@ -410,6 +458,12 @@
   {
     "method": "DELETE",
     "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/thread$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/thread$/",
     "auth": true,
     "keyEndpoint": false
   },
@@ -427,6 +481,12 @@
   },
   {
     "method": "POST",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/test-send$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/mark-read$/",
     "auth": true,
     "keyEndpoint": false
@@ -434,6 +494,12 @@
   {
     "method": "POST",
     "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/mark-read$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/mark-read$/",
     "auth": true,
     "keyEndpoint": false
   },

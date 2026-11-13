@@ -1099,7 +1099,7 @@ export class Orchestrator {
     if (this.runningChats.size >= Math.max(1, Number(getConfig().maxConcurrentRuns) || 2)) {
       return { ok: false, reason: '当前并发已满，请稍后重试' };
     }
-    if (!getConfig().antigravityCli?.enabled && !String(getConfig().api.model || '').trim()) {
+    if (!getConfig().codexCli?.enabled && !getConfig().antigravityCli?.enabled && !String(getConfig().api.model || '').trim()) {
       return { ok: false, reason: '模型未设置' };
     }
 
@@ -1149,7 +1149,7 @@ export class Orchestrator {
     if (this.runningChats.has(chatKey)) return false;
 
     // 模型未设置：不产生报错会话，消息保留为未读；设置模型后（下一条消息或手动唤醒）自动补处理
-    if (!getConfig().antigravityCli?.enabled && !String(getConfig().api.model || '').trim()) {
+    if (!getConfig().codexCli?.enabled && !getConfig().antigravityCli?.enabled && !String(getConfig().api.model || '').trim()) {
       if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '模型未设置');
       return false;
     }
@@ -1849,7 +1849,7 @@ export class Orchestrator {
     let sendFailed = false;
 
     // MCP already had an opportunity to send; avoid another automatic CLI invocation.
-    if (sendTool && budgetLeft && !(getConfig().antigravityCli?.enabled && getConfig().antigravityCli.transport === 'mcp')) {
+    if (sendTool && budgetLeft && !(getConfig().codexCli?.enabled || (getConfig().antigravityCli?.enabled && getConfig().antigravityCli.transport === 'mcp'))) {
       try {
         const response = await chatCompletionWithRetry({ usageTracked: true,
           messages: [...messages, {
@@ -2300,13 +2300,13 @@ export class Orchestrator {
     session.userPrompt = (contextSnapshot ? `${contextSnapshot}\n\n` : '') + userPrompt;
     session.promptChars = systemPrompt.length + session.userPrompt.length
       + JSON.stringify(priorProviderMessages).length;
-    session.model = cfg.antigravityCli?.enabled ? cfg.antigravityCli.model || 'Antigravity CLI（默认模型未确认）' : cfg.api.model;
+    session.model = cfg.codexCli?.enabled ? cfg.codexCli.model || 'Codex CLI（默认模型未确认）' : cfg.antigravityCli?.enabled ? cfg.antigravityCli.model || 'Antigravity CLI（默认模型未确认）' : cfg.api.model;
     session.conversationMode = conversationCfg.mode;
     session.lifecycleContinuation = lifecycleContinuation;
     session.threadId = thread?.threadId || null;
     // 记录本次调用走的是哪个渠道（A6API / openrouter / 本地中转…）。
     // 同名模型在不同渠道是不同商品，用量与价格要分开统计。
-    session.vendor = cfg.antigravityCli?.enabled ? 'Antigravity CLI' : vendorOfConfig(cfg);
+    session.vendor = cfg.codexCli?.enabled ? 'Codex CLI' : cfg.antigravityCli?.enabled ? 'Antigravity CLI' : vendorOfConfig(cfg);
     session.chatName = chatName;
     session.livingMemory = {
       mode: livingRecall.mode || 'disabled',
@@ -2516,7 +2516,7 @@ export class Orchestrator {
         // send_message 永远放行：模型可能只是想“看看有哪些技能，然后正常回一句”；
         // 不能因为列过一次技能就把正常回复也堵死。
         const skillGate = skillGateMessage(ctx.activeSkill, ctx.pendingSkillUse, name, safeParse(argsRaw));
-        if (name === 'finish' && getConfig().antigravityCli?.enabled && getConfig().antigravityCli.transport === 'mcp'
+        if (name === 'finish' && (getConfig().codexCli?.enabled || (getConfig().antigravityCli?.enabled && getConfig().antigravityCli.transport === 'mcp'))
           && cliFinishRecovery.canAcknowledge(safeParse(argsRaw), { visibleReply: session.sent.length > 0 || session.visibleReply === true, uncertain: this.store.hasUncertainEffects?.(session.leaseId) === true })) priorFailure = false;
         const blocked = finishBarrierBlock(name, {
           finished: finish,
@@ -4073,8 +4073,8 @@ export class Orchestrator {
       hippocampusDigesting: this.memory.hippocampus?.active === true,
       onebotConnected: this.onebot.connected,
       model: cfg.api.model,
-      chatBackend: cfg.antigravityCli?.enabled === true ? 'antigravity-cli' : 'api',
-      chatModel: cfg.antigravityCli?.enabled === true ? cfg.antigravityCli.model || '' : cfg.api.model,
+      chatBackend: cfg.codexCli?.enabled === true ? 'codex-cli' : cfg.antigravityCli?.enabled === true ? 'antigravity-cli' : 'api',
+      chatModel: cfg.codexCli?.enabled === true ? cfg.codexCli.model || '' : cfg.antigravityCli?.enabled === true ? cfg.antigravityCli.model || '' : cfg.api.model,
       maxConcurrentRuns: cfg.maxConcurrentRuns
     };
   }

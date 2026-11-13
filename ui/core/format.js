@@ -790,6 +790,7 @@ function ioProfileOf(store = {}) {
 function chatModelLabel(config = {}, summary = {}) {
   config ||= {};
   summary ||= {};
+  if (summary.chatBackend === 'codex-cli' || (!summary.chatBackend && config.codexCli?.enabled)) return `Codex CLI：${summary.chatModel || config.codexCli?.model || 'CLI 默认模型'}`;
   const cli = config.antigravityCli;
   if (summary.chatBackend === 'antigravity-cli' || (!summary.chatBackend && cli?.enabled === true)) {
     return `反重力 CLI：${summary.chatModel || cli?.model || 'CLI 默认模型'}`;

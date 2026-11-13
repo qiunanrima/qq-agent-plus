@@ -1,3 +1,4 @@
+import { closeCodexProcesses } from './codex-cli/index.js';
 // Linux 服务入口：node src/server.js
 import fs from 'node:fs';
 import path from 'node:path';
@@ -122,7 +123,7 @@ async function shutdown() {
   retentionScheduler?.stop();
   const deadline = setTimeout(() => process.exit(1), 25000);
   deadline.unref();
-  try { await app.stop(); await closeAntigravityProcesses(); process.exit(0); }
+  try { await app.stop(); await closeAntigravityProcesses(); await closeCodexProcesses(); process.exit(0); }
   catch (error) { log.error(error); process.exit(1); }
 }
 process.on('SIGINT', shutdown);

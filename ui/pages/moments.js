@@ -1,3 +1,4 @@
+import { renderCodexExperiment } from './codex-cli.js';
 // 由 ui/app.js 机械拆出（2026-10-01，改进方案 §11「UI 结构治理」）。
 // 跨文件引用一律走 import（模块作用域，不往全局词法环境里放东西）；可变状态挂 state，见 AGENTS.md。
 // 搬运只切不改：每个声明的源码与拆分前逐字节一致（test/ui-modules.test.mjs 的守恒断言盯住）。
@@ -90,6 +91,7 @@ function renderExperimentalSettingsSectionImpl(c) {
       ${renderPersonalityMemoryExperiment(c)}
       ${renderSubagentExperiment(c)}
       ${renderAntigravityExperiment(c)}
+      ${renderCodexExperiment(c)}
       ${renderAgentWechatExperiment(c)}
       <div class="hint">群游戏（数字炸弹 / 谁是卧底 / 狼人杀）的详细设置与「正在进行的局」在 <b>设置 → 群游戏</b>；
         这里只控制它是否运行（生命周期）。默认关、白名单制、每群同时一局。</div>

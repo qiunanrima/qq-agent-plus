@@ -23,3 +23,9 @@ test('release-check 在当前未发布状态可通过 --allow-unreleased', () =>
   assert.equal(result.status, 0, `release-check 失败：\n${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /发版检查通过/);
 });
+
+test('未发布源码允许旧镜像 pin，但正式 tag 检查不能借 allow-unreleased 绕过同步', { skip: !pkg.config?.dockerImageVersion || pkg.config.dockerImageVersion === pkg.version }, () => {
+  const result = spawnSync(process.execPath, ['scripts/release-check.mjs', '--allow-unreleased', '--tag', `v${pkg.version}`], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /必须同步 dockerImageVersion 与源码版本/);
+});

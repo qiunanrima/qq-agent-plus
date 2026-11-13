@@ -1,3 +1,4 @@
+import { CODEX_DEFAULTS, loadCliConfigs, validateCliConfigs } from './cli-config.js';
 // 配置管理：data/config.json，UI 可写。所有字段都有默认值。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,7 +21,7 @@ import { LIVING_MEMORY_DEFAULTS, normalizeLivingMemoryConfig } from '../living-m
 import { PERSONALITY_MEMORY_DEFAULTS, normalizePersonalityMemoryConfig } from '../personality-memory/config.js';
 import { SUBAGENT_DEFAULTS, normalizeSubagentConfig } from '../subagents/config.js';
 import { WECHAT_DEFAULTS, normalizeWechatConfig } from '../agent-wechat/config.js';
-import { ANTIGRAVITY_DEFAULTS, normalizeAntigravityConfig } from '../antigravity-cli/config.js';
+import { ANTIGRAVITY_DEFAULTS } from '../antigravity-cli/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 控制台把 updateConfig 的校验失败映射成 400：用显式标记，不靠匹配错误文案
@@ -53,6 +54,7 @@ export function getConfigConflict() {
 
 export const DEFAULT_CONFIG = {
   antigravityCli: { ...ANTIGRAVITY_DEFAULTS },
+  codexCli: { ...CODEX_DEFAULTS },
   agentWechat: { ...WECHAT_DEFAULTS },
   // OpenAI 兼容 API（必填才能跑）
   api: {
@@ -1979,11 +1981,7 @@ export function loadConfig() {
     const merged = deepMerge(DEFAULT_CONFIG, parsed);
     try { merged.agentWechat = normalizeWechatConfig(merged.agentWechat); }
     catch { merged.agentWechat = { ...WECHAT_DEFAULTS }; }
-    try { merged.antigravityCli = normalizeAntigravityConfig(merged.antigravityCli); }
-    catch {
-      merged.antigravityCli = { ...merged.antigravityCli, enabled: false };
-      console.warn('[config] Antigravity CLI 配置无效，已停用；保留配置以便修复');
-    }
+    loadCliConfigs(merged);
     // ── provider 迁移（2026-09-26）──
     // 默认 provider 从 local 改成 openai 之后，**没显式存过 provider** 的老配置语义会变：
     // 本机装了 whisper 的实例会从"能用"变成"没配齐"（静默失效，2026-09-26 审查 P1）。
@@ -2226,11 +2224,7 @@ export function updateConfig(patch, { force = false } = {}) {
   try { next.agentWechat = normalizeWechatConfig(next.agentWechat); }
   catch (error) { throw invalidConfig(error.message); }
   next.subagent = normalizeSubagentConfig(next.subagent);
-  try { next.antigravityCli = normalizeAntigravityConfig(next.antigravityCli); }
-  catch (error) {
-    // Disabled malformed settings must remain repairable without blocking other settings.
-    if (Object.hasOwn(safePatch, 'antigravityCli') || next.antigravityCli?.enabled === true) throw invalidConfig(error.message);
-  }
+  validateCliConfigs(next, safePatch, invalidConfig);
   next.dailyMoments.scheduleWindows = normalizeMomentWindows(next.dailyMoments.scheduleWindows);
   if (!['observe', 'active'].includes(next.runtime?.mode)) throw invalidConfig('Invalid runtime mode');
   if (!['legacy', 'threaded', 'lifecycle', 'perception'].includes(next.conversation?.mode)) {

@@ -28,6 +28,8 @@ ffmpeg 及其依赖（约 470MB 的层）；不提供精简变体，以保证语
 docker compose up -d
 ```
 
+源码版本可先于镜像发布；已发布镜像版本记录在 `package.json` 的 `config.dockerImageVersion`。正式发版检查仍要求它与源码版本同步，日常源码部署不改动镜像 pin。
+
 compose 默认已经按国内网络配好：应用镜像走阿里云 ACR 的公开 `0.9.14`，协议端走
 `docker.m.daocloud.io` 镜像站。升级时改 compose 里的默认值，或设
 `QQ_AGENT_IMAGE=<镜像>:<版本>`。不要用 `latest` 当默认值——首次发布前它不存在，会拉取失败。

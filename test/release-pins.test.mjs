@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
+const imageVersion = pkg.config?.dockerImageVersion || pkg.version;
 const compose = fs.readFileSync(path.join(repo, 'docker-compose.yml'), 'utf8');
 const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
 const dockerDoc = fs.readFileSync(path.join(repo, 'docs/DOCKER.md'), 'utf8');
 
-test('compose 默认 Agent 镜像 tag 与 package.json 版本一致', () => {
-  assert.match(compose, new RegExp(`wangxinhong/qq-agent-plus:${pkg.version.replace(/\./g, '\\.')}`));
+test('compose 默认 Agent 镜像 tag 与明确记录的发布镜像版本一致', () => {
+  assert.match(compose, new RegExp(`wangxinhong/qq-agent-plus:${imageVersion.replace(/\./g, '\\.')}`));
 });
 
 test('Docker 手动发布也会校验版本号', () => {
@@ -32,12 +33,12 @@ test('容器相关 PR 只构建冒烟，不登录也不推送', () => {
     'PR 上不跑 Windows job（推送 build 也跳过）');
 });
 
-test('所有文档里的 Agent 镜像 tag 都与 package.json 版本一致', () => {
+test('所有文档里的 Agent 镜像 tag 都与明确记录的发布镜像版本一致', () => {
   const readmeEn = fs.readFileSync(path.join(repo, 'README.en.md'), 'utf8');
   for (const [name, text] of [['README.md', readme], ['README.en.md', readmeEn], ['docs/DOCKER.md', dockerDoc]]) {
     const tags = [...text.matchAll(/qq-agent-plus:(\d+\.\d+\.\d+)/g)].map((m) => m[1]);
     assert.ok(tags.length > 0, `${name} 至少要有拉取/固定示例`);
-    assert.deepEqual([...new Set(tags)], [pkg.version], `${name} 里还有旧版本 tag：${tags.join(', ')}`);
+    assert.deepEqual([...new Set(tags)], [imageVersion], `${name} 里还有旧版本 tag：${tags.join(', ')}`);
   }
 });
 
