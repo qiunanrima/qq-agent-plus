@@ -1798,7 +1798,7 @@ export class Orchestrator {
    */
   async #ensureDirectedReply({
     session, messages, ctx, toolDefs, persona, kind, triggerEntries,
-    proactive, manual, signal, runLimits, roundsExhausted
+    proactive, manual, signal, runLimits, roundsExhausted, hostFinished = false
   }) {
     if (getConfig().conversation?.replyGuardEnabled === false || requiresQqApproval(getConfig())) {
       session.replyCorrection = 'skipped';
@@ -1806,6 +1806,12 @@ export class Orchestrator {
     }
     if (proactive || manual) return;
     if (session.sent.length > 0 || session.visibleReply === true) return;
+    // A confirmed MCP finish is an intentional host-level close. Internal CLI
+    // commentary is not an unsent reply and must never trigger a fallback send.
+    if (hostFinished) {
+      session.replyCorrection = 'skipped';
+      return;
+    }
     if (isAcknowledgedClose(session, triggerEntries)) {
       session.replyCorrection = 'skipped';
       log.info(`[reply-guard] ${session.chatKey || ''} 简短确认已正常收尾，不补发错误兜底`);
@@ -2775,7 +2781,8 @@ export class Orchestrator {
     await this.#ensureDirectedReply({
       session, messages, ctx, toolDefs, persona, kind, triggerEntries,
       proactive, manual, signal, runLimits,
-      roundsExhausted: !finish && !completed
+      roundsExhausted: !finish && !completed,
+      hostFinished: session.cliMcpCompleted === true && finish
     });
     if (session.outputTruncated && !session.sent.length && session.visibleReply !== true) {
       const error = new Error('模型输出达到上限且没有发送回复；保留失败状态，未当作正常沉默确认已读');

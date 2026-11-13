@@ -16,9 +16,32 @@ process.on('exit', () => { try { fs.rmSync(root, { recursive: true, force: true 
 const { Orchestrator, isDirectedAtBot } = await import('../src/core/orchestrator.js');
 const { ChatStore } = await import('../src/core/store.js');
 const { SessionRegistry } = await import('../src/core/sessions.js');
-const { setRuntimeConfig, DEFAULT_CONFIG } = await import('../src/core/config.js');
+const { setRuntimeConfig, getConfig, DEFAULT_CONFIG } = await import('../src/core/config.js');
 
 const replyText = '现在没开空间动态，暂时发不了。';
+
+test('Codex MCP 已确认 finish 后的内部文字不触发纠正或兜底发送', async t => {
+  const f = fixture(t, { group: true });
+  const workspace = fs.mkdtempSync(path.resolve('.codex/codex-guard-'));
+  fs.mkdirSync(path.join(workspace, 'codex-home'));
+  const adapterScript = path.join(workspace, 'adapter.mjs');
+  const adapter = new URL('./fixtures/codex-acp.mjs', import.meta.url).href;
+  fs.writeFileSync(adapterScript, `process.argv[2] = 'finish-draft'; await import(${JSON.stringify(adapter)});`);
+  const cfg = structuredClone(getConfig());
+  cfg.codexCli = { ...cfg.codexCli, enabled: true, executable: process.execPath, adapterScript, workspace, timeoutMs: 5000 };
+  setRuntimeConfig(cfg);
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  f.append('codex-close', '@bot 也可以让 AI 看一下服务器', { mentionsSelf: true });
+  await f.wake();
+  const session = f.lastSession();
+  assert.equal(session.cliMcpCompleted, true);
+  assert.ok(session.messages.some(m => m.toolCall?.name === 'finish' && !m.toolCall.isError));
+  assert.ok(session.messages.some(m => m.content === '我先看一下当前对话状态'));
+  assert.deepEqual(f.sent, []);
+  assert.equal(f.bodies.length, 0, '不得额外调用辅助模型');
+  assert.equal(session.replyCorrection, 'skipped');
+  assert.equal(session.status, 'noreply');
+});
 
 function fixture(t, { group = false, maxRounds = 3, guard = true, stickers = false } = {}) {
   const cfg = structuredClone(DEFAULT_CONFIG);

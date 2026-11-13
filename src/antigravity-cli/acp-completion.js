@@ -8,6 +8,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
   const controller = new AbortController();
   const scopedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const startedAt = Date.now(), timings = {};
+  let phase = 'initialization', pendingPermissions = 0;
   let sessionId, response = '', hostFinished = false, peer, lease, abortPeer, finishTimer, healthy = false;
   const deniedTools = new Set();
   const permit = createAcpPermissionHandler({ sessionId: () => sessionId, mcpRun,
@@ -15,7 +16,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     imageAccess: invocation.imageAccess });
   const native = createAcpNativeClient({ sessionId: () => sessionId, workspace: invocation.workspace, controlRoot: config.workspace, mcpRun,
     signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls, onUnknownWrite: error => controller.abort(error) });
-  const timer = setTimeout(() => controller.abort(new Error('Antigravity CLI timed out')), config.timeoutMs);
+  const timer = setTimeout(() => controller.abort(new Error(`Antigravity CLI timed out (${config.timeoutMs}ms; phase=${phase}; hostCalls=${invocation.calls()}; pendingPermissions=${pendingPermissions})`)), config.timeoutMs);
   const guard = setInterval(() => {
     if (!isEnabled() || invocation.policyChanged()) controller.abort(new Error('Antigravity permission policy changed'));
     else if (mcpRun.isFinished?.() && !hostFinished) {
@@ -32,14 +33,17 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       || invocation.acpMcpServers[0].name !== 'qq_run') throw new Error('ACP requires the run-scoped qq_run MCP server');
     const handlers = {
       request: (method, params) => {
-        if (method === 'session/request_permission') return permit(params).then(result => {
-          const selected = params?.options?.find(option => option.optionId === result.outcome?.optionId);
-          if (result.outcome?.outcome === 'cancelled' || selected?.kind === 'reject_once') {
-            // Never persist arguments, paths, command text or arbitrary tool titles.
-            deniedTools.add(describeAcpPermission(params?.toolCall)?.tool || 'unrecognized-tool');
-          }
-          return result;
-        });
+        if (method === 'session/request_permission') {
+          pendingPermissions++;
+          return permit(params).then(result => {
+            const selected = params?.options?.find(option => option.optionId === result.outcome?.optionId);
+            if (result.outcome?.outcome === 'cancelled' || selected?.kind === 'reject_once') {
+              // Never persist arguments, paths, command text or arbitrary tool titles.
+              deniedTools.add(describeAcpPermission(params?.toolCall)?.tool || 'unrecognized-tool');
+            }
+            return result;
+          }).finally(() => { pendingPermissions--; });
+        }
         return native.request(method, params);
       },
       update: (method, params) => {
@@ -82,11 +86,13 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     if (scopedSignal.aborted) abortPeer();
     timings.processReadyMs = Date.now() - startedAt;
     const sessionStarted = Date.now();
+    phase = 'session/new';
     // Each worker is isolated so a reused front process cannot retain an expired
     // turn's MCP catalog. Explicit servers are required for pre-prompt discovery.
     const session = await peer.call('session/new', { cwd: invocation.workspace, mcpServers: invocation.acpMcpServers });
     if (typeof session?.sessionId !== 'string' || !session.sessionId) throw new Error('Invalid ACP session');
     sessionId = session.sessionId;
+    phase = 'MCP discovery';
     const discoveryDeadline = Date.now() + 5000;
     while (!invocation.mcpReady?.()) {
       scopedSignal.throwIfAborted();
@@ -94,6 +100,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     if (!session.modes?.availableModes?.some(mode => mode.id === 'default')) throw new Error('ACP restricted mode unavailable');
+    phase = 'session configuration';
     await peer.call('session/set_mode', { sessionId, modeId: 'default' });
     if (config.model) {
       if (!session.models?.availableModels?.some(model => model.modelId === config.model)) throw new Error('Configured ACP model unavailable');
@@ -104,6 +111,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     await peer.call('session/set_config_option', { sessionId, configId: 'thought_level', value: config.effort });
     timings.sessionReadyMs = Date.now() - sessionStarted;
     const promptStarted = Date.now();
+    phase = 'session/prompt';
     const result = await peer.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
     timings.promptMs = Date.now() - promptStarted;
     if (scopedSignal.aborted) throw scopedSignal.reason;
@@ -131,7 +139,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     healthy = true;
     return completed(hostFinished ? 'HOST_FINISHED' : 'SUCCESS');
   } catch (error) {
-    if (hostFinished && !signal?.aborted && isEnabled() && !invocation.policyChanged()) return completed('HOST_FINISHED');
+    if ((hostFinished || invocation.finished()) && !signal?.aborted && isEnabled() && !invocation.policyChanged()) return completed('HOST_FINISHED');
     throw scopedSignal.aborted ? scopedSignal.reason : error;
   } finally {
     clearTimeout(timer); clearTimeout(finishTimer); clearInterval(guard);

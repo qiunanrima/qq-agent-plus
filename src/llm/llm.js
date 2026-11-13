@@ -291,7 +291,7 @@ async function runCompletionWithRetries(args, retries) {
       if (args.signal?.aborted || attempt >= retries || !isRetryableError(error)) throw error;
       const wait = 1000 * Math.pow(2, attempt);   // 1s, 2s
       llmRuntimeStats.retries += 1;
-      log.warn(`[llm] 请求失败（第 ${attempt + 1} 次尝试），${wait}ms 后重试：${error?.message ?? error}`);
+      log.warn(`[llm] 请求失败（第 ${attempt + 1} 次尝试，purpose=${String(args.purpose || 'unspecified').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)}），${wait}ms 后重试：${error?.message ?? error}`);
       await delay(wait, undefined, { signal: args.signal });
     }
   }

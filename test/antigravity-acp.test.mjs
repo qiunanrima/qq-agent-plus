@@ -156,7 +156,7 @@ test('ACP deadline revokes unanswered approval and kills the subprocess', async 
     prompt: 'offline', mcpRun: run, isEnabled: () => true,
     spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'hang'], opts)
   }, { verify: async () => {} });
-  const rejection = assert.rejects(completion, /timed out/);
+  const rejection = assert.rejects(completion, /timed out .*phase=session\/prompt; hostCalls=0; pendingPermissions=1/);
   const entry = await waitPending();
   await rejection; assert.equal(decideCliApproval(entry.id, true), false);
   assert.deepEqual(listCliApprovals(), []);
@@ -174,8 +174,18 @@ test('missing MCP discovery never starts a model prompt', async () => {
       return child;
     }
   }, { verify: async () => {} });
-  await assert.rejects(completion, /timed out/);
+  await assert.rejects(completion, /timed out .*phase=MCP discovery; hostCalls=0; pendingPermissions=0/);
   assert.equal(prompted, false); assert.deepEqual(listCliApprovals(), []);
+});
+
+test('confirmed host finish wins over ACP executor failure before the finish guard runs', async () => {
+  const result = await acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 1, finished: () => true, policyChanged: () => false },
+    prompt: 'offline', mcpRun: run, isEnabled: () => true,
+    spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'executor-error'], opts)
+  }, { verify: async () => {} });
+  assert.equal(result.raw.status, 'HOST_FINISHED');
+  assert.deepEqual(listCliApprovals(), []);
 });
 
 test('native hook verification rejects other hooks and paid-credit profile without model calls', async t => {

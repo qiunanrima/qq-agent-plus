@@ -50,6 +50,12 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     }
     if (mode.startsWith('catalog')) process.exit(9);
     promptId = id;
+    if (mode === 'finish-draft') {
+      await mcp.callTool('qq_finish', { summary: '未向我提问，保持旁听。' });
+      send({ method: 'session/update', params: { sessionId: 'codex-test', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '我先看一下当前对话状态' } } } });
+      send({ id, result: { stopReason: 'end_turn' } });
+      continue;
+    }
     if (mode === 'hang') continue;
     if (mode === 'empty') { send({ id, result: { stopReason: 'end_turn' } }); continue; }
     send({ id: 800, method: 'session/request_permission', params: { sessionId: 'codex-test', options: [{ optionId: 'once', kind: 'allow_once' }], toolCall: { kind: 'execute', rawInput: { command: 'forbidden' } } } });
