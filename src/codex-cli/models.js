@@ -1,0 +1,60 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { createAcpPeer } from '../cli/acp-rpc.js';
+import { normalizeCodexConfig } from './config.js';
+import { verifyCodexWorkspace, codexEnvironment } from './environment.js';
+
+const queries = new Set();
+export async function closeCodexModelQueries() { await Promise.all([...queries].map(stop => stop())); }
+
+export function parseCodexModels(session) {
+  const option = session.configOptions?.find(item => item.category === 'model' || item.id === 'model');
+  const flat = (items, depth = 0) => depth > 4 ? [] : (items || []).flatMap(item =>
+    Array.isArray(item.options) ? flat(item.options, depth + 1) : [item]);
+  const models = [], seen = new Set();
+  for (const item of flat(option?.options)) {
+    if (typeof item.value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,199}$/.test(item.value) || seen.has(item.value)) continue;
+    seen.add(item.value);
+    models.push({ id: item.value, name: typeof item.name === 'string' ? item.name.slice(0, 200) : item.value });
+    if (models.length === 128) break;
+  }
+  if (!models.length) throw new Error('Codex model catalog unavailable');
+  return { models, currentModel: models.some(m => m.id === option.currentValue) ? option.currentValue : '' };
+}
+
+/** Configuration discovery only: no prompt, MCP server, authentication flow or model turn. */
+export async function readCodexModels(config, { spawnProcess = spawn, timeoutMs = 20000 } = {}) {
+  const cfg = normalizeCodexConfig(config);
+  const home = await verifyCodexWorkspace(cfg.workspace);
+  if (queries.size) throw new Error('Codex model query busy');
+  const controller = new AbortController();
+  let peer, workspace;
+  const stop = async () => { controller.abort(); await peer?.close(); };
+  queries.add(stop);
+  const timer = setTimeout(stop, timeoutMs);
+  try {
+    workspace = await fs.mkdtemp(path.join(cfg.workspace, 'codex-models-'));
+    controller.signal.throwIfAborted();
+    const env = codexEnvironment(home, cfg.effort);
+    peer = createAcpPeer(cfg.executable, cfg.adapterScript ? [cfg.adapterScript] : [], {
+      cwd: workspace, signal: controller.signal,
+      spawnProcess: (exe, args, options) => spawnProcess(exe, args, { ...options, env }),
+      request: async () => { throw new Error('Codex discovery client operation denied'); }
+    });
+    const init = await peer.call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'qq-agent-plus', version: '0.9' } });
+    if (init.protocolVersion !== 1) throw new Error('Unsupported Codex ACP protocol');
+    const session = await peer.call('session/new', { cwd: workspace, mcpServers: [] });
+    return parseCodexModels(session);
+  } finally {
+    clearTimeout(timer); await stop();
+    try {
+      if (workspace) {
+        const target = path.resolve(workspace);
+        if (path.dirname(target) !== path.resolve(cfg.workspace) || !path.basename(target).startsWith('codex-models-')) throw new Error('Invalid Codex discovery cleanup target');
+        await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    }
+    finally { queries.delete(stop); }
+  }
+}

@@ -32,7 +32,7 @@ test('ASR 状态由服务端判定，并随配置即时变化', async (t) => {
   const app = createApp({ log: () => {} });
   t.after(async () => {
     await app.stop();
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await app.start();
   const request = async (route, { method = 'GET', body } = {}) => {
@@ -125,7 +125,7 @@ test('模型列表从服务商官网拉，且保存的 Key 只发给配置里的
   const app = createApp({ log: () => {} });
   t.after(async () => {
     await app.stop();
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await app.start();
   const post = async (body) => {
@@ -176,7 +176,7 @@ test('这家全是 LLM 时退回全量并说明（不让人以为"拉不到"）'
   const app = createApp({ log: () => {} });
   t.after(async () => {
     await app.stop();
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await app.start();
   const response = await fetch(`http://127.0.0.1:${port}/api/asr/models`, {
@@ -221,7 +221,7 @@ test('语音模型筛选：名字里没有 asr 的转写模型也要留下，TTS
   const app = createApp({ log: () => {} });
   t.after(async () => {
     await app.stop();
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await app.start();
   const response = await fetch(`http://127.0.0.1:${port}/api/asr/models`, {
@@ -254,7 +254,7 @@ test('切换语音服务预设：凭据按服务记忆（存过取回 / 没存�
   const app = createApp({ log: () => {} });
   t.after(async () => {
     await app.stop();
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await app.start();
   const request = async (route, { method = 'GET', body } = {}) => {
@@ -398,7 +398,7 @@ test('设置页回传：自定义搜索服务的 Key 不被清空；整节替换
   };
   updateConfig(cfg);
   const app = createApp({ log: () => {} });
-  t.after(async () => { await app.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => { await app.stop(); await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
   await app.start();
   const request = async (route, { method = 'GET', body } = {}) => {
     const response = await fetch(`http://127.0.0.1:${port}${route}`, {

@@ -13,6 +13,8 @@ function renderCodexSection(c = {}) {
   ${field('executable', 'ACP 可执行文件（Windows 建议填 node.exe 绝对路径）', 'codex-acp')}
   ${field('adapterScript', '适配器 JS 绝对路径（直接运行 codex-acp 时留空）')}
   ${field('workspace', '独立工作目录（绝对路径）')}${field('model', '模型 ID（留空沿用 CLI 默认）')}
+  <div class="field"><label for="codex-model-catalog">从 CLI 模型列表选择</label><select id="codex-model-catalog"><option value="">沿用 CLI 默认</option>${cfg.model ? `<option value="${esc(cfg.model)}" selected>${esc(cfg.model)}（当前配置）</option>` : ''}</select></div>
+  <button class="btn" id="codex-models-refresh">获取模型列表</button><p class="hint" id="codex-models-result" role="status">先保存路径并登录，再获取列表。查询不发送聊天；选择后需保存设置。</p>
   <div class="field"><label for="codex-effort">思考档位</label><select id="codex-effort">${['low', 'medium', 'high'].map(v => `<option ${v === (cfg.effort || 'low') ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
   ${field('timeoutMs', '超时毫秒（1000–60000）', 60000, 'number')}${field('maxConcurrent', '全局并发（1–4，每个会话最多一个）', 1, 'number')}${field('maxToolCalls', '工具调用上限（1–128）', 16, 'number')}
   <p class="hint">启用前请停用 Antigravity CLI。保存和刷新状态不调用模型；失败不重试，用量无法取得时标为未知。</p>
@@ -46,6 +48,28 @@ function bindCodexSettings() {
   bind('#codex-toggle', toggle); bind('#codex-experiment-toggle', toggle);
   bind('#codex-open', () => { state.settingsSection = 'codex-cli'; renderSettings(); });
   bind('#codex-refresh', loadCodexStatus);
+  $('#codex-model-catalog')?.addEventListener('change', () => {
+    $('#codex-model').value = $('#codex-model-catalog').value;
+    state.settingsDirty = true;
+    $('#codex-models-result').textContent = '模型已选择，请保存 Codex 设置。';
+  });
+  bind('#codex-models-refresh', async () => {
+    const select = $('#codex-model-catalog'), note = $('#codex-models-result');
+    note.textContent = '正在从已保存的 CLI 配置获取模型列表…';
+    try {
+      const result = await api('/api/codex-cli/models', { method: 'POST' });
+      if ($('#codex-model-catalog') !== select) return;
+      const current = $('#codex-model').value.trim();
+      const models = result.models || [];
+      select.innerHTML = '<option value="">沿用 CLI 默认</option>' +
+        (current && !models.some(model => model.id === current) ? `<option value="${esc(current)}">${esc(current)}（当前配置，列表未返回）</option>` : '') +
+        models.map(model => `<option value="${esc(model.id)}">${esc(model.name)} · ${esc(model.id)}</option>`).join('');
+      select.value = current;
+      note.textContent = `已获取 ${models.length} 个模型。CLI 当前模型：${result.currentModel || '未知'}。选择后请保存。`;
+    } catch (error) {
+      if ($('#codex-models-result') === note) note.textContent = error.message;
+    }
+  });
   bind('#codex-graduate', async () => {
     const graduated = !state.config?.codexCli?.graduated;
     if (!await askForConfirmation(graduated ? '固化 Codex CLI，使设置入口常驻？运行开关保持独立。' : '取消固化 Codex CLI？配置继续保留。')) return;

@@ -12,6 +12,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "POST",
+    "path": "/api/codex-cli/models",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "GET",
     "path": "/api/codex-cli/status",
     "auth": true,

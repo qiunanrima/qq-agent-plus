@@ -1,6 +1,7 @@
 import readline from 'node:readline';
 import { McpStdioClient } from '../../src/mcp/client.js';
 const mode = process.argv[2] || 'ok';
+const configOptions = [{ id: 'model', category: 'model', currentValue: 'test-model', options: [{ value: 'test-model', name: 'Test model' }, { value: 'other-model', name: '<Other>' }] }, { id: 'reasoning_effort', options: [{ value: 'low' }] }];
 const send = value => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\n');
 let mcp, promptId;
 for await (const line of readline.createInterface({ input: process.stdin })) {
@@ -15,11 +16,23 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     if (process.env.INITIAL_AGENT_MODE !== 'read-only') process.exit(6);
     send({ id, result: { protocolVersion: 1 } });
   } else if (method === 'session/new') {
+    if (mode === 'catalog-hang') continue;
+    if (mode === 'catalog') {
+      if (params.mcpServers.length) process.exit(7);
+      send({ id, result: { sessionId: 'catalog', configOptions } });
+      continue;
+    }
     const server = params.mcpServers[0];
     mcp = new McpStdioClient({ id: server.name, command: server.command, args: server.args, env: Object.fromEntries(server.env.map(e => [e.name, e.value])), timeoutMs: 3000, log: { info() {}, warn() {}, error() {} } });
     await mcp.start();
-    send({ id, result: { sessionId: 'codex-test', modes: { availableModes: [{ id: 'read-only' }] }, configOptions: [{ id: 'reasoning_effort', options: [{ value: 'low' }] }] } });
+    send({ id, result: { sessionId: 'codex-test', modes: { availableModes: [{ id: 'read-only' }] }, configOptions } });
+  } else if (method === 'session/set_model') {
+    process.exit(10); // Base IDs must use the model config option, not legacy model[effort].
+  } else if (method === 'session/set_config_option') {
+    if (params.configId === 'model' && params.value !== 'test-model') process.exit(8);
+    send({ id, result: { configOptions } });
   } else if (method === 'session/prompt') {
+    if (mode.startsWith('catalog')) process.exit(9);
     promptId = id;
     if (mode === 'hang') continue;
     if (mode === 'empty') { send({ id, result: { stopReason: 'end_turn' } }); continue; }

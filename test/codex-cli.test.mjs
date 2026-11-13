@@ -73,6 +73,14 @@ test('empty ACP end_turn is not a successful conversation', async t => {
   const s = await setup(t, 'empty'); await assert.rejects(codexCompletion(s.request, s.deps), /Empty Codex/);
 });
 
+test('selected base model uses config option, then sets supported reasoning effort', async t => {
+  const s = await setup(t);
+  s.request.config.model = 'test-model';
+  assert.equal((await codexCompletion(s.request, s.deps)).message.content, 'native-denied-mcp-ok');
+  s.request.config.model = 'missing-model';
+  await assert.rejects(codexCompletion(s.request, s.deps), /model unavailable/);
+});
+
 test('unknown host-tool outcomes cancel the run and never spawn another ACP child', async t => {
   const s = await setup(t);
   s.request.mcpRun.execute = async () => { throw new Error('external write outcome unknown'); };
