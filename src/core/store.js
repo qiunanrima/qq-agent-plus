@@ -1,4 +1,5 @@
 import { entry, threadEntry } from './store-rows.js';
+import { searchPersonHistory } from './person-history.js';
 import { isExternalChat } from '../channels/registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1430,6 +1431,8 @@ export class ChatStore {
   }
 
   /** 某成员最近 N 条发言（时间正序；只读、不含自己）。记忆整理用来补充新证据。 */
+  searchPersonHistory(options) { return searchPersonHistory(this.db, options); }
+
   searchHistory(chatKey, { query = '', userId = '', after = 0, before = 0, limit = 10, offset = 0 } = {}) {
     return this.db.prepare(`SELECT * FROM messages WHERE chat_key=? AND state='acked'
       AND event_kind='message' AND (?='' OR instr(lower(text),lower(?))>0)

@@ -231,7 +231,13 @@
     <section id="view-chats" class="view" data-page-node-id="vrl1zysqFxujSPCndQWW5B">
       <aside id="chat-list" class="list-pane" data-page-node-id="oHomcx4PNl2n51xeHfeIXI">
         <div class="list-head muted" data-page-node-id="vlqc8FbmqzRhAk07MYf9xH">消息存档</div>
-        <div class="archive-filter">
+        <div class="archive-filter" style="flex-wrap:wrap">
+          <form id="archive-person-form" style="display:flex;gap:6px;flex-wrap:wrap;flex:0 0 100%;min-width:0">
+            <input id="archive-person-id" inputmode="numeric" pattern="[0-9]{1,15}" placeholder="按QQ号查群聊和私聊" aria-label="查找人物QQ号" required style="min-width:0;flex:1 1 140px" />
+            <input id="archive-person-query" placeholder="关键词（可选）" aria-label="人物消息关键词" style="min-width:0;flex:1 1 120px" />
+            <select id="archive-person-scope" aria-label="人物消息范围"><option value="all">群聊和私聊</option><option value="group">仅群聊</option><option value="private">仅私聊</option></select>
+            <button type="submit" class="btn btn-small">查人物</button>
+          </form>
           <input type="text" id="archive-search" placeholder="搜索会话名 / 最近消息" aria-label="搜索会话名或最近消息" />
           <select id="archive-filter-type" aria-label="筛选会话类型">
             <option value="all">全部</option>

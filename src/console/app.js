@@ -1487,6 +1487,7 @@ function buildApp({
 
   async function ingestMessage(kind, id, event, arrivedInactive = false) {
     const cfgNow = getConfig();
+    if (Number(event.time) * 1000 < (Number(cfgNow.store?.historyStartAt) || 0)) return;
     if (!allowed(kind, id, cfgNow)) return; // 白名单外的聊天完全不记录
     const chatKey = `${kind}:${id}`;
 

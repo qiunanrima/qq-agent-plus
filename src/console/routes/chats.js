@@ -5,8 +5,10 @@
 import { conversationConfigForChat } from '../../core/config.js';
 import { assertCanSend } from '../../core/access.js';
 import { textWithQuote } from '../../core/util.js';
+import { registerPersonHistoryRoutes } from './person-history.js';
 
 export function registerChatRoutes(router, deps = {}) {
+  registerPersonHistoryRoutes(router, deps);
   const json = deps.json;
   const readBody = deps.readBody;
   const emit = deps.emit;

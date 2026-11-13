@@ -749,6 +749,10 @@ function renderChatList() {
   // 存档筛选（关键字 + 类型，纯前端过滤）；控件是 index.html 里的静态元素，绑一次即可
   if (!box.__archiveFilterBound) {
     box.__archiveFilterBound = true;
+    $('#archive-person-form')?.addEventListener('submit', event => {
+      event.preventDefault();
+      void searchArchivedPerson();
+    });
     $('#archive-search')?.addEventListener('input', () => renderChatList());
     $('#archive-filter-type')?.addEventListener('change', () => renderChatList());
   }
@@ -821,11 +825,40 @@ function renderChatList() {
 }
 
 async function selectChat(key) {
+  state.archivePersonRequest = (state.archivePersonRequest || 0) + 1;
   resetChatMessageCache();
   state.currentChatKey = key;
   renderChatList();
   $('#chat-detail').innerHTML = '<div class="empty-hint">加载中…</div>';
   await loadChatMessages(key);
+}
+
+async function searchArchivedPerson(offset = 0) {
+  const userId = String($('#archive-person-id')?.value || '').trim();
+  if (!/^\d{1,15}$/.test(userId)) return;
+  const request = state.archivePersonRequest = (state.archivePersonRequest || 0) + 1;
+  resetChatMessageCache();
+  state.currentChatKey = '';
+  const box = $('#chat-detail');
+  box.innerHTML = '<div class="empty-hint">正在查找人物消息…</div>';
+  try {
+    const params = new URLSearchParams({ userId, offset: String(offset),
+      query: String($('#archive-person-query')?.value || '').trim(), scope: $('#archive-person-scope')?.value || 'all' });
+    const data = await api(`/api/history/person?${params}`);
+    if (request !== state.archivePersonRequest) return;
+    box.innerHTML = `<header class="pane-head"><h2>QQ ${esc(userId)} 的消息</h2></header>
+      <p class="hint">群聊展示此人的发言；私聊展示与此人的双方对话。每条保留原会话归属。</p>
+      <div>${data.messages.length ? data.messages.map(row => `<article class="card" style="margin:10px;overflow-wrap:anywhere">
+        <div class="muted">${esc(formatChatTitle(row.chatKey, chatNameOf(row.chatKey)))} · ${esc(new Date(row.time).toLocaleString('zh-CN', { hour12: false }))}</div>
+        <strong>${esc(row.self ? '我' : row.senderName || row.senderId)}</strong>
+        <p style="white-space:pre-wrap">${esc(row.text)}</p></article>`).join('') : '<div class="empty-hint">没有找到匹配的消息</div>'}</div>
+      <div style="display:flex;gap:10px;padding:12px"><button class="btn btn-small" id="person-history-prev" ${offset ? '' : 'disabled'}>上一页</button>
+      <button class="btn btn-small" id="person-history-next" ${data.nextOffset === null ? 'disabled' : ''}>下一页</button></div>`;
+    $('#person-history-prev')?.addEventListener('click', () => searchArchivedPerson(Math.max(0, offset - 30)));
+    $('#person-history-next')?.addEventListener('click', () => searchArchivedPerson(data.nextOffset));
+  } catch (error) {
+    if (request === state.archivePersonRequest) box.innerHTML = `<div role="alert" class="empty-hint">搜索失败：${esc(error.message)}</div>`;
+  }
 }
 
 /**
