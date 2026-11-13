@@ -2,6 +2,7 @@ import { createAcpPeer } from './acp-rpc.js';
 import { createAcpPermissionHandler, describeAcpPermission } from './acp-permissions.js';
 import { verifyNativeHooks } from './verify-native-hooks.js';
 import { createAcpNativeClient } from './acp-native-client.js';
+import { runCancelled } from '../core/run-cancellation.js';
 
 /** One ACP session per host run; no permanent permissions or automatic retry. */
 export async function acpCompletion({ config, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, { verify = verifyNativeHooks, pool } = {}) {
@@ -18,7 +19,8 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls, onUnknownWrite: error => controller.abort(error) });
   const timer = setTimeout(() => controller.abort(new Error(`Antigravity CLI timed out (${config.timeoutMs}ms; phase=${phase}; hostCalls=${invocation.calls()}; pendingPermissions=${pendingPermissions})`)), config.timeoutMs);
   const guard = setInterval(() => {
-    if (!isEnabled() || invocation.policyChanged()) controller.abort(new Error('Antigravity permission policy changed'));
+    if (!isEnabled()) controller.abort(runCancelled('cli-disabled', 'Antigravity CLI disabled'));
+    else if (invocation.policyChanged()) controller.abort(runCancelled('cli-policy-changed', 'Antigravity permission policy changed'));
     else if (mcpRun.isFinished?.() && !hostFinished) {
       hostFinished = true;
       if (pool && sessionId) {

@@ -1,5 +1,5 @@
-export function runCancelled(reason) {
-  return Object.assign(new Error('Run cancelled'), { code: 'RUN_CANCELLED', cancelReason: reason });
+export function runCancelled(reason, message = 'Run cancelled') {
+  return Object.assign(new Error(message), { code: 'RUN_CANCELLED', cancelReason: reason });
 }
 
 /** Text alone is not proof: only a host-owned cancellation reason is intentional. */

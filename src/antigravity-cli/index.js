@@ -7,6 +7,7 @@ import { acpCompletion } from './acp-completion.js';
 import { verifyNativeHooks } from './verify-native-hooks.js';
 import { buildMcpPrompt } from './prompt.js';
 import { createAcpPool } from './acp-pool.js';
+import { runCancelled } from '../core/run-cancellation.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const queue = createCliQueue();
@@ -72,7 +73,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
   const cfg = normalizeAntigravityConfig(['wechat', 'bilibili'].includes(mcpRun?.platform)
     ? { ...config, nativeApproval: mcpRun.approvalAllowed?.('native') === true, qqApproval: false, maxConcurrent: 1 } : config);
   signal?.throwIfAborted();
-  if (!cfg.enabled || !isEnabled()) throw new Error('Antigravity CLI disabled');
+  if (!cfg.enabled || !isEnabled()) throw runCancelled('cli-disabled', 'Antigravity CLI disabled');
   const chatKey = mcpRun?.chatKey;
   // Text-only first version: never silently discard image/audio input.
   for (const message of messages || []) {
@@ -198,8 +199,8 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       });
       timer = setTimeout(() => stop(new Error('Antigravity CLI timed out')), cfg.timeoutMs);
       guard = setInterval(() => {
-        if (!isEnabled()) stop(new Error('Antigravity CLI disabled'));
-        else if (invocation?.policyChanged()) stop(new Error('Antigravity approval policy changed'));
+        if (!isEnabled()) stop(runCancelled('cli-disabled', 'Antigravity CLI disabled'));
+        else if (invocation?.policyChanged()) stop(runCancelled('cli-policy-changed', 'Antigravity approval policy changed'));
         else if (invocation?.finished()) { hostFinished = true; stop(); }
       }, 100);
       signal?.addEventListener('abort', abort, { once: true });

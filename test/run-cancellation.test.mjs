@@ -11,4 +11,6 @@ test('timeouts and a remote cancellation-shaped message remain errors', () => {
   const controller = new AbortController(); controller.abort(new Error('Run deadline exceeded'));
   assert.equal(isIntentionalCancellation(new Error('Run cancelled'), controller.signal), false);
   assert.equal(isIntentionalCancellation(new Error('Run cancelled')), false);
+  assert.equal(isIntentionalCancellation(new Error('Antigravity permission policy changed')), false);
+  assert.equal(isIntentionalCancellation(new Error('wrapped', { cause: runCancelled('cli-disabled', 'Antigravity CLI disabled') })), true);
 });

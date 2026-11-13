@@ -9,6 +9,7 @@ import { nativeHookDecision } from '../src/antigravity-cli/native-ask-hook.js';
 import { acpCompletion } from '../src/antigravity-cli/acp-completion.js';
 import { listCliApprovals, decideCliApproval } from '../src/antigravity-cli/approvals.js';
 import fs from 'node:fs/promises';
+import { isIntentionalCancellation } from '../src/core/run-cancellation.js';
 import { verifyNativeHooks } from '../src/antigravity-cli/verify-native-hooks.js';
 import { antigravityCompletion, antigravityStatus, closeAntigravityProcesses } from '../src/antigravity-cli/index.js';
 
@@ -148,6 +149,22 @@ test('WeChat empty ACP end_turn fails instead of silently acknowledging the inco
     spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'executor-empty'], opts)
   }, { verify: async () => {} }), { code: 'ANTIGRAVITY_ACP_EMPTY_RESULT' });
   assert.deepEqual(listCliApprovals(), []);
+});
+
+test('host disabling or changing policy cancels ACP without reporting a provider failure', async () => {
+  for (const policy of [false, true]) {
+    let changed = false;
+    const completion = acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
+      invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0, finished: () => false, policyChanged: () => policy && changed },
+      prompt: 'offline', mcpRun: run, isEnabled: () => policy || !changed,
+      spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'hang'], opts)
+    }, { verify: async () => {} });
+    const rejection = assert.rejects(completion, error => isIntentionalCancellation(new Error('wrapped', { cause: error })) && error.cancelReason === (policy ? 'cli-policy-changed' : 'cli-disabled'));
+    const entry = await waitPending(); changed = true;
+    await rejection;
+    assert.equal(decideCliApproval(entry.id, true), false);
+    assert.deepEqual(listCliApprovals(), []);
+  }
 });
 
 test('ACP deadline revokes unanswered approval and kills the subprocess', async () => {

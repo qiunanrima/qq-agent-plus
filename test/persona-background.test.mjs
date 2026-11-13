@@ -9,7 +9,7 @@ import { registerPersonaBackgroundRoutes } from '../src/persona-background/route
 const persona = { templateId: 'test-role', botName: '测试角色', roleText: '角色卡正文' };
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-background-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const store = new PersonaBackground({ dataDir: dir });
   const save = (text, role = persona) => store.save(role, { ...store.read(role), content: text });
   return { dir, store, save };
