@@ -7,7 +7,16 @@ let mcp, promptId;
 for await (const line of readline.createInterface({ input: process.stdin })) {
   const message = JSON.parse(line), { id, method, params } = message;
   if (!method) {
-    if (message.result?.outcome?.outcome !== 'cancelled') process.exit(5);
+    if (mode === 'approval' && id === 801) {
+      if (message.result?.outcome?.outcome !== 'selected' || message.result.outcome.optionId !== 'once') process.exit(11);
+    } else {
+      if (message.result?.outcome?.outcome !== 'cancelled') process.exit(5);
+      if (mode === 'approval') {
+        send({ method: 'session/update', params: { sessionId: 'codex-test', update: { sessionUpdate: 'tool_call', toolCallId: 'host-probe', kind: 'execute', status: 'pending', rawInput: { server: 'qq_run', tool: 'qq_probe', arguments: {} }, _meta: { is_mcp_tool_call: true } } } });
+        send({ id: 801, method: 'session/request_permission', params: { sessionId: 'codex-test', toolCall: { toolCallId: 'host-probe', kind: 'execute' }, _meta: { is_mcp_tool_approval: true }, options: [{ optionId: 'once', kind: 'allow_once' }] } });
+        continue;
+      }
+    }
     await mcp.callTool('qq_probe', {});
     if (mode === 'finish') { await mcp.callTool('qq_finish', { summary: 'done' }); continue; }
     send({ method: 'session/update', params: { sessionId: 'codex-test', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'native-denied-mcp-ok' } } } });

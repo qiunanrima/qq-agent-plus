@@ -6,6 +6,7 @@ import { createRunToolMcp } from '../cli/mcp-run.js';
 import { normalizeCodexConfig } from './config.js';
 import { verifyCodexWorkspace, codexEnvironment } from './environment.js';
 import { closeCodexModelQueries } from './models.js';
+import { createCodexPermissionPolicy } from './permissions.js';
 export { verifyCodexWorkspace } from './environment.js';
 
 const running = new Map();
@@ -24,7 +25,7 @@ export async function codexCompletion({ config, messages, tools = [], toolChoice
   if (running.has(mcpRun.chatKey) || running.size >= cfg.maxConcurrent) throw new Error('Codex CLI busy');
   const controller = new AbortController();
   const scoped = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-  let peer, bridge, workspace, sessionId, response = '', hostFinished = false;
+  let peer, bridge, workspace, sessionId, permissionPolicy, response = '', hostFinished = false;
   const entry = { stop: async () => { controller.abort(); await peer?.close(); } };
   running.set(mcpRun.chatKey, entry);
   const timer = setTimeout(() => controller.abort(new Error('Codex CLI timed out')), cfg.timeoutMs);
@@ -38,6 +39,7 @@ export async function codexCompletion({ config, messages, tools = [], toolChoice
     scoped.throwIfAborted();
     workspace = await fs.mkdtemp(path.join(cfg.workspace, 'codex-run-'));
     const selected = (tools || []).filter(t => toolChoice !== 'none' && (!toolChoice?.function?.name || t.function?.name === toolChoice.function.name));
+    permissionPolicy = createCodexPermissionPolicy({ tools: selected.map(t => t.function.name), sessionId: () => sessionId, allowed });
     bridge = await createRunToolMcp({ tools: selected.map(t => t.function), chatKey: mcpRun.chatKey, runId: mcpRun.runId,
       signal: scoped, maxCalls: cfg.maxToolCalls, timeoutMs: cfg.timeoutMs, authorize: allowed,
       execute: async call => {
@@ -49,10 +51,11 @@ export async function codexCompletion({ config, messages, tools = [], toolChoice
       cwd: workspace, signal: scoped,
       spawnProcess: (exe, args, options) => spawnProcess(exe, args, { ...options, env }),
       request: async (method, params) => {
-        if (method === 'session/request_permission' && params.sessionId === sessionId) return { outcome: { outcome: 'cancelled' } };
+        if (method === 'session/request_permission') return permissionPolicy.request(params);
         throw new Error('Codex native client operation denied');
       },
       update: (method, params) => {
+        if (method === 'session/update') permissionPolicy.update(params);
         if (method === 'session/update' && params.sessionId === sessionId && params.update?.sessionUpdate === 'agent_message_chunk' && params.update.content?.type === 'text') response += params.update.content.text || '';
       }
     });
@@ -105,5 +108,5 @@ export async function codexCompletion({ config, messages, tools = [], toolChoice
   }
   function completed() { return { message: { role: 'assistant', content: response }, finishReason: 'stop', toolsExecutedViaMcp: true,
     model: cfg.model || 'codex-default', originBaseUrl: 'codex-cli://local', usage: undefined,
-    raw: { driver: 'acp', status: hostFinished ? 'HOST_FINISHED' : 'SUCCESS', usageUnavailable: true } }; }
+    raw: { driver: 'acp', status: hostFinished ? 'HOST_FINISHED' : 'SUCCESS', usageUnavailable: true, permissions: permissionPolicy?.stats() } }; }
 }

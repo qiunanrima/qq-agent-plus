@@ -50,6 +50,14 @@ test('host finish closes hanging ACP without replay or invented usage', async t 
   assert.deepEqual(s.calls, ['probe', 'finish']); assert.equal(s.spawned(), 1);
   assert.equal(result.raw.status, 'HOST_FINISHED'); assert.equal(result.raw.usageUnavailable, true);
 });
+
+test('Codex native operation is denied while correlated host MCP permission allows actual execution', async t => {
+  const s = await setup(t, 'approval');
+  const result = await codexCompletion(s.request, s.deps);
+  assert.deepEqual(s.calls, ['probe']);
+  assert.deepEqual(result.raw.permissions, { hostAllowed: 1, denied: 1 });
+  assert.equal(s.spawned(), 1);
+});
 test('cancel, disable and deadline revoke ACP children and release concurrency slots', async t => {
   for (const mode of ['abort', 'disable', 'timeout']) {
     const s = await setup(t, 'hang'); const controller = new AbortController(); let enabled = true;
