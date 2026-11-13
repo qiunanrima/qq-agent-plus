@@ -12,6 +12,18 @@
     "keyEndpoint": false
   },
   {
+    "method": "GET",
+    "path": "/api/codex-cli/quota",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/codex-cli/quota",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "POST",
     "path": "/api/codex-cli/models",
     "auth": true,

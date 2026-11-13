@@ -58,12 +58,27 @@ test('Codex native operation is denied while correlated host MCP permission allo
   assert.deepEqual(result.raw.permissions, { hostAllowed: 1, denied: 1 });
   assert.equal(s.spawned(), 1);
 });
+
+test('queued Codex completion starts no child until the active request releases its slot', async t => {
+  const first = await setup(t, 'hang'), second = await setup(t);
+  const controller = new AbortController();
+  const active = codexCompletion({ ...first.request, signal: controller.signal }, first.deps);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const queued = codexCompletion(second.request, second.deps);
+  assert.equal(codexStatus().queued, 1); assert.equal(second.spawned(), 0);
+  controller.abort(); await assert.rejects(active, e => e.code === 'CODEX_NO_RETRY');
+  assert.equal((await queued).message.content, 'native-denied-mcp-ok');
+  assert.equal(second.spawned(), 1); assert.deepEqual(codexStatus(), { active: 0, queued: 0, driver: 'acp' });
+});
 test('cancel, disable and deadline revoke ACP children and release concurrency slots', async t => {
   for (const mode of ['abort', 'disable', 'timeout']) {
     const s = await setup(t, 'hang'); const controller = new AbortController(); let enabled = true;
     const pending = codexCompletion({ ...s.request, config: { ...s.request.config, timeoutMs: 1000 }, signal: controller.signal, isEnabled: () => enabled }, s.deps);
     await new Promise(resolve => setTimeout(resolve, 150));
-    await assert.rejects(codexCompletion(s.request, s.deps), /busy/);
+    const queuedController = new AbortController();
+    const queued = codexCompletion({ ...s.request, signal: queuedController.signal }, s.deps);
+    assert.equal(codexStatus().queued, 1);
+    queuedController.abort(); await assert.rejects(queued, e => e.code === 'CODEX_NO_RETRY');
     if (mode === 'abort') controller.abort(); if (mode === 'disable') enabled = false;
     await assert.rejects(pending, e => e.code === 'CODEX_NO_RETRY');
     assert.equal(codexStatus().active, 0); assert.deepEqual(await fs.readdir(s.workspace), ['codex-home']);

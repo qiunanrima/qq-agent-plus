@@ -8,13 +8,36 @@ test('Codex ACP settings have independent lifecycle, persistence and responsive 
   const errors = collectPageErrors(page);
   expect((await page.request.get('/api/codex-cli/status')).status()).toBe(401);
   expect((await page.request.post('/api/codex-cli/models')).status()).toBe(401);
+  expect((await page.request.get('/api/codex-cli/quota')).status()).toBe(401);
+  expect((await page.request.post('/api/codex-cli/quota')).status()).toBe(401);
   await login(page);
   const workspace = fs.mkdtempSync(path.resolve('.codex/codex-browser-'));
   fs.mkdirSync(path.join(workspace, 'codex-home'));
   const patch = async data => expect((await page.request.post('/api/config', { data })).ok()).toBe(true);
   try {
     await patch({ antigravityCli: { enabled: false }, codexCli: { enabled: false, graduated: false, workspace } });
-    await page.goto('/'); await switchTo(page, 'settings');
+    let quotaQueries = 0;
+    await page.route('**/api/codex-cli/quota', route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { available: false } });
+      quotaQueries++;
+      return route.fulfill({ json: { available: true, windows: [{ name: '5h limit', remainingPercent: 73, reset: '(resets 18:30)' }], credits: 0, plan: 'pro', checkedAt: '2026-11-13T08:00:00Z' } });
+    });
+    await page.goto('/'); await switchTo(page, 'overview');
+    await expect(page.locator('#antigravity-quota-card')).toBeVisible();
+    await expect(page.locator('#codex-quota-card')).toBeVisible();
+    expect(quotaQueries).toBe(0);
+    await page.locator('#codex-quota-refresh').click();
+    await expect(page.locator('#codex-quota-result')).toContainText('73%');
+    await expect(page.locator('#codex-quota-result')).toContainText('Credits：0');
+    expect(quotaQueries).toBe(1);
+    await expect(page.locator('#codex-queue-status')).toContainText('排队 0 个');
+    fs.mkdirSync('.codex/codex-ui', { recursive: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('#codex-quota-result').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: '.codex/codex-ui/quota-mobile.png', fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await switchTo(page, 'settings');
     await page.locator('button[data-section="experiments"]').click();
     await page.locator('#codex-open').click();
     await expect(page.locator('#codex-save')).toBeVisible();

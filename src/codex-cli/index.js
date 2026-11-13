@@ -7,11 +7,13 @@ import { normalizeCodexConfig } from './config.js';
 import { verifyCodexWorkspace, codexEnvironment } from './environment.js';
 import { closeCodexModelQueries } from './models.js';
 import { createCodexPermissionPolicy } from './permissions.js';
+import { createCodexQueue } from './queue.js';
 export { verifyCodexWorkspace } from './environment.js';
 
 const running = new Map();
-export function codexStatus() { return { active: running.size, queued: 0, driver: 'acp' }; }
-export async function closeCodexProcesses() { await Promise.all([closeCodexModelQueries(), ...[...running.values()].map(run => run.stop())]); }
+const queue = createCodexQueue();
+export function codexStatus() { return { ...queue.status(), driver: 'acp' }; }
+export async function closeCodexProcesses() { queue.cancelWaiting(); await Promise.all([closeCodexModelQueries(), ...[...running.values()].map(run => run.stop())]); }
 
 /** Fresh process and ACP session per turn. Host MCP is the only external-write path. */
 export async function codexCompletion({ config, messages, tools = [], toolChoice = 'auto', signal, isEnabled = () => true, mcpRun }, { spawnProcess = spawn } = {}) {
@@ -22,7 +24,8 @@ export async function codexCompletion({ config, messages, tools = [], toolChoice
   for (const message of messages || []) if (Array.isArray(message.content) && message.content.some(p => p.type !== 'text')) throw new Error('Codex CLI currently supports text only');
   const prompt = 'Act as the supplied conversation role, respecting system messages, role card and memory. Use only qq_run MCP host tools. qq_send_message delivers to the current conversation; qq_finish ends this run. Never repeat successful or unknown external writes. Stop after finish. Do not use native tools. Conversation data:\n' + JSON.stringify({ messages, toolChoice });
   if (Buffer.byteLength(prompt) > 4 * 1024 * 1024) throw new Error('Codex prompt exceeds limit');
-  if (running.has(mcpRun.chatKey) || running.size >= cfg.maxConcurrent) throw new Error('Codex CLI busy');
+  const release = await queue.acquire({ chatKey: mcpRun.chatKey, limit: cfg.maxConcurrent, signal,
+    isEnabled: () => isEnabled() && mcpRun.allowed() && !mcpRun.isFinished?.() });
   const controller = new AbortController();
   const scoped = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   let peer, bridge, workspace, sessionId, permissionPolicy, response = '', hostFinished = false;
@@ -102,9 +105,10 @@ export async function codexCompletion({ config, messages, tools = [], toolChoice
       const target = path.resolve(workspace);
       if (path.dirname(target) !== path.resolve(cfg.workspace) || !path.basename(target).startsWith('codex-run-')) throw new Error('Invalid Codex cleanup target');
       try { await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }
-      finally { running.delete(mcpRun.chatKey); }
+      finally { running.delete(mcpRun.chatKey); release(); }
     }
     running.delete(mcpRun.chatKey);
+    release();
   }
   function completed() { return { message: { role: 'assistant', content: response }, finishReason: 'stop', toolsExecutedViaMcp: true,
     model: cfg.model || 'codex-default', originBaseUrl: 'codex-cli://local', usage: undefined,

@@ -26,8 +26,9 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     send({ id, result: { protocolVersion: 1 } });
   } else if (method === 'session/new') {
     if (mode === 'catalog-hang') continue;
-    if (mode === 'catalog') {
+    if (mode === 'catalog' || mode.startsWith('quota')) {
       if (params.mcpServers.length) process.exit(7);
+      if (mode === 'quota') send({ method: 'session/update', params: { sessionId: 'catalog', update: { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'status' }] } } });
       send({ id, result: { sessionId: 'catalog', configOptions } });
       continue;
     }
@@ -41,6 +42,12 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     if (params.configId === 'model' && params.value !== 'test-model') process.exit(8);
     send({ id, result: { configOptions } });
   } else if (method === 'session/prompt') {
+    if (mode.startsWith('quota')) {
+      if (mode !== 'quota' || params.prompt[0].text !== '/status') process.exit(12);
+      send({ method: 'session/update', params: { sessionId: 'catalog', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '**Account:** ChatGPT pro (private@example.com)\n**5h limit:** 73% left (resets 18:30)\n**Weekly limit:** 49% left (resets 12:00 on Nov 17)\n**Credits:** 0' } } } });
+      send({ id, result: { stopReason: 'end_turn' } });
+      continue;
+    }
     if (mode.startsWith('catalog')) process.exit(9);
     promptId = id;
     if (mode === 'hang') continue;
