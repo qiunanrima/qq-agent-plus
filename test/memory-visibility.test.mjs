@@ -26,6 +26,7 @@ fs.writeFileSync(path.join(memoryRoot, 'private_12345', '12345.json'), JSON.stri
 
 const withVisibility = (visibility) => {
   const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.memory.forgettingEnabled = false; // 此组只验证可见性，1970年夹具不参与遗忘排序。
   cfg.memory.visibility = visibility;
   setRuntimeConfig(cfg);
   return new MemoryStore();

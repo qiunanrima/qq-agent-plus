@@ -1587,11 +1587,9 @@ describe('Orchestrator', () => {
     const names = tools.map((tool) => tool.function?.name);
     assert.equal(names.includes('send_voice'), false, '语音回复关掉 → send_voice 不该在工具表里（调了必然失败）');
     assert.equal(names.includes('remind'), false, '提醒关掉 → remind 不该在工具表里（不会被派发）');
-    // 提示词侧不许再教这两个（只看平台自己写的工具引导段，角色卡正文是管理员内容）。
-    // 注意标题名要跟 prompt.js 一致：'【群游戏规则】' 早就改名成 '【玩法与工具箱】'，
-    // indexOf 返回 -1 时 slice(-1) 只取最后一个字符 —— 断言会**空转**（2026-10-07 审计发现）。
-    const rules = system.slice(system.indexOf('【玩法与工具箱】'));
-    assert.ok(rules.length > 0 && rules.startsWith('【玩法与工具箱】'), `提示词里应有玩法工具箱段，实际片段：${rules.slice(0, 40)}`);
+    // 平台长篇工具箱已移除；检查保留的发送协议与场景边界。
+    const rules = system.slice(system.indexOf('【工作方式：决策、发送与收尾】'));
+    assert.ok(rules.startsWith('【工作方式：决策、发送与收尾】'));
     assert.equal(rules.includes('send_voice'), false, '提示词不该再教 send_voice');
     assert.equal(rules.includes('remind'), false, '提示词不该再教 remind（工具已被摘）');
   });
@@ -1686,7 +1684,7 @@ describe('Orchestrator', () => {
     assert.equal(nvScene.includes('用 get_message_images 看'), false, '工具摘了就不能再教它用（只读 api.vision 会漏掉这一半）');
     assert.equal(nvScene.includes('先看画面再听声音'), false);
     // 自安排唤醒的引导只跟 selfWakeEnabled 走：vision 关掉不该把它一起吞了
-    assert.equal(nvSystem.includes('schedule_wake 给自己安排一次唤醒'), true, '工具在，用法引导也要在');
+    assert.equal(nvSystem.includes('schedule_wake 只是让系统到点唤醒你一次'), true, '工具在，用法引导也要在');
     // collect_sticker 的描述也不能点名已被摘掉的工具
     assert.equal(nvSystem.includes('先 get_message_images 看图确认'), false);
 
@@ -1700,7 +1698,7 @@ describe('Orchestrator', () => {
     };
     append(3, '哈哈', '42');
     await runner.wake('group:1');
-    assert.match(withVision, /别人发视频时两样都能拿到/);
+    assert.match(withVision, /视频画面可用 get_message_images/);
     assert.match(withVision, /get_message_audio/);
     cfg.api.vision = true;
   });
@@ -1726,7 +1724,7 @@ describe('Orchestrator', () => {
     assert.equal(hasAudioTool(bodies.at(-1)), true, '配了 key 应注入');
     assert.match(bodies.at(-1).messages[0].content, /get_message_audio/);
     // 视频要两样都说清：画面（get_message_images 帧条）+ 声音（转写），否则模型会以为只能听
-    assert.match(bodies.at(-1).messages[0].content, /别人发视频时两样都能拿到/);
+    assert.match(bodies.at(-1).messages[0].content, /视频画面可用 get_message_images/);
     // 3) 关掉联网搜索但 ASR 开关仍开着：语音转写不该跟着消失（审查意见）
     cfg.webSearch.enabled = false;
     setRuntimeConfig(cfg);
@@ -2397,7 +2395,7 @@ it('提示词里不再写死默认人设的元素（示例改成中性的）', a
   const leftover = ['别墨迹', '大肥鱼', '角色卡里的傲娇、毒舌', '如 DeepSeek V3'].filter((w) => platform.includes(w));
   assert.deepEqual(leftover, [], `平台提示词里不该再写死默认人设的元素：${leftover.join('、')}`);
   // 硬规则要在（口癖以当前卡为准）
-  assert.match(system, /口癖、自称、梗一律以当前【角色设定】为准/);
+  assert.match(system, /历史里的旧口癖和关系描述与当前卡冲突时，以当前卡为准/);
 });
 
 it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"', async (t) => {

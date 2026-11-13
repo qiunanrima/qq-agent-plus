@@ -576,6 +576,14 @@ return `
         <div class="hint">滑条拖到 <b>100%</b> 时，任何消息都响应。</div>
       </div>
       <div class="field" style="margin-top:10px">
+        <label><input type="checkbox" id="cfg-history-window" ${st.contextLayering?.enabled !== false ? 'checked' : ''} /> 限制自动携带的最近聊天</label>
+        <label for="cfg-history-count">最近聊天条数（20～100）</label>
+        <input type="number" id="cfg-history-count" min="20" max="100" value="${esc(st.contextLayering?.maxHistoryMessages ?? 50)}" />
+        <label for="cfg-history-chars">最近聊天字符预算</label>
+        <input type="number" id="cfg-history-chars" min="1000" max="100000" step="1000" value="${esc(st.contextLayering?.maxHistoryChars ?? 8000)}" />
+        <div class="hint">默认最多50条、8000字符，也受当前响应档位限制。更早消息保留在档案，需要时由模型检索，复杂问题可委派已启用的子代理。</div>
+      </div>
+      <div class="field" style="margin-top:10px">
         <label for="cfg-pastchars">过去状态最多字符数</label>
         <input type="number" id="cfg-pastchars" min="100" max="100000" step="1000" value="${esc(st.pastStateMaxChars ?? 24000)}" />
         <div class="hint">上限 100000。条数和字符数是两道闸门，先到哪道按哪道截；调大上下文更全，但每轮 token 花费也更高。</div>

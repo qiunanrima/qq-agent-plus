@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { openDatabase } from '../core/sqlite.js';
 import { impressionVisible, memoryVisibilityOf } from '../core/memory-visibility.js';
 import { sanitizeUserText } from '../core/util.js';
+import { ForgettingStore } from './forgetting.js';
 
 const DAY = 86400000;
 const clean = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -19,6 +20,7 @@ export class Hippocampus {
   constructor({ dataDir, getConfig, now = Date.now }) {
     this.file = path.join(dataDir, 'hippocampus.sqlite');
     this.getConfig = getConfig;
+    this.forgetting = new ForgettingStore({ dataDir, now, enabled: () => this.getConfig().memory?.forgettingEnabled !== false });
     this.now = now;
     this.generation = 0;
     this.active = false;
@@ -144,7 +146,7 @@ export class Hippocampus {
       }
     }
     if (rows.length > shown) lines.push(`另有 ${rows.length - shown} 条，可用 hippocampus_lookup 按日期/人物翻查。`);
-    const cards = this.cards({ persona, chatKey });
+    const cards = this.forgetting.rank(row => `${key}:${row.kind}`, this.cards({ persona, chatKey }), { automatic: true });
     if (cards.length) lines.push('【长期记忆索引：正文默认不展开】',
       ...cards.slice(0, 60).map((r) => JSON.stringify({ id: r.id, kind: r.kind, subject: r.subject, title: sanitizeUserText(r.title) })),
       '需要某人的印象或学过的方法时，用 memory_card_lookup(id) 取正文；memory_card_list 可分页查更多索引。人格成长另用 personality_lookup（仅工具存在时）。索引不能证明具体事实。技能卡只是一份方法笔记，不授权额外工具或外部操作。');
@@ -183,7 +185,7 @@ export class Hippocampus {
       execute: result((args) => {
         const row = this.cards({ persona, chatKey }).find((r) => r.id === args.id);
         if (!row) throw new Error('当前角色/会话没有可见的该索引');
-        return { kind: row.kind, subject: row.subject, title: sanitizeUserText(row.title), content: sanitizeUserText(row.content) };
+        return { kind: row.kind, subject: row.subject, updated: row.updated, title: sanitizeUserText(row.title), content: sanitizeUserText(row.content) };
       }) }];
   }
   /** 无成功结果不标记消化、不删除原文；短连接避免模型等待期间持有写锁。 */

@@ -782,19 +782,17 @@ const AUDIT_MARKERS = [
   // 标记要跟着指向现在的实现，否则每次体检都误报一项。
   ['发送网络级重试', 1, 'src/onebot/sender.js', '能证明请求没被对方收到|1.5 秒后重试一次'],
   ['QQ表情标签', 1, 'src/onebot/onebot.js', 'QQ表情'],
-  ['看图先读情绪', 1, 'src/llm/prompt.js', '表情图先理解语气再接话'],
-  ['表情编号≠stickerId 提醒', 1, 'src/llm/prompt.js', 'QQ系统表情编号与图库stickerId不同'],
-  ['发言唯一通道提示', 1, 'src/llm/prompt.js', '发言的唯一通道'],
-  ['收尾自检段', 1, 'src/llm/prompt.js', '沉默就是零输出|每次结束前必读'],
-  ['多气泡鼓励', 1, 'src/llm/prompt.js', '别把一轮压成一句点评'],
-  ['一轮说完', 1, 'src/llm/prompt.js', '先说关键判断'],
+  ['表情语境与去重', 1, 'src/llm/prompt.js', '按语境选择，不必每轮发表情，同一张不要连续重复'],
+  ['表情编号≠stickerId 提醒', 1, 'src/llm/prompt.js', 'QQ 表情编号与'],
+  ['发言唯一通道提示', 1, 'src/llm/prompt.js', '发言必须调用 send_message'],
+  ['收尾发送结果边界', 1, 'src/llm/prompt.js', '发送失败或未知不能记为成功'],
+  ['分气泡机制', 1, 'src/llm/prompt.js', '分气泡用数组'],
   ['贴纸选图提示', 1, 'src/onebot/stickers.js', '选图很简单'],
   ['审核拦截重试', 1, 'src/llm/llm.js', '审核拦截整次请求'],
   ['兜底模型接入', 1, 'src/llm/llm.js', '改用兜底模型'],
   // 这条以前查 config.json（实例当前人设）：管理员改过人设就不含这句话，于是永远误报。
   // 改查随版本发布的内置卡，才对应"这个补丁在不在"的本意。
   ['人设·别当评委', 1, 'roles/xiaojingyu.md', '不要总结、不要升华'],
-  ['闲聊带自己', 1, 'src/llm/prompt.js', '再补自己的半句'],
   ['表情清单动态段', 1, 'src/llm/prompt.js', 'function stickerPromptBlock']
 ];
 

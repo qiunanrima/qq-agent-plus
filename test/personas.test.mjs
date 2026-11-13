@@ -66,7 +66,7 @@ test('私聊系统提示不再沿用群聊身份和主持人规则', () => {
   updateConfig(base);
   const group = buildSystemPrompt({}).split('\n')[0];
   const priv = buildSystemPrompt({ chatKey: 'private:1' }).split('\n')[0];
-  assert.match(group, /混在 QQ 群里/, '群聊保持原开场白');
+  assert.match(group, /你在群里的名字/, '群聊开场白标明场景与名称');
   assert.doesNotMatch(priv, /混在 QQ 群里/, '私聊开场白不该自称混在群里');
   assert.match(priv, /私聊/, '私聊要有明确的场景说明');
 });

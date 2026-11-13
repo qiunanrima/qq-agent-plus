@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { openDatabase } from '../core/sqlite.js';
 import { normalizePersonalityMemoryConfig } from './config.js';
+import { ForgettingStore } from '../memory/forgetting.js';
 import { impressionVisible, memoryVisibilityOf } from '../core/memory-visibility.js';
 
 const kinds = new Set(['preference', 'experience', 'relationship']);
@@ -19,6 +20,7 @@ export class PersonalityMemory {
   constructor({ dataDir, getConfig, emit = () => {} }) {
     this.file = path.join(dataDir, 'personality-memory.sqlite');
     this.getConfig = getConfig;
+    this.forgetting = new ForgettingStore({ dataDir, enabled: () => this.getConfig().memory?.forgettingEnabled !== false });
     this.emit = emit;
     this.revision = 0;
     this.personaRevisions = new Map();
@@ -208,12 +210,14 @@ export class PersonalityMemory {
   prompt({ chatKey, persona, participantIds = [] }) {
     if (!this.applies(chatKey)) return '';
     if (this.getConfig().memory?.hippocampusEnabled === true) {
-      const rows = this.recallRows({ chatKey, persona });
+      const rows = this.forgetting.rank(`${personalityKey(persona)}:personality`,
+        this.recallRows({ chatKey, persona }), { automatic: true });
       return ['【人格成长索引】', ...rows.slice(0, 30).map((r) => JSON.stringify({ id: r.id, topic: r.topic, kind: r.kind, state: r.status, userId: r.target_user_id || undefined })),
         '人格成长跨会话共享，正文不自动展开。需要时用 personality_lookup(id) 读取；tentative 仅是候选，不能覆盖角色卡。需要更多索引可省略id分页查询。',
         this.config().autoCapture ? '值得延续的偏好、经历或关系变化可用 remember_personality 保存，仍须引用本会话真实消息证据。' : ''].filter(Boolean).join('\n');
     }
-    const rows = this.recallRows({ chatKey, persona });
+    const rows = this.forgetting.rank(`${personalityKey(persona)}:personality`,
+      this.recallRows({ chatKey, persona }), { automatic: true });
     const ids = new Set(participantIds.map(String));
     const lines = [];
     let remaining = this.config().maxInjectChars;
@@ -247,7 +251,7 @@ export class PersonalityMemory {
         const rows = this.recallRows({ chatKey, persona });
         const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
         const row = args.id ? rows.find((r) => r.id === args.id) : null;
-        return { content: JSON.stringify(args.id ? row ? { kind: row.kind, topic: row.topic, status: row.status, content: row.content,
+        return { content: JSON.stringify(args.id ? row ? { kind: row.kind, target_user_id: row.target_user_id, updated_at: row.updated_at, topic: row.topic, status: row.status, content: row.content,
           verified: !!row.verified, evidence: row.evidence.map(({ chatKey: source, quote, self, ts }) => ({ source, quote, self, ts })) } : { error: '索引不存在或不可见' }
           : { total: rows.length, indexes: rows.slice(offset, offset + 30).map((r) => ({ id: r.id, kind: r.kind, topic: r.topic, state: r.status, userId: r.target_user_id || undefined })) }) };
       }

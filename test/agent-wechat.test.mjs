@@ -328,7 +328,8 @@ test('binding reads only the linked identity from hippocampus-inclusive views', 
   const memory = { query: () => ({ memberImpression: [{ userId: '12345', content: '喜欢茶', origin: 'hippocampus' },
     { userId: '67890', content: '其他人的资料' }] }) };
   const text = f.runtime.memoryFor(f.key, memory).formatIndexForPrompt();
-  assert.ok(text.includes('喜欢茶')); assert.ok(!text.includes('其他人的资料'));
+  assert.match(text, /12345.*memory_query/);
+  assert.doesNotMatch(text, /喜欢茶|其他人的资料/);
 });
 
 test('common tools are aligned while QQ-only writes stay absent; person queries remain identity-bound', async t => {

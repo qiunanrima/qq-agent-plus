@@ -31,7 +31,10 @@ test('独立上下文、硬白名单、最小工具上下文及结果截断；�
   f.defs.push({ name: 'send_message', execute: () => assert.fail('不能发送') }, { name: 'delegate_research' });
   f.defs[0].execute = (ctx) => {
     assert.equal(ctx.sender, undefined);
-    assert.equal(ctx.session, undefined);
+    assert.notEqual(ctx.session, f.ctx.session);
+    assert.deepEqual(Object.keys(ctx.session).sort(), ['memoryRecallIds', 'pastStateCount']);
+    assert.equal(ctx.store.db, undefined);
+    assert.equal(ctx.store.appendIncoming, undefined);
     assert.equal(ctx.chatKey, 'group:1');
     return { content: '资料'.repeat(5000) };
   };

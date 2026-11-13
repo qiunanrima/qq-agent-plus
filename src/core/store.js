@@ -1430,6 +1430,17 @@ export class ChatStore {
   }
 
   /** 某成员最近 N 条发言（时间正序；只读、不含自己）。记忆整理用来补充新证据。 */
+  searchHistory(chatKey, { query = '', userId = '', after = 0, before = 0, limit = 10, offset = 0 } = {}) {
+    return this.db.prepare(`SELECT * FROM messages WHERE chat_key=? AND state='acked'
+      AND event_kind='message' AND (?='' OR instr(lower(text),lower(?))>0)
+      AND (?='' OR sender_id=?) AND ts>=? AND (?=0 OR ts<=?)
+      ORDER BY ts DESC,id DESC LIMIT ? OFFSET ?`).all(chatKey,
+      String(query).slice(0, 120), String(query).slice(0, 120), String(userId), String(userId),
+      Math.max(0, Number(after) || 0), Math.max(0, Number(before) || 0), Math.max(0, Number(before) || 0),
+      Math.max(1, Math.min(20, Math.floor(Number(limit) || 10))), Math.max(0, Math.min(10000, Math.floor(Number(offset) || 0))))
+      .map(entry);
+  }
+
   recentBySender(chatKey, userId, limit = 30) {
     const rows = this.db.prepare(`SELECT * FROM messages
       WHERE chat_key=? AND self=0 AND sender_id=? ORDER BY id DESC LIMIT ?`)

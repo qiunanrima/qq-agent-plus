@@ -9,6 +9,7 @@
 import { canonicalToolName } from '../tools/names.js';
 
 export const EXPERIMENTAL_READ_ONLY_TOOLS = new Set([
+  'search_history',
   'get_recent_messages',
   'get_message_detail',
   'get_active_members',

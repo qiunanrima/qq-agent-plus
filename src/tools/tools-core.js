@@ -1,3 +1,4 @@
+import { historySearchTool } from './history-search.js';
 import { actionGate, actionDone } from './action-policy.js';
 import { normalizeMid, stripMemorySources, sanitizeDeep } from './result-sanitize.js';
 import { normalizeToolArgumentAliases } from './argument-aliases.js';
@@ -2323,6 +2324,7 @@ export function buildToolDefs() {
         }
       }
     },
+    historySearchTool(),
     {
       name: 'get_recent_messages',
       description: '往前翻当前会话的更多历史消息（提示词里只带了最近一段；需要更早的上下文时用）。返回带 messageId（就是聊天记录里的 #数字），可用于引用或看图。消息文本出现 [合并转发聊天记录] 时，用 read_forward 展开看内容。开启「群聊与私聊共用上下文」时会同时包含其它会话的消息，并标注 [群 <群号>] / [与 <QQ>]（这些消息没有可用 messageId）。',
@@ -2993,8 +2995,8 @@ export function buildToolDefs() {
         // 200 个人的记忆一次就能吃掉大半轮 maxRunTokens，下一轮预算检查直接把本轮掐断，
         // 而且这是把跨会话私聊来源的记忆灌进群上下文的隐私面（2026-10-03 全量审查）。
         // 口径与 memory-global.js 一致：按最近观察排序截断；指定 userId 时给更高的单点上限。
-        const MAX_ALL = 40;
-        const MAX_ONE = 20;
+        const MAX_ALL = Math.max(1, Math.min(20, Number(args.limit) || 8));
+        const MAX_ONE = MAX_ALL;
         // 与 memory-global.js 的注入路径同一口径：缺 lastObservedAt 时回退 createdAt
         // （只读 lastObservedAt 会把老条目全排到末尾，与自动注入看到的顺序不一致）
         const recency = (e) => Number(e.lastObservedAt || e.createdAt || 0);

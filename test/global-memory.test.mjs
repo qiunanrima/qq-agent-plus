@@ -11,6 +11,7 @@ const { MemoryStore } = await import('../src/memory/memory.js');
 const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js');
 
 const cfg = structuredClone(DEFAULT_CONFIG);
+cfg.memory.forgettingEnabled = false; // 历史迁移/日期渲染夹具独立于遗忘策略。
 cfg.memory.handoffEnabled = true;
 cfg.memory.handoffTtlMinutes = 30;
 setRuntimeConfig(cfg);

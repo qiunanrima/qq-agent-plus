@@ -877,10 +877,10 @@ export const DEFAULT_CONFIG = {
     batchLimit: 100,
     batchMaxChars: 32000,
     pastStateMaxChars: 24000,
-    // 分层上下文显式启用后限 24 条 / 8000 字；默认保留海马体/续接的历史口径。
+    // 最近聊天窗口；旧配置显式关闭时保留原口径。
     contextLayering: {
-      enabled: false,
-      maxHistoryMessages: 24,
+      enabled: true,
+      maxHistoryMessages: 50,
       maxHistoryChars: 8000
     },
     // ── 响应档位的作用范围 ──
@@ -908,6 +908,7 @@ export const DEFAULT_CONFIG = {
   memory: {
     // 核心两层记忆：全局今日/昨日海马 + 长期记忆按索引取正文。
     hippocampusEnabled: true,
+    forgettingEnabled: true,
     consolidateEnabled: true,
     consolidateMinIntervalMs: 21600000,  // 默认 6 小时
     handoffEnabled: true,
@@ -1452,8 +1453,8 @@ function migrateConfig(parsed) {
   out.skills.allowPrivateIndex = out.skills.allowPrivateIndex === true;
   // 记忆容量/保留期：夹在可解释范围内；手写条目不受影响。
   if (isPlainObject(out.memory)) {
-    if (out.memory.hippocampusEnabled !== undefined && typeof out.memory.hippocampusEnabled !== 'boolean') {
-      throw new Error('memory.hippocampusEnabled 必须是布尔值');
+    for (const key of ['hippocampusEnabled', 'forgettingEnabled']) {
+      if (out.memory[key] !== undefined && typeof out.memory[key] !== 'boolean') throw new Error(`memory.${key} 必须是布尔值`);
     }
     const max = Math.round(Number(out.memory.maxImpressionsPerPerson));
     if (Number.isFinite(max)) out.memory.maxImpressionsPerPerson = Math.max(5, Math.min(200, max));
@@ -1597,13 +1598,10 @@ function migrateConfig(parsed) {
       contextTier: derived.tier,
       randomPercent: derived.randomPercent,
       groupSliderPos,
-      // 分层上下文：手改坏值不能让整段丢回 undefined。关闭时保留旧口径。
       contextLayering: {
-        enabled: store.contextLayering?.enabled === true,
-        maxHistoryMessages: Math.min(200, Math.max(1,
-          Number(store.contextLayering?.maxHistoryMessages) || 24)),
-        maxHistoryChars: Math.min(100000, Math.max(1000,
-          Number(store.contextLayering?.maxHistoryChars) || 8000))
+        enabled: store.contextLayering?.enabled !== false,
+        maxHistoryMessages: Math.min(100, Math.max(20, Math.round(Number(store.contextLayering?.maxHistoryMessages) || 50))),
+        maxHistoryChars: Math.min(100000, Math.max(1000, Number(store.contextLayering?.maxHistoryChars) || 8000))
       }
     };
   }

@@ -1,5 +1,6 @@
 // Common Agent capabilities. Protocol-specific writes stay in their adapter.
 export const COMMON_CHAT_TOOLS = new Set([
+  'search_history',
   'send_message', 'finish', 'get_recent_messages', 'get_message_detail',
   'get_message_images',
   'memory_query', 'person_memory_lookup', 'memory_card_list', 'memory_card_lookup',

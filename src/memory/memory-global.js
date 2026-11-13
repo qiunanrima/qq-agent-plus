@@ -8,6 +8,7 @@ import { memoryVisibilityOf, visibleImpressions, impressionVisible } from '../co
 import { MemorySearchIndex, tokenizeText } from './memory-search.js';
 import { resolvePersona } from '../personas.js';
 import { Hippocampus } from './hippocampus.js';
+import { ForgettingStore } from './forgetting.js';
 
 const MEMORY_DIR = path.join(DATA_DIR, 'memory');
 const chatDirName = (chatKey) => String(chatKey).replace(/[^a-z0-9_]/gi, '_');
@@ -75,6 +76,7 @@ export function setMemberNote(userId, note) {
 
 export class MemoryStore {
   constructor() {
+    this.forgetting = new ForgettingStore({ dataDir: DATA_DIR, enabled: () => getConfig().memory?.forgettingEnabled !== false });
     this.hippocampus = new Hippocampus({ dataDir: DATA_DIR, getConfig });
     this.people = new GlobalPersonMemoryStore({ onLegacyState: migrateLegacyHandoff });
     this.searchIndex = new MemorySearchIndex({ dataDir: DATA_DIR });
@@ -148,6 +150,7 @@ export class MemoryStore {
     };
   }
   clearAll() {
+    this.forgetting.clearAll();
     this.hippocampus.clearAll();
     const chats = this.listChats();
     const result = this.people.clearAll();
@@ -356,7 +359,8 @@ export class MemoryStore {
     const ids = new Set(userIds.map(String));
     const vis = memoryVisibilityOf();
     const rows = this.members().filter((m) => ids.has(String(m.userId)));
-    const lines = rows.filter((m) => visibleImpressions(m.impressions, chatKey, vis).length)
+    const lines = rows.filter((m) => this.forgetting.rank('legacy:person',
+      visibleImpressions(m.impressions, chatKey, vis).map(e => ({ ...e, userId: m.userId })), { automatic: true }).length)
       .slice(0, 12).map((m) => JSON.stringify({ userId: String(m.userId), name: sanitizeUserText(m.name || m.userId) }));
     return ['【在场人物的长期印象索引】',
       `在场QQ：${[...ids].slice(0, 12).join('、') || '暂无'}`,
@@ -384,7 +388,8 @@ export class MemoryStore {
     const vis = memoryVisibilityOf(getConfig());
     const picked = [];
     for (const m of raw) {
-      const keep = visibleImpressions(m.impressions, chatKey, vis);
+      const keep = this.forgetting.rank('legacy:person',
+        visibleImpressions(m.impressions, chatKey, vis).map(e => ({ ...e, userId: m.userId })), { automatic: true });
       if (keep.length) { m.impressions = keep; picked.push(m); }
     }
     if (!picked.length) return '';

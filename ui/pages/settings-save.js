@@ -153,6 +153,7 @@ async function saveConfig({ quiet = false } = {}) {
     patch.memory = {
       ...(c.memory || {}),
       consolidateEnabled: chk('#cfg-mem-consolidate', c.memory?.consolidateEnabled !== false),
+      forgettingEnabled: chk('#cfg-mem-forgetting', c.memory?.forgettingEnabled !== false),
       handoffEnabled: chk('#cfg-mem-handoff', c.memory?.handoffEnabled !== false),
       useChatModel: chk('#cfg-mem-usechat', c.memory?.useChatModel !== false),
       provider: val('#cfg-mem-provider', c.memory?.provider || '').trim(),
@@ -1075,6 +1076,11 @@ async function saveConfig({ quiet = false } = {}) {
       randomCount: clampInt(val('#cfg-randcount', c.store?.randomCount), 0, 500, 8),
       allCount: clampInt(val('#cfg-allcount', c.store?.allCount), 0, 500, 80),
       pastStateMaxChars: clampInt(val('#cfg-pastchars', c.store?.pastStateMaxChars), 100, 100000, 24000),
+      contextLayering: {
+        enabled: chk('#cfg-history-window', c.store?.contextLayering?.enabled !== false),
+        maxHistoryMessages: clampInt(val('#cfg-history-count', c.store?.contextLayering?.maxHistoryMessages), 20, 100, 50),
+        maxHistoryChars: clampInt(val('#cfg-history-chars', c.store?.contextLayering?.maxHistoryChars), 1000, 100000, 8000)
+      },
       // 统一开关 + 分群滑条表（__replace__：删掉的群设置要真删，深合并做不到）
       unifiedTier: chk('#cfg-unifiedtier', c.store?.unifiedTier !== false),
       // 明确声明语义：滑条上的数字就是概率（后端据此跳过老配置迁移）

@@ -20,6 +20,7 @@ export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemor
   write('context.json', store.contextResetSnapshot());
   store.createResetBackup(path.join(directory, 'messages.sqlite'));
   memory.hippocampus?.createResetBackup(path.join(directory, 'hippocampus.sqlite'));
+  memory.forgetting?.createResetBackup(path.join(directory, 'memory-recall.sqlite'));
   orchestrator.perception?.createResetBackup(path.join(directory, 'perception.sqlite'));
   write('identity-profiles.json', assets.memoryResetSnapshot());
   livingMemory.createResetBackup(path.join(directory, 'living-memory.sqlite'));

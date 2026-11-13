@@ -4,7 +4,7 @@ import { blocksToolFinish } from '../tools/tool-outcome.js';
 const reads = new Set(['antigravity_quota', 'read_image_text', 'get_message_images', 'search_web', 'fetch_url',
   'knowledge_search', 'memory_query', 'person_memory_lookup', 'persona_background_lookup',
   'personality_lookup', 'hippocampus_lookup', 'memory_card_list', 'memory_card_lookup',
-  'semantic_memory_lookup', 'list_stickers', 'get_active_members']);
+  'semantic_memory_lookup', 'search_history', 'get_recent_messages', 'get_message_detail', 'list_stickers', 'get_active_members']);
 
 export function createCliFinishRecovery() {
   let readFailure = false, blockingFailure = false;

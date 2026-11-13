@@ -5,6 +5,7 @@ import { safeSlice } from '../core/util.js';
 import { readLivingMemoryEmbeddingConfig } from './embedding.js';
 import { livingMemoryScopeAllowed, normalizeLivingMemoryConfig } from './config.js';
 import { LivingMemoryService } from './service.js';
+import { ForgettingStore } from '../memory/forgetting.js';
 
 const SENSITIVE = /(?:密码|口令|验证码|密钥|token|api[ _-]?key|access[ _-]?key|secret|pass(?:word)?|cvv|银行卡|卡号|身份证|护照|家庭住址|详细地址|病历|诊断|病情|政治立场|投票意向)/i;
 const MAX_PENDING_TURNS = 40;
@@ -108,6 +109,7 @@ export class LivingMemoryRuntime {
   constructor({ getConfig, dataDir, log = () => {}, emit = () => {}, service = null, recordUsage = null } = {}) {
     this.getConfig = typeof getConfig === 'function' ? getConfig : (() => ({}));
     this.dataDir = path.resolve(String(dataDir || process.env.QQ_AGENT_DATA_DIR || 'data'));
+    this.forgetting = new ForgettingStore({ dataDir: this.dataDir, enabled: () => this.getConfig().memory?.forgettingEnabled !== false });
     this.databaseFile = path.join(this.dataDir, 'living-memory', 'living-memory.sqlite');
     this.log = log;
     this.emit = emit;
@@ -151,7 +153,7 @@ export class LivingMemoryRuntime {
     return this.service;
   }
 
-  async recall({ chatKey, triggerEntries = [], signal = null, forceSemantic = false } = {}) {
+  async recall({ chatKey, triggerEntries = [], signal = null, forceSemantic = false, explicit = false } = {}) {
     const cfg = this.config();
     if (!this.applies(chatKey)) return { text: '', entries: [], mode: 'disabled' };
     if (signal?.aborted) return { text: '', entries: [], mode: 'aborted' };
@@ -168,7 +170,7 @@ export class LivingMemoryRuntime {
         deadlineMs: cfg.recallTimeoutMs, semantic
       });
       if (signal?.aborted) return { text: '', entries: [], mode: 'aborted' };
-      const entries = Array.isArray(result?.entries) ? result.entries : [];
+      const entries = this.forgetting.rank('semantic', Array.isArray(result?.entries) ? result.entries : [], { automatic: !explicit });
       const context = renderContext(entries, cfg.maxInjectChars);
       const view = { at: Date.now(), query: cleanText(query, 1000), entries, mode: result?.mode || 'unknown', vectorError: result?.vectorError || '' };
       this.lastRecall.set(chatKey, view);

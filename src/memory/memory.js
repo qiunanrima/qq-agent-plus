@@ -8,6 +8,7 @@ import { sanitizeUserText } from '../core/util.js';
 import { resolvePersona } from '../personas.js';
 import { getConfig } from '../core/config.js';
 import { tokenizeText } from './memory-search.js';
+import { personaKey } from './hippocampus.js';
 
 export class MemoryStore extends BaseMemoryStore {
   constructor(...args) {
@@ -45,6 +46,13 @@ export class MemoryStore extends BaseMemoryStore {
         if (!seen.has(key)) { seen.add(key); results.push(row); }
       }
     }
+    const scope = personaKey(resolvePersona(getConfig(), chatKey));
+    const weights = new Map(results.map(row => [row, this.forgetting.describe(
+      row.origin === 'hippocampus' ? `${scope}:person` : 'legacy:person', row).retention]));
+    results.sort((a, b) => {
+      // Explicit history search keeps cold results eligible; relevance dominates the decay tie-break.
+      return (b.score || 0) * (0.8 + 0.2 * weights.get(b)) - (a.score || 0) * (0.8 + 0.2 * weights.get(a));
+    });
     return { ...found, results, total: results.length };
   }
 

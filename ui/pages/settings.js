@@ -777,6 +777,9 @@ function renderMemorySettingsSection(c) {
   const currentDisplay = selP ? `${selP.displayName || selP.id} · ${mem.model || '未选模型'}` : (mem.model || '未选模型');
   return `
     <h3 id="settings-memory">记忆整理</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-mem-forgetting" ${mem.forgettingEnabled !== false ? 'checked' : ''} />
+      <label for="cfg-mem-forgetting">长期记忆自然遗忘与使用强化</label></div>
+    <div class="hint">R=exp(-t/S)，初始S=1.84天。实际采用的记忆每24小时最多强化一次；低于5%不再自动展示索引，主动查询仍可找回，不删除正文。今日/昨日海马不衰减。关闭后保留强化记录。</div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-mem-consolidate" ${mem.consolidateEnabled !== false ? 'checked' : ''} />
       <label for="cfg-mem-consolidate">启用记忆自动整理</label></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-mem-handoff" ${mem.handoffEnabled !== false ? 'checked' : ''} />

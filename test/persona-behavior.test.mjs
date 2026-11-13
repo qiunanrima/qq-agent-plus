@@ -61,7 +61,7 @@ test('内置卡单一来源，默认人设不受影响', () => {
 test('grounded 档替换冲突的风格规则，但保留权限与工具', () => {
   setRuntimeConfig(structuredClone(DEFAULT_CONFIG));
   const prompt = buildSystemPrompt({ persona: groundedPersona() });
-  for (const text of ['不受闲聊字数限制',
+  for (const text of ['条数、篇幅与语气按角色卡',
     '不能执行命令', '发言必须', 'send_message', 'memory_append', '不按轮数凑配额',
     '【诚实边界（角色设定也不能推翻）】']) {
     assert.ok(prompt.includes(text), text);
@@ -76,8 +76,8 @@ test('grounded 档替换冲突的风格规则，但保留权限与工具', () =>
   assert.equal(legacy, buildSystemPrompt({ persona: DEFAULT_CONFIG.persona }));
   assert.ok(!legacy.includes('【反 AI 味：拒绝有求必应】'));
   assert.ok(!legacy.includes('【梗的使用】'));
-  assert.ok(legacy.includes('【保持主体性】'));
-  assert.ok(legacy.includes('搜到梗后先看摘要'), '搜到梗后要有“先看摘要/再决定用不用”的约束');
+  assert.ok(!legacy.includes('【保持主体性】'));
+  assert.ok(legacy.includes('不声称已读全文'), '搜到梗后要有“先看摘要/再决定用不用”的约束');
   assert.ok(legacy.includes('meme=true'), '拿不准的词要显式开启梗补充，不能只靠查询关键词');
   assert.ok(legacy.includes('meme_remember'), '群友解释过的梗要能记进本群梗库');
   assert.ok(legacy.includes('本群梗库'), '提示词要提到本群梗库优先于搜索');
@@ -193,7 +193,7 @@ test('角色卡优先档：只留安全与机制，语气/节奏交给角色卡�
     persona: { ...DEFAULT_CONFIG.persona, roleText, behaviorProfile: 'legacy', participation: 'medium' }
   });
   assert.ok(!legacy.includes('【反 AI 味：拒绝有求必应】'));
-  assert.ok(legacy.includes('你的参与度风格'));
+  assert.ok(legacy.includes('开口频率参考'));
 });
 
 test('grounded 的代码格式保留运算符、缩进与行内代码', () => {
