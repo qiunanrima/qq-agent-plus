@@ -31,7 +31,7 @@ function renderAntigravitySection(c = {}) {
     <p><button type="button" class="btn" id="agy-model-fetch">获取模型列表</button><span id="agy-model-result" role="status"></span></p>
     <div class="field"><label for="agy-transport">工具传输</label><select id="agy-transport">${['mcp', 'json'].map(v => `<option value="${v}" ${a.transport === v || (!a.transport && v === 'mcp') ? 'selected' : ''}>${v === 'mcp' ? 'MCP（推荐）' : 'JSON（兼容）'}</option>`).join('')}</select></div>
     <div class="field"><label for="agy-effort">思考档位</label><select id="agy-effort">${['low', 'medium', 'high'].map(v => `<option value="${v}" ${(a.effort || 'low') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-    ${field('timeoutMs', 'CLI 超时（毫秒，最多 60 秒）', Math.min(a.timeoutMs ?? 60000, 60000), 'number', 'min="1000" max="60000" step="1000"')}
+    ${field('timeoutMs', 'CLI 超时（毫秒，最多 90 秒）', Math.min(a.timeoutMs ?? 90000, 90000), 'number', 'min="1000" max="90000" step="1000"')}
     ${field('maxConcurrent', '全局并发上限（每个私聊或群聊最多 1 个 CLI）', a.maxConcurrent ?? 1, 'number', 'min="1" max="4"')}
     ${field('maxToolCalls', '单次工具调用上限', a.maxToolCalls ?? 16, 'number', 'min="1" max="128"')}
     <p class="hint">状态刷新与保存设置不调用 Google。失败不自动重试；并发限制不等于每小时调用限额。CLI 提前收尾时可能无法取得 Token 用量。</p>
