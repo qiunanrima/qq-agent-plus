@@ -1,6 +1,6 @@
 import { normalizeModelFallback } from './config.js';
 
-/** A host tool attempt is a hard replay boundary, including failed/unknown writes. */
+/** Only a QQ host tool attempt is a replay boundary, including failed/unknown writes. */
 export async function runModelFallback(args, { getConfig, complete, onFallback = () => {} }) {
   const initial = getConfig();
   const cfg = normalizeModelFallback(initial.modelFallback);
@@ -20,12 +20,7 @@ export async function runModelFallback(args, { getConfig, complete, onFallback =
   }, 100);
   guard.unref?.();
   let attemptedTool = false, previous = null, lastError = null;
-  const mcpRun = args.mcpRun && { ...args.mcpRun,
-    approvalAllowed: category => {
-      const allowed = args.mcpRun.approvalAllowed?.(category) === true;
-      if (category === 'native' && allowed) attemptedTool = true;
-      return allowed;
-    }, execute: (...params) => {
+  const mcpRun = args.mcpRun && { ...args.mcpRun, execute: (...params) => {
       attemptedTool = true; // Mark before awaiting: errors may mean an unknown outcome.
       return args.mcpRun.execute(...params);
     } };
