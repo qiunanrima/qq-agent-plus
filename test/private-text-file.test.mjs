@@ -496,10 +496,13 @@ for (const [chatKey, enabled] of [['private:2', true], ['private:2', false], ['g
     const available = enabled && chatKey.startsWith('private:');
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(init.body);
-      assert.equal(body.tools.some((item) => item.function.name === 'send_private_file'), available);
+      assert.equal(body.tools.some((item) => item.function.name === 'send_private_file'), false);
+      assert.ok(body.tools.some((item) => item.function.name === 'discover_tools'));
       requests++;
       const fn = available && requests === 1
-        ? { name: 'send_private_file', arguments: JSON.stringify({ text: '合成资料', name: 'notes.txt' }) }
+        ? { name: 'discover_tools', arguments: JSON.stringify({ group: 'files' }) }
+        : available && requests === 2
+          ? { name: 'discover_tools', arguments: JSON.stringify({ tool: 'send_private_file', args: { text: '合成资料', name: 'notes.txt' } }) }
         : { name: 'finish', arguments: JSON.stringify({ summary: '合成用例已处理' }) };
       return Response.json({ choices: [{ message: { tool_calls: [{ id: `synthetic-${requests}`, type: 'function', function: fn }] } }],
         usage: { total_tokens: 10 } });

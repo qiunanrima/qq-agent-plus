@@ -1,4 +1,5 @@
 import { channelForChat, isExternalChat } from '../channels/registry.js';
+import { mountOnDemandTools } from '../tools/on-demand.js';
 import { wechatBindingContext } from '../agent-wechat/config.js';
 import { crossPlatformMemoryTools } from '../agent-wechat/memory-bridge.js';
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
@@ -2179,6 +2180,15 @@ export class Orchestrator {
       participantIds: (triggerEntries || []).map(row => row.senderId), memory: this.memory, persona }));
     if (this.memory.forgetting) toolDefs.splice(0, toolDefs.length, ...withMemoryRecall(toolDefs,
       { forgetting: this.memory.forgetting, personaScope: personaKey(persona) }));
+    toolDefs.splice(0, toolDefs.length, ...mountOnDemandTools(toolDefs, executeTool, def => {
+      const current = getConfig();
+      if (!platformToolAllowed(def.name, current.platform, chatKey)) return false;
+      if (def.feature !== 'moderation') return true;
+      const mod = current.moderation || {};
+      const action = { set_group_ban: 'ban', kick_group_member: 'kick', recall_message: 'recall', set_group_admin: 'admin' }[def.name];
+      return mod.enabled !== false && (!action || mod.actions?.[action] !== false)
+        && (!idList(mod.groups).length || idList(mod.groups).includes(String(chatId)));
+    }));
     const openAiTools = toOpenAiTools(toolDefs);
     const baseSystemPrompt = channel ? channel.systemPrompt(persona) : buildSystemPrompt({
       // 按群生效的人设（缺省 = 全局）
@@ -2586,6 +2596,7 @@ export class Orchestrator {
           toolCall: {
             name,
             args: result.parsedArgs ?? safeParse(argsRaw),
+            ...(result.resolvedTool ? { resolvedTool: result.resolvedTool } : {}),
             result: safeSlice(contentStr, 2000),
             isError: !!result.isError,
             ...(result.errorCode ? { errorCode: result.errorCode } : {}),

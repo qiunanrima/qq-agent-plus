@@ -33,6 +33,8 @@
 | [MEMORY.md](MEMORY.md) | 人物印象与会话交接、FTS5 + 中文二元组检索、可见性、容量/保留期与召回基准 |
 | [HIPPOCAMPUS.md](HIPPOCAMPUS.md) | 海马与跨会话记忆：记录、摘要和记忆检索 |
 | [MEMORY_FORGETTING.md](MEMORY_FORGETTING.md) | 有限聊天上下文、历史检索与长期记忆遗忘和强化 |
+| [ON_DEMAND_TOOLS.md](ON_DEMAND_TOOLS.md) | 账号、文件、相册和管理工具的按需发现与调用 |
+| [MODEL_FALLBACK.md](MODEL_FALLBACK.md) | 模型自动回退实验的配置与运行边界 |
 | [PERSONALITY_MEMORY.md](PERSONALITY_MEMORY.md) | 人格成长记忆的配置、审核与运行边界 |
 | [PERSONA_BACKGROUND.md](PERSONA_BACKGROUND.md) | 角色背景知识的配置与按需召回 |
 | [ROLEPLAY.md](ROLEPLAY.md) | 角色扮演与真实感的提示词约定 |

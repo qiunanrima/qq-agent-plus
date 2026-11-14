@@ -193,6 +193,7 @@ export function skillBlocksTool(activeSkill, name, args = null) {
   const allowed = activeSkill?.allowedTools;
   if (!allowed || typeof allowed.has !== 'function') return false;
   const tool = String(name || '');
+  if (tool === 'discover_tools') return false; // Inner tools are checked individually by the discovery entry point.
   // 插件工具在 meta 挂载下都叫 plugin_call；技能写的是 bilibili__read 这类限定名。
   // 这里按 args.tool 二次判断，避免一个技能只能写 plugin_call 就把所有插件都放开。
   if (tool !== 'plugin_call') return ![...allowed].some((name) => canonicalToolName(name) === canonicalToolName(tool));
