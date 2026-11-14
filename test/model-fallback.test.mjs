@@ -42,13 +42,12 @@ test('a successful, failed or unknown host tool attempt prevents replay', async 
     assert.deepEqual(seen, ['agy']);
   }
 });
-test('native permission, cancellation, disable and revoked access stop fallback', async () => {
-  for (const kind of ['native', 'abort', 'disable', 'access', 'cancel-code']) {
+test('cancellation, disable and revoked access stop fallback', async () => {
+  for (const kind of ['abort', 'disable', 'access', 'cancel-code']) {
     const c = config(), a = args(), seen = [], controller = new AbortController(); a.signal = controller.signal;
     a.mcpRun.approvalAllowed = () => true;
-    await assert.rejects(runModelFallback(a, { getConfig: () => c, complete: async (next, b) => {
+    await assert.rejects(runModelFallback(a, { getConfig: () => c, complete: async (_next, b) => {
       seen.push(b);
-      if (kind === 'native') next.mcpRun.approvalAllowed('native');
       if (kind === 'abort') controller.abort();
       if (kind === 'disable') c.modelFallback.enabled = false;
       if (kind === 'access') a.mcpRun.allowed = () => false;
@@ -61,4 +60,44 @@ test('exhaustion reports failure, next request starts at first choice', async ()
   const seen = [];
   for (let n = 0; n < 2; n++) await assert.rejects(runModelFallback(args(), { getConfig: config, complete: async (_, b) => { seen.push(b); throw new Error('unavailable'); } }), /unavailable/);
   assert.deepEqual(seen, ['agy', 'codex', 'api', 'agy', 'codex', 'api']);
+});
+
+test('native permission checks do not block configuration-error fallback', async () => {
+  const seen = [], a = args();
+  let checks = 0;
+  a.mcpRun.approvalAllowed = category => { checks++; return category === 'native'; };
+  const result = await runModelFallback(a, { getConfig: config, complete: async (next, backend) => {
+    seen.push(backend);
+    if (backend === 'agy') {
+      assert.equal(next.mcpRun.approvalAllowed('native'), true);
+      assert.equal(next.mcpRun.approvalAllowed('native'), true);
+      throw new Error('ACP session/set_config_option failed (-32602)');
+    }
+    return {};
+  } });
+  assert.deepEqual(seen, ['agy', 'codex']); assert.equal(result.backend, 'codex'); assert.equal(checks, 2);
+});
+test('native tools remain usable and do not form the QQ host tool replay boundary', async () => {
+  const seen = [], nativeCalls = [], a = args();
+  a.mcpRun.approvalAllowed = () => true;
+  a.mcpRun.nativeProbe = async () => { nativeCalls.push('native'); return { content: 'native result' }; };
+  const result = await runModelFallback(a, { getConfig: config, complete: async (next, backend) => {
+    seen.push(backend);
+    if (backend === 'agy') {
+      assert.equal(next.mcpRun.approvalAllowed('native'), true);
+      await next.mcpRun.nativeProbe();
+      throw new Error('AGY failed after native operation');
+    }
+    return {};
+  } });
+  assert.deepEqual(nativeCalls, ['native']); assert.deepEqual(seen, ['agy', 'codex']); assert.equal(result.backend, 'codex');
+});
+test('QQ host tool start still blocks fallback when native permissions are enabled', async () => {
+  const seen = [], a = args(); a.mcpRun.approvalAllowed = () => true;
+  await assert.rejects(runModelFallback(a, { getConfig: config, complete: async (next, backend) => {
+    seen.push(backend); next.mcpRun.approvalAllowed('native');
+    await next.mcpRun.execute('send_message', {});
+    throw new Error('failed after QQ send');
+  } }), /failed after QQ send/);
+  assert.deepEqual(seen, ['agy']);
 });
