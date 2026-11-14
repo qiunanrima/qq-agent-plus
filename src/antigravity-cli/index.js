@@ -1,3 +1,4 @@
+import { assertAntigravityResponse } from './response-error.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { normalizeAntigravityConfig } from './config.js';
@@ -49,6 +50,7 @@ export function parseAntigravityResult(result, tools = [], toolChoice = 'auto') 
   if (result.denied_actions?.length) throw new Error('Antigravity attempted a denied native action');
   const output = result.structured_output ?? JSON.parse(result.response);
   if (typeof output?.content !== 'string' || !Array.isArray(output.tool_calls) || output.tool_calls.length > 16) throw new Error('Invalid Antigravity structured response');
+  assertAntigravityResponse(output.content);
   const allowed = new Set((tools || []).map(t => t.function?.name));
   const calls = output.tool_calls.map(call => {
     if (toolChoice === 'none' || !allowed.has(call.name) || typeof call.arguments !== 'string') throw new Error('Invalid Antigravity tool request');
@@ -208,6 +210,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       child.stdin.write(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
     });
     if (invocation) {
+      if (!invocation.finished()) assertAntigravityResponse(result?.response);
       if (!['SUCCESS', 'HOST_FINISHED'].includes(result?.status) || result.denied_actions?.length) throw new Error('Antigravity MCP run did not succeed');
       if (result.status === 'HOST_FINISHED' && !invocation.finished()) throw new Error('Antigravity host finish was not confirmed');
       if ((toolChoice === 'required' || toolChoice?.function?.name) && !invocation.calls()) throw new Error('Antigravity omitted required MCP tool');

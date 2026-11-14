@@ -65,6 +65,7 @@ For the current modules:
 
 | Feature | Runtime switch | Graduation switch | Owned page |
 | --- | --- | --- | --- |
+| Model fallback | `modelFallback.enabled` | `modelFallback.graduated` | `model-fallback` / 模型回退 |
 | Codex CLI | `codexCli.enabled` | `codexCli.graduated` | `codex-cli` / Codex CLI |
 | WeChat channel | `agentWechat.enabled` | `agentWechat.graduated` | `agent-wechat` / 微信接入 |
 | Person impressions | `identityPilot.enabled` | `identityPilot.graduated` | `identity` / 人物印象 |

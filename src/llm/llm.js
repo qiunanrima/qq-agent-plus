@@ -1,3 +1,4 @@
+import { runModelFallback } from '../model-fallback/index.js';
 import { usesCodex } from '../codex-cli/config.js';
 import { codexCompletion } from '../codex-cli/index.js';
 // OpenAI 兼容 Chat Completions 客户端（非流式）。
@@ -346,11 +347,28 @@ function pickFallback(args) {
  * 自动改用 config.api.fallback 里配置的备用模型再试一次（只切一次，不递归）。
  */
 export async function chatCompletionWithRetry(args, retries = 2) {
-  llmRuntimeStats.requests += 1;
+  if (getConfig().modelFallback?.enabled && args.purpose === 'chat' && !args.overrides && !args.completionBackend) {
+    llmRuntimeStats.requests += 1;
+    try {
+      return await runModelFallback(args, { getConfig,
+        complete: (next, backend) => chatCompletionWithRetry({ ...next, completionBackend: backend, fallbackAttempt: true }, retries),
+        onFallback: (from, to, error) => {
+          llmRuntimeStats.fallbackUses += 1;
+          const message = String(error?.message || '');
+          const reason = /quota|capacity|容量|额度|429|rate.limit/i.test(message) ? '额度或限流'
+            : /timeout|timed.out|超时/i.test(message) ? '请求超时'
+            : /401|403|auth|登录/i.test(message) ? '认证失败'
+            : /workspace|ENOENT|executable|目录|configuration/i.test(message) ? '路径或配置不可用' : '后端请求失败';
+          log.warn(`[model-fallback] ${from} 失败（${reason}），切换到 ${to}`);
+        }
+      });
+    } catch (error) { if (!args.fallbackAttempt) llmRuntimeStats.failures += 1; throw error; }
+  }
+  if (!args.fallbackAttempt) llmRuntimeStats.requests += 1;
   // CLI outcomes are never replayed or sent to an HTTP fallback.
-  if (usesAntigravity(getConfig(), args) || usesCodex(getConfig(), args)) {
+  if (args.completionBackend ? args.completionBackend !== 'api' : (usesAntigravity(getConfig(), args) || usesCodex(getConfig(), args))) {
     try { return await chatCompletion(args); }
-    catch (error) { llmRuntimeStats.failures += 1; throw error; }
+    catch (error) { if (!args.fallbackAttempt) llmRuntimeStats.failures += 1; throw error; }
   }
   let response = null;
   let primaryError = null;
@@ -367,7 +385,7 @@ export async function chatCompletionWithRetry(args, retries = 2) {
   const fb = shouldFallback ? pickFallback(args) : null;
   if (!fb || args.signal?.aborted) {
     if (primaryError) {
-      llmRuntimeStats.failures += 1;
+      if (!args.fallbackAttempt) llmRuntimeStats.failures += 1;
       throw primaryError;
     }
     // 兜底不可用时把**本次结果**如实返回；null 只能来自内部异常路径（throw null 已被上面堵死），
@@ -391,7 +409,7 @@ export async function chatCompletionWithRetry(args, retries = 2) {
       && hostOf(fbResponse.originBaseUrl) !== hostOf(primaryBase);
     return { ...fbResponse, viaFallback: true, channelChanged };
   } catch (error) {
-    llmRuntimeStats.failures += 1;
+    if (!args.fallbackAttempt) llmRuntimeStats.failures += 1;
     throw error;
   }
 }
@@ -424,11 +442,12 @@ export async function chatCompletion({
   purpose = '',
   usageTracked = false,
   thinkingIntent = null,
-  mcpRun = null
+  mcpRun = null,
+  completionBackend = null
 }) {
   assertTimeAllowed();
-  const codex = usesCodex(getConfig(), { purpose, overrides });
-  if (codex || usesAntigravity(getConfig(), { purpose, overrides })) {
+  const codex = completionBackend ? completionBackend === 'codex' : usesCodex(getConfig(), { purpose, overrides });
+  if (codex || (completionBackend ? completionBackend === 'agy' : usesAntigravity(getConfig(), { purpose, overrides }))) {
     llmRuntimeStats.attempts += 1;
     const controller = new AbortController();
     const abort = () => controller.abort(signal.reason);

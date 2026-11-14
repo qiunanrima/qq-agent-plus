@@ -1,3 +1,4 @@
+import { MODEL_FALLBACK_DEFAULTS } from '../model-fallback/config.js';
 import { CODEX_DEFAULTS, loadCliConfigs, validateCliConfigs } from './cli-config.js';
 // 配置管理：data/config.json，UI 可写。所有字段都有默认值。
 import fs from 'node:fs';
@@ -53,6 +54,7 @@ export function getConfigConflict() {
 }
 
 export const DEFAULT_CONFIG = {
+  modelFallback: { ...MODEL_FALLBACK_DEFAULTS, order: [...MODEL_FALLBACK_DEFAULTS.order] },
   antigravityCli: { ...ANTIGRAVITY_DEFAULTS },
   codexCli: { ...CODEX_DEFAULTS },
   agentWechat: { ...WECHAT_DEFAULTS },
