@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createRunToolMcp } from './mcp-run.js';
 import { requestCliApproval } from './approvals.js';
 import { createRunImageAccess } from './image-access.js';
+import { preparePromptImages } from './prompt-images.js';
 
 
 /** Per-process workspace avoids sharing MCP tokens or catalogs across chats. */
@@ -19,7 +20,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     if (path.dirname(target) !== path.resolve(config.workspace) || !path.basename(target).startsWith('qq-run-')) throw new Error('Invalid MCP workspace cleanup target');
     await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
-  let bridge, retained = false;
+  let bridge, retained = false, calls = 0, promptImages;
   const imageAccess = createRunImageAccess({ workspace });
   try {
     const runAllowed = () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true && !mcpRun.isFinished?.();
@@ -28,16 +29,22 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
       timeoutMs: config.timeoutMs, allowed: () => runAllowed() && (mcpRun.approvalAllowed?.(category) ?? true), notify: mcpRun.notifyApproval });
     const selected = (tools || []).filter(tool => toolChoice !== 'none'
       && (!toolChoice?.function?.name || tool.function?.name === toolChoice.function.name));
+    const executeHost = async call => {
+      call.signal?.throwIfAborted();
+      if (signal?.aborted || isEnabled() !== true || mcpRun.allowed() !== true) throw new Error('MCP run no longer authorized');
+      if (++calls > config.maxToolCalls) throw new Error('Tool call budget exhausted');
+      if (config.qqApproval && call.name !== 'finish' && !await approve('qq', call.name, call.arguments, call.signal)) {
+        return { isError: true, content: '工具未获管理员批准或本轮已结束；未执行，不要自动重试。' };
+      }
+      return mcpRun.execute(call.name, call.arguments, call.signal);
+    };
     bridge = await createRunToolMcp({ tools: selected.map(tool => tool.function && ({
       name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters
     })), chatKey: mcpRun.chatKey, runId: mcpRun.runId, signal,
     maxCalls: config.maxToolCalls, timeoutMs: config.timeoutMs,
     authorize: () => !signal?.aborted && isEnabled() === true && mcpRun.allowed() === true,
     execute: async call => {
-      if (config.qqApproval && call.name !== 'finish' && !await approve('qq', call.name, call.arguments, call.signal)) {
-        return { isError: true, content: '工具未获管理员批准或本轮已结束；未执行，不要自动重试。' };
-      }
-      const result = await mcpRun.execute(call.name, call.arguments, call.signal);
+      const result = await executeHost(call);
       if (!result?.isError && useAcp) {
         return { ...result, content: await imageAccess.materialize(result?.content) };
       }
@@ -80,6 +87,11 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
     return {
       workspace, hookCommand,
       imageAccess,
+      promptImages: callSignal => {
+        if (!selected.some(tool => tool.function?.name === 'get_message_images')) return [];
+        return promptImages ??= preparePromptImages(mcpRun.imageMessageIds,
+          (messageId, signal) => executeHost({ name: 'get_message_images', arguments: { messageId }, signal }), callSignal);
+      },
       mcpReady: () => bridge.isDiscovered(),
       // ACP takes stdio server env as name/value entries, not an object.
       acpMcpServers: [{ name: 'qq_run', command: bridge.serverConfig.command,
@@ -104,7 +116,7 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         }
         return false;
       },
-      calls: () => bridge.ledger().length,
+      calls: () => Math.max(calls, bridge.ledger().length),
       finished: () => mcpRun.isFinished?.() === true,
       policyChanged: () => typeof mcpRun.approvalAllowed === 'function'
         && (mcpRun.approvalAllowed('qq') !== config.qqApproval || mcpRun.approvalAllowed('native') !== config.nativeApproval),

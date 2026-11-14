@@ -3,6 +3,7 @@ import { wechatBindingContext } from '../agent-wechat/config.js';
 import { crossPlatformMemoryTools } from '../agent-wechat/memory-bridge.js';
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
 import { ensureCliSummary } from '../antigravity-cli/summary.js';
+import { promptImageMessageIds } from '../antigravity-cli/prompt-images.js';
 import { blocksToolFinish } from '../tools/tool-outcome.js';
 import { runCancelled, isIntentionalCancellation } from './run-cancellation.js';
 import { antigravityQuotaTools } from '../antigravity-cli/tools.js';
@@ -2630,6 +2631,7 @@ export class Orchestrator {
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
       bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
+      mcpRun.imageMessageIds = promptImageMessageIds(triggerEntries, mid => this.store.findByMid(chatKey, mid));
       if (channel) { mcpRun.platform = channel.platform || 'wechat'; mcpRun.approvalAllowed = category => category === 'native' && channel.allowed(chatKey) && channel.config().nativeApproval === true; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,

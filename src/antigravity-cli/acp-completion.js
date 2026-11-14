@@ -15,6 +15,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
   let sessionId, response = '', hostFinished = false, peer, lease, abortPeer, finishTimer, healthy = false;
   const deniedTools = new Set();
   let liveConfigOptions;
+  let supportsPromptImages = false;
   const permit = createAcpPermissionHandler({ sessionId: () => sessionId, mcpRun,
     workspace: invocation.workspace, controlRoot: config.workspace, signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls,
     imageAccess: invocation.imageAccess });
@@ -77,6 +78,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
         if (pool) invocation.retainWorkspace();
         const capabilities = init.agentCapabilities?.sessionCapabilities || init.agentCapabilities?.session_capabilities;
         return { peer: connection, canCloseSession: !!capabilities && capabilities.close != null && capabilities.close !== false,
+          supportsPromptImages: init.agentCapabilities?.promptCapabilities?.image === true,
           dispose: () => invocation.releaseWorkspace() };
       } catch (error) { await connection.close(); throw error; }
       finally { scopedSignal.removeEventListener('abort', abort); }
@@ -86,7 +88,12 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
       lease = await pool.acquire(mcpRun.chatKey, signature, create, () => isEnabled() && !invocation.policyChanged());
       lease.entry.active = handlers;
       peer = lease.entry.peer;
-    } else peer = (await create()).peer;
+      supportsPromptImages = lease.entry.supportsPromptImages === true;
+    } else {
+      const connection = await create();
+      peer = connection.peer;
+      supportsPromptImages = connection.supportsPromptImages;
+    }
     abortPeer = () => { void peer.close(); };
     scopedSignal.addEventListener('abort', abortPeer, { once: true });
     if (scopedSignal.aborted) abortPeer();
@@ -109,9 +116,14 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     phase = 'session configuration';
     await configureAntigravitySession({ peer, sessionId, session, config, currentOptions: () => liveConfigOptions });
     timings.sessionReadyMs = Date.now() - sessionStarted;
+    phase = 'image preparation';
+    const imageStarted = Date.now();
+    const imageParts = supportsPromptImages ? await invocation.promptImages?.(scopedSignal) || [] : [];
+    timings.imagePreparationMs = Date.now() - imageStarted;
+    scopedSignal.throwIfAborted();
     const promptStarted = Date.now();
     phase = 'session/prompt';
-    const result = await peer.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
+    const result = await peer.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }, ...imageParts] });
     timings.promptMs = Date.now() - promptStarted;
     if (scopedSignal.aborted) throw scopedSignal.reason;
     if (result?.stopReason !== 'end_turn' && !(hostFinished && result?.stopReason === 'cancelled')) throw new Error('ACP turn did not complete');

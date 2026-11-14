@@ -17,7 +17,8 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
         continue;
       }
     }
-    await mcp.callTool('qq_probe', {});
+    const probe = await mcp.callTool('qq_probe', {});
+    if (mode === 'image' && !probe.content?.some(part => part.type === 'image' && part.mimeType === 'image/png' && part.data === 'YQ==')) process.exit(13);
     if (mode === 'finish') { await mcp.callTool('qq_finish', { summary: 'done' }); continue; }
     send({ method: 'session/update', params: { sessionId: 'codex-test', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'native-denied-mcp-ok' } } } });
     send({ id: promptId, result: { stopReason: 'end_turn' } });

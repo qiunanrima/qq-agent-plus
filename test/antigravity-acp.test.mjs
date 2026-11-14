@@ -15,6 +15,19 @@ import { antigravityCompletion, antigravityStatus, closeAntigravityProcesses } f
 
 const run = { chatKey: 'private:1', runId: 'test', allowed: () => true, approvalAllowed: () => true };
 
+test('ACP attaches preloaded images in the first prompt without native file calls', async () => {
+  let loads = 0;
+  const result = await acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },
+    invocation: { workspace: os.tmpdir(), acpMcpServers: fakeServers, mcpReady: () => true, calls: () => 0,
+      finished: () => false, policyChanged: () => false,
+      promptImages: async () => { loads++; return [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }]; } },
+    prompt: 'offline', mcpRun: run, isEnabled: () => true,
+    spawnProcess: (_exe, _args, opts) => spawn(process.execPath, [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'prompt-image'], opts)
+  }, { verify: async () => {} });
+  assert.equal(result.message.content, 'image-confirmed'); assert.equal(loads, 1);
+  assert.deepEqual(listCliApprovals(), []);
+});
+
 test('MCP-only ACP allows its run-scoped MCP request while cancelling native reads', async () => {
   const permit = createAcpPermissionHandler({ sessionId: () => 'session', mcpRun: { ...run, approvalAllowed: () => false },
     workspace: os.tmpdir(), signal: new AbortController().signal, isEnabled: () => true, maxCalls: 8 });

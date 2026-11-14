@@ -22,6 +22,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   }
   const { method, id } = message;
   if (method === 'initialize') send({ id, result: { protocolVersion: 1,
+    ...(mode === 'prompt-image' ? { agentCapabilities: { promptCapabilities: { image: true } } } : {}),
     ...(process.env.ACP_CLOSE_TEST ? { agentCapabilities: { sessionCapabilities: { close: {} } } } : {}) } });
   else if (method === 'session/close') {
     if (process.env.ACP_CLOSE_TEST === 'hang') continue;
@@ -48,6 +49,15 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   else if (method === 'session/cancel') send({ id: promptId, result: { stopReason: 'cancelled' } });
   else if (method === 'session/prompt') {
     promptId = id;
+    if (mode === 'prompt-image') {
+      const image = message.params.prompt.find(part => part.type === 'image');
+      if (image?.mimeType !== 'image/png' || image.data !== 'YQ==') process.exit(6);
+      send({ method: 'session/update', params: { sessionId, update: {
+        sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'image-confirmed' }
+      } } });
+      send({ id, result: { stopReason: 'end_turn' } });
+      continue;
+    }
     if (mode === 'executor-empty') {
       send({ id, result: { stopReason: 'end_turn' } });
       continue;

@@ -51,6 +51,18 @@ test('host finish closes hanging ACP without replay or invented usage', async t 
   assert.equal(result.raw.status, 'HOST_FINISHED'); assert.equal(result.raw.usageUnavailable, true);
 });
 
+test('Codex MCP images remain image blocks and never use Antigravity prompt preloading', async t => {
+  const s = await setup(t, 'image');
+  s.request.mcpRun.imageMessageIds = ['42'];
+  s.request.mcpRun.execute = async name => {
+    s.calls.push(name);
+    return { content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,YQ==' } }] };
+  };
+  const result = await codexCompletion(s.request, s.deps);
+  assert.deepEqual(s.calls, ['probe']);
+  assert.equal(result.message.content, 'native-denied-mcp-ok');
+});
+
 test('Codex native operation is denied while correlated host MCP permission allows actual execution', async t => {
   const s = await setup(t, 'approval');
   const result = await codexCompletion(s.request, s.deps);
