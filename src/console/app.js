@@ -3676,7 +3676,7 @@ function buildApp({
     groupDigest.stop();
     adminBriefing.stop();
     // 插件子进程要在 onebot 关闭之前停掉：停机后不该再有插件在读消息
-    mcpManager.stop();
+    await mcpManager.close();
     await pluginRegistry.stop();
     await qzoneInteractions.abort();
     autoUpdate.stop();
