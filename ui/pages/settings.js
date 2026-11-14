@@ -1,3 +1,4 @@
+import { renderModelFallbackSection, bindModelFallbackSettings } from './model-fallback.js';
 import { bindCodexSettings, renderCodexSection } from './codex-cli.js';
 // 由 ui/app.js 机械拆出（2026-10-01，改进方案 §11「UI 结构治理」第二轮：设置域）。
 // 设置页渲染与弹窗（renderSettings* 及其分区渲染器、思考控制小件、选择器弹窗）
@@ -107,7 +108,7 @@ function renderSettingsSidebar() {
   // （ui-smoke 断言 .settings-menu-item[data-section=...] 仍在，锚点不受影响）。
   const menu = [
     ['对话与人格', [['persona', '人设'], ['chat', '聊天设置'], ['messageTypes', '消息类型'], ['allow', '聊天白名单'], ['memory', '记忆']]],
-    ['模型与服务', [['api', '模型 API'], ...(state.config?.codexCli?.graduated ? [['codex-cli', 'Codex CLI']] : []), ...(state.config?.antigravityCli?.graduated ? [['antigravity-cli', 'Antigravity CLI']] : []), ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
+    ['模型与服务', [['api', '模型 API'], ...(state.config?.modelFallback?.graduated ? [['model-fallback', '模型回退']] : []), ...(state.config?.codexCli?.graduated ? [['codex-cli', 'Codex CLI']] : []), ...(state.config?.antigravityCli?.graduated ? [['antigravity-cli', 'Antigravity CLI']] : []), ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
     ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['life-feed', '见闻'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
     ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ...(state.config?.agentWechat?.graduated ? [['agent-wechat', '微信接入']] : []), ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
     ['系统', [['appearance', '外观'], ['desktop', '系统']]]
@@ -331,6 +332,7 @@ function renderSettingsImpl() {
   bindSettingsEvents(c);
   bindAntigravitySettings();
   bindCodexSettings();
+  bindModelFallbackSettings();
   bindAgentWechatSettings();
   bindCrossSectionControls();
   bindExtensionSettings();
@@ -346,6 +348,7 @@ function renderSettingsImpl() {
 
 function renderSettingsSection(c) {
   const sec = state.settingsSection || 'api';
+  if (sec === 'model-fallback') return renderModelFallbackSection(c);
   if (sec === 'codex-cli') return renderCodexSection(c);
   if (sec === 'antigravity-cli') return renderAntigravitySection(c);
   if (sec === 'agent-wechat') return renderAgentWechatSection(c);

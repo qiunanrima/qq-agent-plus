@@ -19,7 +19,7 @@ function renderCodexSection(c = {}) {
   <div class="field"><label for="codex-effort">思考档位</label><select id="codex-effort">${['low', 'medium', 'high'].map(v => `<option ${v === (cfg.effort || 'low') ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
   ${field('timeoutMs', '执行超时毫秒（1000–60000，不含排队时间）', 60000, 'number')}${field('maxConcurrent', '全局并发（1–4，每个会话最多一个）', 1, 'number')}${field('maxToolCalls', '工具调用上限（1–128）', 16, 'number')}
   <p class="hint">并发满后按先来先服务排队，最多等待32个请求、每个最多等60秒。取消或停用会撤销等待请求，不会启动 CLI。</p>
-  <p class="hint">启用前请停用 Antigravity CLI。保存和刷新状态不调用模型；失败不重试，用量无法取得时标为未知。</p>
+  <p class="hint">未开启模型回退时，启用前请停用 Antigravity CLI。保存和刷新状态不调用模型；失败不重试，用量无法取得时标为未知。</p>
   <div class="save-bar"><button class="btn btn-primary" id="codex-save">保存 Codex 设置</button><span id="cfg-dirty-note" class="muted"></span><span id="codex-result" role="status"></span></div>`;
 }
 function renderCodexExperiment(c = {}) {

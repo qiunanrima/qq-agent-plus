@@ -1877,7 +1877,9 @@ export class Orchestrator {
         session.replyCorrectionUsage = response.usage;
         // 与主循环同口径：兜底渠道换过端点时，成本记到实际渠道；per-call 台账也要有一行
         session.model = response.model || session.model;
-        if (response.channelChanged && response.originBaseUrl) {
+        if (response.backend) session.vendor = response.backend === 'agy' ? 'Antigravity CLI'
+          : response.backend === 'codex' ? 'Codex CLI' : vendorOfBaseUrl(getConfig(), response.originBaseUrl) || vendorOfConfig(getConfig());
+        if (!response.backend && response.channelChanged && response.originBaseUrl) {
           session.vendor = vendorOfBaseUrl(getConfig(), response.originBaseUrl) || session.vendor;
         }
         session.callUsage ||= [];
@@ -2638,10 +2640,12 @@ export class Orchestrator {
       });
       signal.throwIfAborted();
       session.model = response.model || session.model;
+      if (response.backend) session.vendor = response.backend === 'agy' ? 'Antigravity CLI'
+        : response.backend === 'codex' ? 'Codex CLI' : vendorOfBaseUrl(getConfig(), response.originBaseUrl) || vendorOfConfig(getConfig());
       // 2026-10-06 复审 P3：兜底模型接管且端点真的换了渠道时，成本要记到实际渠道名下
       //（model-prices 的约定就是"会话用它自己记录的 vendor"）—— 否则渠道价/渠道价目表
       // 会按主渠道单价给兜底模型计价，而渠道价目表可自动注入，错价路径生产可达。
-      if (response.channelChanged && response.originBaseUrl) {
+      if (!response.backend && response.channelChanged && response.originBaseUrl) {
         session.vendor = vendorOfBaseUrl(getConfig(), response.originBaseUrl) || session.vendor;
       }
       addUsage(session.usage, response.usage);
