@@ -49,16 +49,21 @@ export function searchTerms(value) {
   return [...terms];
 }
 
-export function lexicalScore(query, candidate) {
+export function lexicalScorer(query) {
   const normalizedQuery = normalizeForSearch(query);
-  const normalizedCandidate = normalizeForSearch(candidate);
-  if (!normalizedQuery || !normalizedCandidate) return 0;
-  let score = normalizedCandidate.includes(normalizedQuery) ? 12 : 0;
-  for (const term of searchTerms(normalizedQuery)) {
-    if (term.length === 1 && /[a-z0-9]/.test(term)) continue;
-    if (normalizedCandidate.includes(term)) score += 1;
-  }
-  return score;
+  if (!normalizedQuery) return () => 0;
+  const terms = searchTerms(normalizedQuery).filter((term) => !(term.length === 1 && /[a-z0-9]/.test(term)));
+  return (candidate) => {
+    const text = normalizeForSearch(candidate);
+    if (!text) return 0;
+    let score = text.includes(normalizedQuery) ? 12 : 0;
+    for (const term of terms) if (text.includes(term)) score += 1;
+    return score;
+  };
+}
+
+export function lexicalScore(query, candidate) {
+  return lexicalScorer(query)(candidate);
 }
 
 export function redactionReason(value) {

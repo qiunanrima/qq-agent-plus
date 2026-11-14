@@ -2,11 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { openDatabase } from '../core/sqlite.js';
 import {
-  asText, clamp, clampInt, lexicalScore, now, parseJson, stableJson, uuid
+  asText, clamp, clampInt, lexicalScorer, now, parseJson, stableJson, uuid
 } from './util.js';
 
 const MEMORY_TYPES = new Set(['episode', 'fact', 'profile', 'preference', 'commitment', 'project', 'rule']);
 const MEMORY_STATUSES = new Set(['active', 'archived', 'superseded']);
+// Exclude vector_blob from lexical reads.
+const MEMORY_TEXT_COLUMNS = [
+  'id', 'scope_key', 'type', 'status', 'summary', 'content', 'importance', 'confidence',
+  'tags_json', 'source_json', 'entities_json', 'relations_json', 'search_text',
+  'vector_status', 'vector_error', 'embedding_model', 'vector_dimensions',
+  'created_at', 'updated_at', 'expires_at', 'archived_at'
+].join(', ');
 const MAX_TURNS = 5000;
 const MAX_TURN_PAYLOAD_CHARS = 16000;
 
@@ -300,14 +307,18 @@ export class LivingMemoryStore {
     if (!scopes.length) return [];
     const time = now();
     const rows = this.db.prepare(`
-      SELECT * FROM memories
+      SELECT ${MEMORY_TEXT_COLUMNS} FROM memories
       WHERE scope_key IN (${scopes.map(() => '?').join(', ')})
         AND status = 'active'
         AND (expires_at = 0 OR expires_at > ?)
       ORDER BY updated_at DESC
       LIMIT ?
     `).all(...scopes, time, clampInt(limit, 1, 2000, 800)).map(rowToMemory);
-    return rows.map((memory) => ({ memory, score: lexicalScore(query, `${memory.summary}\n${memory.content}\n${memory.tags.join(' ')}\n${memory.entities.join(' ')}`) }))
+    const scoreMemory = lexicalScorer(query);
+    return rows.map((memory) => ({
+      memory,
+      score: scoreMemory(`${memory.summary}\n${memory.content}\n${memory.tags.join(' ')}\n${memory.entities.join(' ')}`)
+    }))
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score);
   }

@@ -11,6 +11,7 @@ process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
 
 const {
   AssetObserver,
+  invalidateAssetCaches,
   buildSlangContextForChat,
   readMemoryAssetSummary,
   readSlangAssets
@@ -349,4 +350,22 @@ test('人物记忆统计读全局布局（memory/people/<QQ>.json），不重复
   const priv = summary.items.find((x) => x.chatKey === 'private:111');
   assert.equal(priv.people, 1);
   assert.equal(priv.impressions, 1);
+});
+
+
+test('asset summary cache reuses scans and invalidation exposes fresh disk state', (t) => {
+  const dir = fs.mkdtempSync(path.join(root, 'cache-'));
+  t.after(() => { invalidateAssetCaches(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const first = readMemoryAssetSummary(dir);
+  const memberDir = path.join(dir, 'memory', 'group_123');
+  fs.mkdirSync(memberDir, { recursive: true });
+  fs.writeFileSync(path.join(memberDir, '123456.json'), JSON.stringify({
+    userId: '123456', impressions: [{ content: 'cache test', createdAt: 1 }]
+  }));
+  assert.strictEqual(readMemoryAssetSummary(dir), first);
+  invalidateAssetCaches();
+  const fresh = readMemoryAssetSummary(dir);
+  assert.notStrictEqual(fresh, first);
+  assert.equal(fresh.people, 1);
+  assert.equal(fresh.impressions, 1);
 });

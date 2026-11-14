@@ -23,7 +23,15 @@ import { loadExperimentalFeatureStatuses } from './pages/features.js';
 import { loadDailyMomentsStatus, loadQzoneInteractionStatus } from './pages/moments.js';
 import { lifecycleAggregate, loadTimeControlStatus } from './pages/status.js';
 import { loadAntigravityStatus } from './pages/antigravity-cli.js';
-QARegistry.override('refreshStatus', async function refreshStatus() {
+let statusInFlight = false;
+let pendingFullRefresh = false;
+QARegistry.override('refreshStatus', async function refreshStatus(options = {}) {
+  const light = options?.light === true;
+  if (statusInFlight) {
+    if (!light) pendingFullRefresh = true;
+    return;
+  }
+  statusInFlight = true;
   try {
     state.status = await api('/api/status');
     const s = state.status;
@@ -112,10 +120,16 @@ QARegistry.override('refreshStatus', async function refreshStatus() {
     if (state.tab === 'settings' && state.settingsSection === 'experiments') {
       loadExperimentalFeatureStatuses();
     }
-    if (state.tab === 'identity') loadIdentityFeaturePage();
-    if (state.tab === 'incidents') loadIncidentFeaturePage();
+    if (!light && state.tab === 'identity') loadIdentityFeaturePage();
+    if (!light && state.tab === 'incidents') loadIncidentFeaturePage();
     renderBanner();
-  } catch (e) { /* 忽略瞬时错误 */ }
+  } catch (e) { /* 忽略瞬时错误 */ } finally {
+    statusInFlight = false;
+    if (pendingFullRefresh) {
+      pendingFullRefresh = false;
+      Promise.resolve(QARegistry.dispatch('refreshStatus')).catch(() => {});
+    }
+  }
 });
 
 // 生命周期线程可能在某次模型 Session 已经结束之后，才由恢复循环因为空闲/硬上限
