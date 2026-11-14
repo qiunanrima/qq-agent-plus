@@ -11,7 +11,7 @@ test('人格成长独立页：生命周期、停用查看、修正确认与删�
     kind: 'preference', topic: '饮品', content: '我更喜欢茶', status: 'tentative', target_user_id: '',
     supportDays: ['2026-11-01'], evidence: [{ id: 1, self: true, senderId: 'self', quote: '我更喜欢茶，清淡一些的。' }] }];
   let writes = 0;
-  await page.route('**/api/personality-memory/status', (route) => route.fulfill({ json: { config, entries } }));
+  await page.route('**/api/personality-memory/status', (route) => route.fulfill({ json: { config, entries, automatic: { scopes: [{ chatKey: 'group:12345', phase: 'saved', checkedAt: Date.now(), newMessages: 20, saved: 1, calls: 2, totalTokens: 360 }] } } }));
   await page.route('**/api/personality-memory/entries/*', async (route) => {
     const body = route.request().postDataJSON();
     expect(body.confirm).toBe(true);
@@ -24,6 +24,9 @@ test('人格成长独立页：生命周期、停用查看、修正确认与删�
     await page.goto('/');
     await switchTo(page, 'personality-memory');
     await expect(page.locator('#pm-status')).toContainText('已停用');
+    await expect(page.locator('#pm-capture-status')).toContainText('模型调用 2');
+    await expect(page.locator('#pm-collect')).toBeDisabled();
+    await expect(page.locator('#pm-min-messages')).toHaveValue('20');
     await expect(page.locator('[data-pm-entry]')).toHaveCount(1);
     await page.locator('[data-pm-confirm]').click();
     await page.locator('[data-confirm-cancel]').click();

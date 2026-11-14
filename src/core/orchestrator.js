@@ -27,6 +27,7 @@ export { followUpPlan, proactiveWindows, proactiveWindowState, estimateNextPromp
 import crypto from 'node:crypto';
 import { PerceptionWake } from '../memory/perception.js';
 import { withMemoryRecall } from '../memory/forgetting.js';
+import { personalityKey } from '../personality-memory/index.js';
 import { personaKey } from '../memory/hippocampus.js';
 import { RestrictedSubagents } from '../subagents/index.js';
 import { quietPrivateChat, selfWakeAllowed, proactiveScopeProbability } from './private-proactive-policy.js';
@@ -1513,6 +1514,7 @@ export class Orchestrator {
       if (!isExternalChat(chatKey) && getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
       const status = session.sent.length > 0 ? 'done' : 'noreply';
       this.sessions.finish(session.id, status);
+      if (status === 'done') void this.collectPersonality(chatKey, { session }).catch(error => log.warn('[personality-memory]', error?.message));
       try {
         this.memory.hippocampus?.capture({ chatKey, session, triggerEntries,
           persona: session.memoryPersona || resolvePersona(getConfig(), chatKey) });
@@ -2206,6 +2208,7 @@ export class Orchestrator {
     let personalityRecall = '';
     try {
       personalityRecall = this.personalityMemory?.prompt({ chatKey, persona,
+        onRecall: id => { if (session.memoryRecallIds.length < 200) session.memoryRecallIds.push(id); },
         participantIds: (triggerEntries || []).map((entry) => entry.senderId) }) || '';
     } catch (error) { log.warn(`[personality-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error); }
     let hippocampusRecall = '';
@@ -3367,6 +3370,20 @@ export class Orchestrator {
   static DISCOVER_MIN_MESSAGES = 20;      // 至少发过这么多条才值得分析
   static DISCOVER_MAX_MEMBERS = 3;        // 单次最多发现几个人（控制成本）
 
+  async collectPersonality(chatKey, { session = null, manual = false } = {}) {
+    if (!this.personalityMemory) return { phase: 'disabled', saved: 0 };
+    const persona = session?.memoryPersona || resolvePersona(getConfig(), chatKey);
+    const meter = { usage: structuredClone(session?.usage || emptyUsage()), auxiliaryUsage: structuredClone(session?.auxiliaryUsage || emptyUsage()) };
+    const allowed = () => !this.paused && !this.aborted && canRun(chatKey)
+      && getConfig().runtime?.mode === 'active' && !getConfig().runtime?.paused
+      && !budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {}).exceeded;
+    return this.personalityMemory.automatic.scan({ chatKey, persona, personaKey: personalityKey(persona), store: this.store, manual, allowed,
+      complete: async (messages, { signal, purpose }) => {
+        const response = await this.#memoryChat(messages, { signal, timeoutMs: 30000, session: meter, usageSource: purpose, thinkingIntent: 'off' });
+        return { value: extractJsonObject(String(response?.message?.content ?? '')), usage: response?.usage };
+      } });
+  }
+
   #maintainHippocampus() {
     const allowed = () => !this.paused && !this.aborted
       && getConfig().runtime?.mode === 'active' && !getConfig().runtime?.paused
@@ -4056,6 +4073,7 @@ export class Orchestrator {
       // 落盘失败不能只改一半内存：正在跑的 run 仍要中止、状态仍要广播，否则用户看到
       // "保存失败"但机器人已经半暂停（或恢复后积压没被处理）。
       if (this.paused) {
+        this.personalityMemory?.cancelPending();
         for (const controller of this.controllers.values()) controller.abort(runCancelled('paused'));
       }
       this.pauseReason = this.paused ? reason : null;
@@ -4064,6 +4082,7 @@ export class Orchestrator {
   }
 
   async abortAll() {
+    this.personalityMemory?.cancelPending();
     this.aborted = true;
     this.subagents.cancelAll();
     clearInterval(this.retryTimer);

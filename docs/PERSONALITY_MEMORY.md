@@ -56,3 +56,12 @@
 - `POST /api/personality-memory/entries/<id>`：`{confirm:true, content, status}`，修正或确认；停用时仍可操作。
 - `DELETE /api/personality-memory/entries/<id>`：`{confirm:true}`，删除指定记录。
 - 配置经共享 `POST /api/config` 写入 `personalityMemory`，仅提交模块字段。配置定义和归一化在 `src/personality-memory/config.js`。
+# 自动积累与召回修复（2026-11）
+
+成功回复后后台检查本会话最近三天、最多100条已处理原文。默认至少20条新消息、双方都有发言且距上次尝试30分钟，才调用记忆总结模型提取最多2条候选，再逐条独立核验。暂停、时段、会话权限、每日预算和本轮Token预算均会阻止采集。失败保留状态，不循环重试；持久化游标避免重启重复提取。关闭保留数据，清空同时备份及清除采集游标。
+
+证据的 `messageId` 是QQ原始ID，支持字符串及负数；显式内部引用使用 `localMessageId`。仅没有QQ ID的旧记录兼容旧内部ID引用。有QQ ID时不会把错误ID猜成内部ID。
+
+海马模式每轮在字符预算内直接展开最多3条已核验的稳定记忆，关系仅选当前参与者；其余给有限索引供查询。读取不强化，实际采用后通过 `finish.usedMemoryIds` 才增强记忆强度。可见性和遗忘曲线照常生效，角色卡始终优先。
+
+独立人格成长页可调消息门槛及间隔，查看各会话状态、候选拒绝原因、调用数及Token，并手动补采一批最近互动。补采同样受权限及预算约束，最多提取2条，不会遍历所有历史。

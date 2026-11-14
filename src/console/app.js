@@ -2921,7 +2921,7 @@ function buildApp({
   });
 
   registerMemoryManagementRoutes(router, { json, readBody, memory, livingMemory, personalityMemory, store, assets: assetObserver, orchestrator, dataDir: DATA_DIR, identityBusy: () => Boolean(identityPilot?.friendReviewTasks?.size), auditWrite, emit });
-  registerPersonalityMemoryRoutes({ router, memory: personalityMemory, readBody, json, emit, auditWrite });
+  registerPersonalityMemoryRoutes({ router, memory: personalityMemory, collect: (key, options) => orchestrator.collectPersonality(key, options), readBody, json, emit, auditWrite });
   router.add('POST', '/api/vision/scan', async (req, res) => {
     // 读体放在守卫**之前**：检查与置位之间有 await 时，两个并发请求会双双通过 409 守卫、
     // 把要花钱的模型探测跑两遍并交错覆盖结果（2026-10-03 全量审查）。顺序与 /api/memory-files/consolidate 一致。

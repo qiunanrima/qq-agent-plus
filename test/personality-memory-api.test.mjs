@@ -31,6 +31,9 @@ test('鉴权、确认、停用管理和全量清除包含人格成长备份', as
     headers: { ...(auth ? { 'x-console-token': cfg.server.token } : {}), 'content-type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {}) });
   assert.equal((await request('/api/personality-memory/status', 'GET', null, false)).status, 401);
+  assert.equal((await request('/api/personality-memory/collect', 'POST', { chatKey: 'group:1' })).status, 400);
+  const disabledCapture = await (await request('/api/personality-memory/collect', 'POST', { chatKey: 'group:1', confirm: true })).json();
+  assert.equal(disabledCapture.phase, 'disabled');
   assert.equal((await request('/api/memory/hippocampus', 'GET', null, false)).status, 401);
   assert.equal((await request('/api/memory/hippocampus/people', 'GET', null, false)).status, 401);
   const automatic = await (await request('/api/memory/hippocampus/people')).json();

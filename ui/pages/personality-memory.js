@@ -69,6 +69,8 @@ async function loadPersonalityMemoryPage() {
     state.personalityMemory.data = data;
     const cfg = data.config || {};
     const entries = data.entries || [];
+    const phases = { extracting: '提取中', waiting: '等待新互动', cooldown: '冷却中', blocked: '暂停或预算限制', saved: '已保存', rejected: '证据未通过', nothing: '没有合适候选', failed: '采集失败', cancelled: '已取消' };
+    const jobs = data.automatic?.scopes || [];
     const scopes = [...new Set(entries.flatMap((row) => row.sourceChatKeys || [row.scope_key]))];
     const selected = state.personalityMemory.scope;
     const visible = entries.filter((row) => !selected || (row.sourceChatKeys || [row.scope_key]).includes(selected));
@@ -82,8 +84,14 @@ async function loadPersonalityMemoryPage() {
       </div>
       <label>每个角色每个会话最多条数 <input id="pm-max" type="number" min="12" max="500" value="${esc(cfg.maxEntriesPerScope)}"></label>
       <label>每轮记忆字符预算 <input id="pm-inject" type="number" min="300" max="6000" value="${esc(cfg.maxInjectChars || 2200)}"></label>
+      <label>自动采集所需新消息 <input id="pm-min-messages" type="number" min="4" max="100" value="${esc(cfg.captureMinMessages || 20)}"></label>
+      <label>采集间隔（分钟） <input id="pm-interval" type="number" min="5" max="1440" value="${esc((cfg.captureMinIntervalMs || 1800000) / 60000)}"></label>
       <div class="settings-actions"><button type="button" class="btn btn-primary" id="pm-save">保存设置</button><button type="button" class="btn" id="pm-refresh">刷新</button></div>
       <p id="pm-status" role="status">${cfg.enabled ? '采集与召回按设置运行' : '已停用；数据保留，可继续查看和整理'}。共显示 ${entries.length} 条（最多 500 条）。</p>
+      <h3>自动积累状态</h3><p>成功回复后检查最近三天、最多100条原文；满足新消息数与冷却条件才提取，单批最多2条，另行核验。失败不会自动重试。稳定记忆每轮最多展开3条，其余按需查询。</p>
+      <div id="pm-capture-status">${jobs.length ? jobs.map(job => `<p style="overflow-wrap:anywhere">${esc(job.chatKey)} · ${esc(phases[job.phase] || job.phase)} · ${esc(new Date(job.checkedAt).toLocaleString())}<br>本批新消息 ${esc(job.newMessages || 0)} · 保存 ${esc(job.saved || 0)} · 模型调用 ${esc(job.calls || 0)} · Token ${esc(job.totalTokens || 0)}${job.reason ? `<br>${esc(job.reason)}` : ''}${job.failures?.length ? `<br>${job.failures.map(esc).join('；')}` : ''}</p>`).join('') : '尚未执行自动采集；等待启用后的真实互动。'}</div>
+      <label>补采会话（如 private:12345） <input id="pm-collect-chat" placeholder="group:12345 或 private:12345"></label>
+      <button type="button" class="btn" id="pm-collect" ${!cfg.enabled || !cfg.autoCapture ? 'disabled' : ''}>补采一次最近互动</button>
       <label>来源会话 <select id="pm-scope"><option value="">全部会话</option>${scopes.map((scope) => `<option value="${esc(scope)}" ${scope === selected ? 'selected' : ''}>${esc(scope)}</option>`).join('')}</select></label>
       <div id="pm-entries">${visible.length ? visible.map((row) => `<article class="panel" data-pm-entry="${esc(row.id)}">
         <strong>${esc(labels[row.kind] || row.kind)} · ${row.status === 'active' ? '已稳定 / 已确认' : '初步倾向'}</strong>
@@ -95,6 +103,15 @@ async function loadPersonalityMemoryPage() {
       </article>`).join('') : '<p>暂无人格成长记忆。开启后，角色会在有具体互动依据时逐步积累，不会凭空生成经历。</p>'}</div>
     </div>`;
     $('#pm-refresh')?.addEventListener('click', () => loadPersonalityMemoryPage());
+    $('#pm-collect')?.addEventListener('click', async (event) => {
+      const chatKey = $('#pm-collect-chat').value.trim();
+      if (!/^(group|private):\d{1,15}$/.test(chatKey)) { $('#pm-status').textContent = '请填写有效的QQ会话'; return; }
+      if (!await askForConfirmation('对该会话补采一批最近三天的互动？最多提取2条并独立核验，会使用记忆总结模型预算。')) return;
+      const button = event.currentTarget; button.disabled = true;
+      try { await api('/api/personality-memory/collect', { method: 'POST', body: JSON.stringify({ chatKey, confirm: true }) }); await loadPersonalityMemoryPage(); }
+      catch (error) { $('#pm-status').textContent = `补采失败：${error.message}`; }
+      finally { button.disabled = false; }
+    });
     $('#pm-scope')?.addEventListener('change', (event) => { state.personalityMemory.scope = event.target.value; void loadPersonalityMemoryPage(); });
     $('#pm-save')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
@@ -102,7 +119,8 @@ async function loadPersonalityMemoryPage() {
       try {
         await patchConfig({ enabled: $('#pm-enabled').checked, autoCapture: $('#pm-auto').checked,
           allowPrivate: $('#pm-private').checked, maxEntriesPerScope: Number($('#pm-max').value),
-          maxInjectChars: Number($('#pm-inject').value) });
+          maxInjectChars: Number($('#pm-inject').value), captureMinMessages: Number($('#pm-min-messages').value),
+          captureMinIntervalMs: Number($('#pm-interval').value) * 60000 });
         await loadPersonalityMemoryPage();
       } catch (error) { $('#pm-status').textContent = `保存失败：${error.message}`; }
       finally { button.disabled = false; }

@@ -17,7 +17,7 @@ function fixture(t, config = { enabled: true, allowPrivate: true }) {
   const store = new ChatStore(0, { dataDir: root });
   t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const say = (chatKey, quote, { self = true, ts = Date.now(), userId = '12345' } = {}) => {
-    const row = (self ? store.appendSelf.bind(store) : store.appendIncoming.bind(store))(chatKey, { text: quote, ts, senderId: userId });
+    const row = (self ? store.appendSelf.bind(store) : store.appendIncoming.bind(store))(chatKey, { text: quote, ts, senderId: userId }, { recordOnly: true });
     return { messageId: row.id, quote };
   };
   const capture = (args, chatKey = 'group:1', review = accepted, role = persona) => memory.capture({ chatKey, persona: role, store, args, review });
@@ -25,6 +25,75 @@ function fixture(t, config = { enabled: true, allowPrivate: true }) {
     evidence: [say(chat, quote, { ts: Date.now() - days * 86400000 })] });
   return { root, memory, cfg, store, say, capture, preference };
 }
+
+test('QQ消息ID优先匹配，支持负数字符串；内部ID必须明确或无mid', async (t) => {
+  const f = fixture(t);
+  const row = f.store.appendSelf('group:1', { text: '我喜欢清淡的绿茶', mid: '-98888', ts: Date.now() });
+  const args = { kind: 'preference', topic: '饮品', content: '喜欢绿茶', evidence: [{ messageId: '-98888', quote: '喜欢清淡的绿茶' }] };
+  assert.equal((await f.capture(args)).status, 'tentative');
+  await assert.rejects(f.capture({ ...args, evidence: [{ messageId: row.id, quote: '喜欢清淡的绿茶' }] }), /证据必须/);
+  assert.equal((await f.capture({ ...args, evidence: [{ localMessageId: row.id, quote: '喜欢清淡的绿茶' }] })).duplicate, true);
+});
+
+test('自动采集有门槛、独立核验、持久游标和冷却，已稳定正文可直接采用但读取不强化', async (t) => {
+  const f = fixture(t);
+  for (let i = 0; i < 20; i++) f.say('group:1', i % 2 ? '一起讨论清淡绿茶的味道' : '我更喜欢清淡绿茶的味道', { self: i % 2 === 0 });
+  let calls = 0;
+  const options = { chatKey: 'group:1', persona, personaKey: personalityKey(persona), store: f.store,
+    complete: async (messages, { purpose }) => {
+      calls++;
+      if (purpose === 'personality-review') return { value: await accepted(), usage: { total_tokens: 10 } };
+      const rows = JSON.parse(messages[1].content).messages;
+      return { value: { candidates: [{ kind: 'preference', topic: '饮品', content: '喜欢清淡绿茶', evidence: [{ localMessageId: rows[0].localMessageId, quote: rows[0].text }] }] }, usage: { total_tokens: 20 } };
+    } };
+  assert.equal((await f.memory.automatic.scan({ ...options, allowed: () => false })).phase, 'blocked');
+  assert.equal(calls, 0);
+  const result = await f.memory.automatic.scan(options);
+  assert.equal(result.saved, 1); assert.equal(result.calls, 2); assert.equal(result.totalTokens, 30);
+  const restarted = new PersonalityMemory({ dataDir: f.root, getConfig: () => f.cfg });
+  assert.equal((await restarted.automatic.scan(options)).phase, 'cooldown');
+  assert.equal((await restarted.automatic.scan({ ...options, manual: true })).phase, 'waiting');
+  assert.equal(calls, 2);
+  const entry = f.memory.list()[0]; f.memory.edit(entry.id, { content: entry.content, status: 'active' });
+  const recalls = [];
+  const prompt = f.memory.prompt({ chatKey: 'group:1', persona, onRecall: id => recalls.push(id) });
+  assert.match(prompt, /喜欢清淡绿茶/); assert.equal(recalls.length, 1);
+  assert.equal(fs.existsSync(f.memory.forgetting.file), false);
+});
+
+test('清空或停用使等待中的自动提取失效，不复活游标或写入记忆', async (t) => {
+  const f = fixture(t);
+  for (let i = 0; i < 20; i++) f.say('group:1', '我们一起讨论绿茶味道', { self: i % 2 === 0 });
+  let release;
+  const pending = f.memory.automatic.scan({ chatKey: 'group:1', persona, personaKey: personalityKey(persona), store: f.store,
+    complete: () => new Promise(resolve => { release = resolve; }) });
+  assert.equal(f.memory.automatic.status().active, 'group:1');
+  assert.equal((await f.memory.automatic.scan({ chatKey: 'group:1' })).phase, 'busy');
+  f.memory.clearAll(); release({ value: { candidates: [] } });
+  assert.equal((await pending).phase, 'cancelled');
+  assert.deepEqual(f.memory.automatic.status().scopes, []);
+  assert.deepEqual(f.memory.list(), []);
+});
+
+test('不足门槛不调用模型，独立核验拒绝不保存；停用可中止自动提取', async (t) => {
+  const f = fixture(t); let calls = 0;
+  for (let i = 0; i < 19; i++) f.say('group:1', '我们讨论清淡的绿茶', { self: i % 2 === 0 });
+  const options = { chatKey: 'group:1', persona, personaKey: personalityKey(persona), store: f.store,
+    complete: async (_messages, { purpose }) => {
+      calls++;
+      return { value: purpose === 'personality-review' ? { supported: false }
+        : { candidates: [{ kind: 'preference', topic: '茶', content: '喜欢茶', evidence: [{ localMessageId: 1, quote: '讨论清淡的绿茶' }] }] } };
+    } };
+  assert.equal((await f.memory.automatic.scan(options)).phase, 'waiting'); assert.equal(calls, 0);
+  f.say('group:1', '我也喜欢茶的味道', { self: false });
+  assert.equal((await f.memory.automatic.scan(options)).phase, 'rejected');
+  assert.equal(calls, 2); assert.equal(f.memory.list().length, 0);
+  f.say('group:1', '我确实喜欢绿茶'); f.say('group:1', '一起喝绿茶吧', { self: false });
+  let release;
+  const pending = f.memory.automatic.scan({ ...options, manual: true, complete: () => new Promise(resolve => { release = resolve; }) });
+  f.cfg.personalityMemory.enabled = false; f.memory.syncConfig(); release({ value: { candidates: [] } });
+  assert.equal((await pending).phase, 'cancelled'); assert.equal(f.memory.list().length, 0);
+});
 
 test('默认关闭，读取/清空不建库；固化与启用独立', async (t) => {
   const f = fixture(t, {});

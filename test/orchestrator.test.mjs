@@ -371,7 +371,7 @@ describe('Orchestrator', () => {
       chats++;
       return Response.json({ choices: [{ message: { tool_calls: [1, 2].map((n) => ({ id: `capture-${n}`, type: 'function', function: {
         name: 'remember_personality', arguments: JSON.stringify({ kind: 'preference', topic: '饮品', content: '我更喜欢绿茶',
-          evidence: [{ messageId: source.id, quote: '我更喜欢绿茶' }] })
+          evidence: [{ localMessageId: source.id, quote: '我更喜欢绿茶' }] })
       } })) } }], usage: { total_tokens: 10000 } });
     };
     append(1);
@@ -559,7 +559,7 @@ describe('Orchestrator', () => {
       body = request;
       calls++;
       const tools = calls === 1 ? [{ id: 'capture', type: 'function', function: { name: 'remember_personality', arguments: JSON.stringify({
-        kind: 'preference', topic: '饮品', content: '我更喜欢绿茶', evidence: [{ messageId: source.id, quote: '我更喜欢绿茶' }]
+        kind: 'preference', topic: '饮品', content: '我更喜欢绿茶', evidence: [{ localMessageId: source.id, quote: '我更喜欢绿茶' }]
       }) } }] : [];
       tools.push({ id: `done-${calls}`, type: 'function', function: { name: 'finish', arguments: JSON.stringify({ summary: '已处理本轮消息' }) } });
       return Response.json({ choices: [{ message: { tool_calls: tools } }], usage: { total_tokens: 10 } });
