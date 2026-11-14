@@ -29,8 +29,11 @@ test('real routing bypasses failed CLI and uses configured API; config survives 
     const result = await chatCompletionWithRetry({ purpose: 'chat', messages: [{ role: 'user', content: 'test' }], mcpRun: { chatKey: 'private:1', runId: 'test', allowed: () => true, execute: () => { throw new Error('must not execute'); } } }, 0);
     assert.equal(result.message.content, 'ok'); assert.equal(result.backend, 'api'); assert.equal(result.viaFallback, true); assert.equal(calls, 1);
     updateConfig({ modelFallback: { order: ['agy', 'codex', 'api'] } });
-    const second = await chatCompletionWithRetry({ purpose: 'chat', messages: [{ role: 'user', content: 'test' }], mcpRun: { chatKey: 'private:1', runId: 'test2', allowed: () => true, execute: () => { throw new Error('must not execute'); } } }, 0);
+    const attempts = [];
+    const second = await chatCompletionWithRetry({ onBackendAttempt: attempt => attempts.push(attempt), purpose: 'chat', messages: [{ role: 'user', content: 'test' }], mcpRun: { chatKey: 'private:1', runId: 'test2', allowed: () => true, execute: () => { throw new Error('must not execute'); } } }, 0);
     assert.equal(second.backend, 'api'); assert.equal(calls, 2);
+    assert.deepEqual(attempts.map(attempt => attempt.backend), ['agy', 'codex', 'api']);
+    assert.equal(attempts.at(-1).model, 'mock-api');
     const disk = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
     assert.deepEqual(disk.modelFallback.order, ['agy', 'codex', 'api']);
   } finally { await new Promise(resolve => server.close(resolve)); fs.rmSync(dir, { recursive: true, force: true }); }

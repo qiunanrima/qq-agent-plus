@@ -443,6 +443,7 @@ export async function chatCompletion({
   usageTracked = false,
   thinkingIntent = null,
   mcpRun = null,
+  onBackendAttempt = null,
   completionBackend = null
 }) {
   assertTimeAllowed();
@@ -456,6 +457,8 @@ export async function chatCompletion({
     const release = watchTimeWindow(error => controller.abort(error));
     try {
       const backend = codex ? 'codexCli' : 'antigravityCli';
+      onBackendAttempt?.({ backend: codex ? 'codex' : 'agy', model: getConfig()[backend]?.model || '',
+        vendor: codex ? 'Codex CLI' : 'Antigravity CLI' });
       const result = await (codex ? codexCompletion : antigravityCompletion)({ config: getConfig()[backend], messages, tools, toolChoice,
         signal: controller.signal, isEnabled: () => getConfig()[backend]?.enabled === true && (mcpRun?.channelEnabled?.() ?? true), mcpRun });
       if (!usageTracked) recordUntracked(result, purpose);
@@ -463,6 +466,7 @@ export async function chatCompletion({
     } finally { release(); signal?.removeEventListener('abort', abort); }
   }
   const api = overrides || effectiveApi();
+  onBackendAttempt?.({ backend: 'api', model: api.model, originBaseUrl: api.baseUrl });
   // 默认遵守渠道/用途设置；感知与背景提词可单次请求关闭思考，不改持久配置。
   const thinking = thinkingFor(purpose, overrides, thinkingIntent);
   const thinkingOff = thinking.effectiveOff;

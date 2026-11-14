@@ -2633,6 +2633,12 @@ export class Orchestrator {
       if (channel) { mcpRun.platform = channel.platform || 'wechat'; mcpRun.approvalAllowed = category => category === 'native' && channel.allowed(chatKey) && channel.config().nativeApproval === true; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
       const response = await chatCompletionWithRetry({ usageTracked: true,
+        onBackendAttempt: attempt => {
+          session.model = attempt.model || `${attempt.vendor || 'API'}（默认模型未确认）`;
+          session.vendor = attempt.vendor || vendorOfBaseUrl(getConfig(), attempt.originBaseUrl) || vendorOfConfig(getConfig());
+          this.sessions.update(session.id);
+          this.emit('session-update', session.id);
+        },
         messages,
         tools: openAiTools,
         signal,
