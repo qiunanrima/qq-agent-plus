@@ -25,6 +25,12 @@ export function registerLivingMemoryRoutes(router, deps = {}) {
       return json(res, 200, { ok: true, config: getConfig().livingMemory || {}, status: { ok: false, error: String(error?.message ?? error) } });
     }
   });
+  router.add('GET', '/api/living-memory/last-recall', (req, res, params, url) => {
+    const chatKey = String(url.searchParams.get('chatKey') || '');
+    if (!livingMemoryScopes([chatKey]).length) return json(res, 400, { error: '需要有效的会话' });
+    try { return json(res, 200, { result: livingMemory.explainLastRecall(chatKey) }); }
+    catch (error) { return json(res, 500, { error: String(error.message || error) }); }
+  });
   router.add('GET', '/api/living-memory/memories', async (req, res, params, url) => {
     const scopes = livingMemoryScopes(url.searchParams.getAll('scopeKey'));
     if (!scopes.length) return json(res, 400, { ok: false, error: '至少提供一个 scopeKey' });

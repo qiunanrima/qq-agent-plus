@@ -2,6 +2,7 @@
 // （从 console/app.js 拆出，2026-10-31 结构整治 M3）。
 // 破坏性删除一律 confirm 门槛；整理动作异步入队，进度通过 memory-update 事件回报。
 import { idList } from '../../core/list.js';
+import { registerMemoryInsightRoutes } from '../../memory/insights.js';
 
 export function registerMemoryRoutes(router, deps = {}) {
   const json = deps.json;
@@ -13,6 +14,7 @@ export function registerMemoryRoutes(router, deps = {}) {
   if (!router || !json || !readBody || !getConfig || !memory || !orchestrator || !emit) {
     throw new Error('registerMemoryRoutes 需要 router/json/readBody/getConfig/memory/orchestrator/emit');
   }
+  registerMemoryInsightRoutes(router, { json, getConfig, memory, orchestrator });
 
   router.add('GET', '/api/memory/search', async (req, res, params, url) => {
     const query = String(url.searchParams.get('query') || '').trim().slice(0, 120);

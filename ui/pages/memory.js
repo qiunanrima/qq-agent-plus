@@ -247,11 +247,31 @@ async function loadMemoryDetail(chatKey) {
         </div>
       </div>
       ${summaryCard}
+      <details class="panel" id="memory-insights"><summary>记忆召回解释与最近使用</summary>
+        <p>仅查询本地数据。检索到、展开正文和实际采用分别记录；只有实际采用才增强记忆。次数表示强化次数，同一记忆每天最多强化一次；每次实际采用另见下方记录。</p>
+        <label>关键词 <input id="memory-insight-query" maxlength="120" placeholder="留空查看当前可见记忆"></label>
+        <button type="button" class="btn btn-small" id="memory-insight-load">查询评分与记录</button>
+        <div id="memory-insight-result" role="status"></div>
+      </details>
       ${handoffHtml}
       ${membersHtml}
       ${rows || '<div class="muted memory-members-empty" style="padding:10px">还没有任何群友印象（可点右上角「＋ 添加印象」手动记，或点「整理本群记忆」让模型从聊天记录里提炼）。</div>'}
     `;
     const handoffPath = `/api/memory-files/${chatKey.replace(':', '_')}/handoff`;
+    $('#memory-insight-load')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget, host = $('#memory-insight-result'); button.disabled = true;
+      try {
+        const query = $('#memory-insight-query').value;
+        const data = await api(`/api/memory/insights?chatKey=${encodeURIComponent(chatKey)}&query=${encodeURIComponent(query)}`);
+        if (seq !== state.memoryDetailSeq) return;
+        const stages = { retrieved: '检索到', expanded: '展开正文', used: '实际采用' };
+        host.innerHTML = `<p>${esc(data.scoring)}</p><p>匹配 ${esc(data.total)} 条，最多显示60条。</p>`
+          + (data.entries || []).map(row => `<article style="overflow-wrap:anywhere"><strong>${esc(row.title)}</strong><p>${esc(row.origin === 'personality' ? '人格记忆' : '海马长期卡')} · 来源 ${esc(row.sourceChatKeys.join('、'))} · ${esc(row.status)}<br>保留率 ${(row.retention * 100).toFixed(1)}% · 强度 ${row.strength.toFixed(2)}天 · 实际使用 ${esc(row.recallCount)} 次 · 关键词命中 ${esc(row.lexicalMatches)}</p><details><summary>正文</summary><p>${esc(row.content)}</p></details></article>`).join('')
+          + '<h4>最近召回记录</h4><p>实际采用由成功 finish 确认；仅浏览不计使用。记录保留最近2000批，当前会话显示最近30批。</p>'
+          + ((data.events || []).map(row => `<p style="overflow-wrap:anywhere">${esc(new Date(row.at).toLocaleString())} · ${esc(stages[row.stage])} · ${esc(row.entries.map(item => item.title || item.recallId || item.id).join('、'))}</p>`).join('') || '<p>暂无记录；升级前的调用不补猜。</p>');
+      } catch (error) { if (seq === state.memoryDetailSeq) host.textContent = `查询失败：${error.message}`; }
+      finally { button.disabled = false; }
+    });
     const lines = (id) => ($(id)?.value || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     $('#mh-save')?.addEventListener('click', async () => {
       const btn = $('#mh-save');

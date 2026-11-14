@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { openDatabase } from '../core/sqlite.js';
 import { sanitizeUserText } from '../core/util.js';
+import { recordRecallTrace, recentRecallTrace, clearRecallTrace, backupRecallTrace } from './recall-trace.js';
 
 const DAY = 86400000;
 export const memoryStrength = (count = 0) => Math.min(90, 1.84 * (1 + Math.log1p(Math.max(0, Number(count) || 0))));
@@ -86,14 +87,20 @@ export class ForgettingStore {
     });
   }
   createResetBackup(file) {
+    backupRecallTrace(this, file + '.trace.sqlite');
     return this.withDb(false, db => { if (db) db.prepare('VACUUM INTO ?').run(file); });
   }
+  trace(event) { try { recordRecallTrace(this, event); } catch { /* Observability must not change tool outcomes. */ } }
+  recentTrace(chatKey) { return recentRecallTrace(this, chatKey); }
   clearAll() {
-    return this.withDb(false, db => Boolean(db)) && this.withDb(true, db => db.exec('DELETE FROM recalls'));
+    clearRecallTrace(this);
+    return this.withDb(false, db => Boolean(db)) && this.withDb(true, db => {
+      db.exec('DELETE FROM recalls');
+    });
   }
 }
 
-const memoryTools = new Set(['memory_query', 'person_memory_lookup', 'memory_card_lookup', 'personality_lookup', 'semantic_memory_lookup']);
+const memoryTools = new Set(['memory_query', 'person_memory_lookup', 'memory_card_lookup', 'personality_lookup', 'semantic_memory_lookup', 'memory_card_list', 'hippocampus_lookup']);
 /** A result merely registers eligibility; only successful finish explicitly confirms actual use. */
 export function withMemoryRecall(definitions, { forgetting, personaScope }) {
   return definitions.map(def => {
@@ -106,6 +113,7 @@ export function withMemoryRecall(definitions, { forgetting, personaScope }) {
         if (!result.isError && !ctx.signal?.aborted && forgetting.enabled()) {
           const eligible = ctx.session.memoryRecallIds || [];
           const used = (Array.isArray(args.usedMemoryIds) ? args.usedMemoryIds : []).filter(id => eligible.includes(id));
+          forgetting.trace({ chatKey: ctx.chatKey, sessionId: ctx.session.id, stage: 'used', entries: [...new Set(used)].map(recallId => ({ recallId })) });
           // Reinforcement is best effort and must never turn a completed finish into a retry.
           try { forgetting.reinforce(used); } catch { /* metadata unavailable: no reinforcement */ }
           ctx.session.memoryRecallIds = [];
@@ -118,9 +126,11 @@ export function withMemoryRecall(definitions, { forgetting, personaScope }) {
       if (result.isError || ctx.signal?.aborted || !forgetting.enabled()) return result;
       let payload;
       try { payload = JSON.parse(result.content); } catch { return result; }
+      const retrieved = [], expanded = [];
       const visit = value => {
         if (!value || typeof value !== 'object') return value;
         if (Array.isArray(value)) return value.map(visit);
+        if (value.id && !value.content) retrieved.push(value);
         // Index entries and episode summaries have no content and are never reinforced.
         if (typeof value.content === 'string' && value.content.trim()) {
           const source = def.name === 'person_memory_lookup'
@@ -132,6 +142,7 @@ export function withMemoryRecall(definitions, { forgetting, personaScope }) {
             : value.kind === 'skill' ? `${personaScope}:skill`
               : row.origin === 'hippocampus' || def.name === 'memory_card_lookup' ? `${personaScope}:person` : 'legacy:person';
           const memory = forgetting.describe(scope, row);
+          expanded.push({ ...row, ...memory });
           const ids = new Set(ctx.session.memoryRecallIds || []);
           if (ids.size < 200) ids.add(memory.recallId);
           ctx.session.memoryRecallIds = [...ids];
@@ -139,7 +150,12 @@ export function withMemoryRecall(definitions, { forgetting, personaScope }) {
         }
         return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child)]));
       };
-      try { return { ...result, content: JSON.stringify(visit(payload)) }; }
+      try {
+        const content = JSON.stringify(visit(payload));
+        forgetting.trace({ chatKey: ctx.chatKey, sessionId: ctx.session.id, stage: 'retrieved', entries: [...retrieved, ...expanded] });
+        forgetting.trace({ chatKey: ctx.chatKey, sessionId: ctx.session.id, stage: 'expanded', entries: expanded });
+        return { ...result, content };
+      }
       catch { return result; }
     } };
   });

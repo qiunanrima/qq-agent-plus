@@ -230,6 +230,7 @@ export class PersonalityMemory {
         const line = JSON.stringify({ recallId: memory.recallId, kind: row.kind, topic: sanitizeUserText(row.topic), content: sanitizeUserText(row.content), userId: row.target_user_id || undefined });
         if (line.length > Math.min(600, remaining)) continue;
         lines.push(line); remaining -= line.length + 1; bodies++; shown.add(row.id); onRecall(memory.recallId);
+        this.forgetting.trace({ chatKey, stage: 'expanded', entries: [{ ...row, ...memory, title: row.topic }] });
       }
       for (const row of rows.slice(0, 30)) {
         if (shown.has(row.id)) continue;

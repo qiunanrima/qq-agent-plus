@@ -3409,7 +3409,7 @@ export class Orchestrator {
       && getConfig().memory?.consolidateEnabled !== false
       && !budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {}).exceeded;
     this.memory.hippocampus?.maintain({ allowed, complete: async (messages) => {
-      const response = await this.#memoryChat(messages);
+      const response = await this.#memoryChat(messages, { usageSource: 'hippocampus' });
       return extractJsonObject(String(response?.message?.content ?? ''));
     } }).catch((error) => log.warn('[hippocampus] 凌晨消化未完成，原摘要已保留：', error?.message ?? error));
   }
