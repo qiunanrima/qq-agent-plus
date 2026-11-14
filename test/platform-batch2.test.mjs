@@ -113,8 +113,8 @@ it('按群覆盖：本群显式布尔值优先于全局，别的群不受影响'
   assert.equal(platformToolAllowed('set_my_avatar', platform, 'group:100'), false);
   // 裸群号与控制台同口径（事件与配置里都是裸号）
   assert.equal(platformToolAllowed('react_to_message', platform, '433'), false);
-  // 私聊不带按群覆盖（chatKey 里没有群号）
-  assert.equal(platformToolAllowed('react_to_message', platform, 'private:5'), true);
+  // 私聊不应用群覆盖，且不能挂载仅群聊支持的表情回应。
+  assert.equal(platformToolAllowed('react_to_message', platform, 'private:5'), false);
   // 覆盖里没写的键回落全局
   assert.equal(platformToolAllowed('like_album_photo', platform, 'group:433'), true);
   assert.equal(platformToolAllowed('like_album_photo', platform, 'group:999'), false);

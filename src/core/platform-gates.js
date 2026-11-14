@@ -60,6 +60,16 @@ export const PLATFORM_GATE_LABELS = {
  */
 export const PLATFORM_DEFAULT_OFF = new Set(['avatarWrites', 'nicknameWrites', 'albumUpload', 'privateFileSend']);
 
+// These implementations require the current QQ group; enabling a capability
+// does not make it usable from a private or another platform's conversation.
+export const GROUP_ONLY_TOOLS = new Set([
+  'react_to_message', 'get_message_reactions', 'get_group_profile', 'group_sign',
+  'set_group_todo', 'send_qq_voice', 'list_group_files', 'group_file_url',
+  'send_group_file', 'list_group_album', 'like_album_photo', 'comment_album_photo',
+  'upload_to_group_album', 'set_group_card', 'set_group_ban', 'kick_group_member',
+  'set_group_admin', 'get_group_member_list'
+]);
+
 /** 全部门控键（控制台按群覆盖编辑器、迁移校验都用它）。 */
 export const PLATFORM_GATE_KEYS = Object.freeze(Object.keys(PLATFORM_TOOL_GATES));
 
@@ -108,6 +118,7 @@ export function platformGateAllowed(key, platform = {}, chatKeyOrGroup = '') {
 /** 某个工具在（可选的）会话上下文里是否可用；不属于任何门控键的工具一律放行。 */
 export function platformToolAllowed(name, platform = {}, chatKeyOrGroup = '') {
   const tool = String(name || '');
+  if (chatKeyOrGroup && GROUP_ONLY_TOOLS.has(tool) && !platformGroupIdOf(chatKeyOrGroup)) return false;
   if (tool === 'send_private_file' && !/^private:[1-9]\d*$/.test(String(chatKeyOrGroup))) return false;
   for (const [key, tools] of Object.entries(PLATFORM_TOOL_GATES)) {
     if (!tools.includes(tool)) continue;

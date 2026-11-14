@@ -2119,7 +2119,7 @@ export class Orchestrator {
     // 的契约，见 test/experimental-tool-scheduler.test.mjs），而是每轮现取现追加。
     // 授权由注册表自己收口（总开关 / enabledIds / 进程状态 / manifest 声明，默认拒）——
     // 内置工具的默认是"放行"（platformToolAllowed 对未登记工具返回 true），插件绝不能沿用那个默认。
-    const pluginToolDefs = this.getPlugins?.()?.toolDefsFor?.() ?? [];
+    const pluginToolDefs = this.getPlugins?.()?.toolDefsFor?.({ chatKey }) ?? [];
     const mcpToolDefs = this.getMcp?.()?.toolDefsFor?.() ?? [];
     const builtinToolDefs = toolDefs;   // 前缀哈希用它（见下），插件/MCP 工具只按名字参与
     const personaBackground = new PersonaBackground({ dataDir: DATA_DIR });

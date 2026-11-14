@@ -15,6 +15,7 @@ import { parsePluginManifest, qualifiedToolName } from './manifest.js';
 import { readPluginInstallInfo, listPluginBackups } from './install.js';
 import { PluginHost } from './host.js';
 import { explicitHealthRead } from './health-read-consent.js';
+import { pluginChatToolAllowed } from './chat-tool-policy.js';
 import { isolationSummary, probeIsolation } from './isolation.js';
 import { sanitizeUserText } from '../core/util.js';
 import { sanitizeDeep } from '../tools/tools-core.js';
@@ -588,7 +589,7 @@ export class PluginRegistry {
     return byPlugin[action] === true;
   }
 
-  toolDefsFor() {
+  toolDefsFor({ chatKey = '' } = {}) {
     const cfg = this.#config();
     if (!cfg.enabled) return [];
     const available = [];
@@ -598,6 +599,7 @@ export class PluginRegistry {
       //（含 --check 与最多 5s 的 init 握手），"不再空转"这句承诺就落空了。要恢复得显式重载。
       if (host.state === 'failed') continue;
       for (const tool of host.manifest.tools) {
+        if (!pluginChatToolAllowed(id, tool.name, cfg.settings[id], chatKey, readOwnerUin(this.getConfig()))) continue;
         // 写操作工具的最外一道门：动作开关默认关 —— 关着时**工具根本不注册**，
         // 模型看不见就不会浪费轮次去试一个必被拒的调用。
         if (tool.action && this.#writeSwitchOn(cfg, id, tool.action) !== true) continue;
@@ -1085,6 +1087,9 @@ export class PluginRegistry {
     const cfgNow = this.#config();
     if (!cfgNow.enabled || !this.#shouldRun(host.id, cfgNow, host.manifest.version)) {
       return { content: JSON.stringify({ error: `插件 ${host.id} 当前未启用（或被撤回）` }), isError: true };
+    }
+    if (!pluginChatToolAllowed(host.id, tool.name, cfgNow.settings[host.id], ctx?.chatKey || '', readOwnerUin(this.getConfig()))) {
+      return { content: JSON.stringify({ error: '该插件工具未开启聊天访问或不适用于当前会话' }), isError: true, noEffect: true };
     }
     // 懒启动：进程没起就先起（失败按"未在运行"如实报错，不假装成功）
     const ready = host.state === 'running' ? host : await this.#ensureRunning(host.id);
