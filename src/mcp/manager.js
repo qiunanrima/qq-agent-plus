@@ -136,6 +136,7 @@ export class McpManager {
         memoryMb: server.memoryMb,
         sandbox: server.sandbox,
         allowUnsandboxed: server.allowUnsandboxed === true,
+        requireNetworkIsolation: !consoleToken,
         log: this.log,
         onExit: () => this.#scheduleRestart(id, gen)
       });
@@ -219,6 +220,7 @@ export class McpManager {
       memoryMb: entry.config.memoryMb,
       sandbox: entry.config.sandbox,
       allowUnsandboxed: entry.config.allowUnsandboxed === true,
+      requireNetworkIsolation: !String(getConfig().server?.token ?? "").trim(),
       log: this.log,
       onExit: () => this.#scheduleRestart(id, gen)
     });

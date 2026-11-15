@@ -21,7 +21,7 @@ function safeEnv() {
 }
 
 export class McpStdioClient {
-  constructor({ id, command, args = [], env = {}, cwd = '', timeoutMs = DEFAULT_TIMEOUT, log = () => {}, onExit = null, networkIsolation = false, permissionIsolation = false, memoryMb = 0, sandbox = {}, allowUnsandboxed = false }) {
+  constructor({ id, command, args = [], env = {}, cwd = '', timeoutMs = DEFAULT_TIMEOUT, log = () => {}, onExit = null, networkIsolation = false, permissionIsolation = false, memoryMb = 0, sandbox = {}, allowUnsandboxed = false, requireNetworkIsolation = false }) {
     this.id = String(id || '').trim();
     this.command = String(command || '').trim();
     this.args = Array.isArray(args) ? args.map(String) : [];
@@ -39,6 +39,7 @@ export class McpStdioClient {
     // allowUnsandboxed 是显式信任门禁：auto 模式找不到沙箱时只有它为 true 才允许裸跑。
     this.sandbox = sandbox && typeof sandbox === 'object' ? sandbox : {};
     this.allowUnsandboxed = allowUnsandboxed === true;
+    this.requireNetworkIsolation = requireNetworkIsolation === true;
     // 小于 64MB 的堆上限只会让 server 起不来；按 0（不设）处理。
     const heapMb = Math.floor(Number(memoryMb) || 0);
     this.memoryMb = heapMb >= 64 ? Math.min(4096, heapMb) : 0;
@@ -103,6 +104,12 @@ export class McpStdioClient {
     command = spec.command;
     args = spec.args;
     this.cleanup = spec.cleanup || null;
+    if (this.requireNetworkIsolation && spec.netIsolated !== true) {
+      this.#cleanupSandbox();
+      const error = new Error('控制台没有设置 server.token，MCP 必须实际启用网络隔离');
+      error.code = 'E_MCP_ISOLATION';
+      throw error;
+    }
     this.permissionActive = spec.permissionActive === true;
     this.netIsolated = spec.netIsolated === true;
     this.fsIsolated = spec.fsIsolated === true;

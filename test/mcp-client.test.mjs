@@ -437,3 +437,21 @@ it('管理器：permissionIsolation 生效并在状态里标明', async () => {
     manager.stop();
   }
 });
+
+it('空令牌控制台：network none 声明不能掩盖 mode off 的实际裸进程', async () => {
+  const cfg = configWith({ command: 'nonexistent-mcp-binary', sandbox: { mode: 'off', network: 'none' } });
+  cfg.server.token = '';
+  setRuntimeConfig(cfg);
+  const manager = new McpManager();
+  try {
+    await manager.start();
+    const entry = manager.clients.get('fake');
+    assert.ok(entry, '经过配置预检查后，必须核验实际启动规格');
+    assert.equal(entry.client.proc, null, '禁止在核验前创建子进程');
+    assert.equal(manager.status()[0].ready, false);
+    assert.match(manager.status()[0].error, /实际启用网络隔离/);
+    assert.equal(manager.status()[0].restarting, false);
+  } finally {
+    manager.stop();
+  }
+});
