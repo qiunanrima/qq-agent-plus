@@ -45,7 +45,7 @@ import {
 } from './pages/features.js';
 import { loadMemoryView, renderMemoryList } from './pages/memory.js';
 import { loadLivingMemoryPage } from './pages/living-memory.js';
-import { loadPersonalityMemoryPage } from './pages/personality-memory.js';
+import { loadPersonalityMemoryPage, loadSharedExperiences } from './pages/personality-memory.js';
 import { loadHippocampusPage } from './pages/hippocampus.js';
 import { loadPluginsPage } from './pages/plugins.js';
 import { stopQrPoll } from './pages/plugin-settings.js';
@@ -299,7 +299,7 @@ function switchTab(name) {
   if (name === 'control') loadControlHub();
   if (name === 'sessions') loadSessions();
   if (name === 'chats') loadChats();
-  if (name === 'memory') loadMemoryView();
+  if (name === 'memory') { loadMemoryView(); void loadSharedExperiences(); }
   if (name === 'hippocampus') loadHippocampusPage();
   if (name === 'living-memory') loadLivingMemoryPage({ force: true });
   if (name === 'personality-memory') loadPersonalityMemoryPage();
@@ -1183,6 +1183,7 @@ function connectSSE() {
   });
   es.addEventListener('personality-memory-update', () => {
     if (state.tab === 'personality-memory') void loadPersonalityMemoryPage();
+    if (state.tab === 'memory') void loadSharedExperiences();
   });
   es.addEventListener('memory-update', (ev) => {
     let data = {};

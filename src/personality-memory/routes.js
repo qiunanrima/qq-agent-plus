@@ -4,6 +4,7 @@ export function registerPersonalityMemoryRoutes({ router, memory, collect, readB
     catch (error) { return json(res, error.statusCode || 500, { error: String(error.message || error) }); }
   };
   router.add('GET', '/api/personality-memory/status', handle(() => memory.status()));
+  router.add('GET', '/api/memory/shared-experiences', handle(() => ({ entries: memory.list({ kind: 'experience' }) })));
   router.add('POST', '/api/personality-memory/collect', handle(async (req) => {
     const body = await readBody(req) || {};
     if (body.confirm !== true || !/^(group|private):\d{1,15}$/.test(body.chatKey || '')) throw Object.assign(new Error('需要确认及有效的QQ会话'), { statusCode: 400 });

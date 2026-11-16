@@ -100,7 +100,7 @@ export class ForgettingStore {
   }
 }
 
-const memoryTools = new Set(['memory_query', 'person_memory_lookup', 'memory_card_lookup', 'personality_lookup', 'semantic_memory_lookup', 'memory_card_list', 'hippocampus_lookup']);
+const memoryTools = new Set(['memory_query', 'person_memory_lookup', 'memory_card_lookup', 'personality_lookup', 'shared_experience_lookup', 'semantic_memory_lookup', 'memory_card_list', 'hippocampus_lookup']);
 /** A result merely registers eligibility; only successful finish explicitly confirms actual use. */
 export function withMemoryRecall(definitions, { forgetting, personaScope }) {
   return definitions.map(def => {
@@ -138,7 +138,7 @@ export function withMemoryRecall(definitions, { forgetting, personaScope }) {
               && sanitizeUserText(row.content) === value.content) : null;
           const row = { ...value, ...source, userId: value.userId ?? source?.userId ?? (def.name === 'person_memory_lookup' ? args.userId : undefined) };
           const scope = def.name === 'semantic_memory_lookup' ? 'semantic'
-            : def.name === 'personality_lookup' ? `${personaScope}:personality`
+            : ['personality_lookup', 'shared_experience_lookup'].includes(def.name) ? `${personaScope}:personality`
             : value.kind === 'skill' ? `${personaScope}:skill`
               : row.origin === 'hippocampus' || def.name === 'memory_card_lookup' ? `${personaScope}:person` : 'legacy:person';
           const memory = forgetting.describe(scope, row);
