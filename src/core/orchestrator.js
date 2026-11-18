@@ -2648,6 +2648,10 @@ export class Orchestrator {
         transcript: { messages, auditMessages: session.messages, toolResults, imageUserMessages }
       });
       bindRunApprovalPolicy(mcpRun, { getConfig, sender: this.sender });
+      const sentBeforeRound = session.sent.length;
+      mcpRun.canFinalizeDeliveredReply = () => !channel && mcpRun.allowed()
+        && !priorFailure && session.sent.length > sentBeforeRound
+        && this.store.hasEffects(session.leaseId) && !this.store.hasUncertainEffects(session.leaseId);
       mcpRun.imageMessageIds = promptImageMessageIds(triggerEntries, mid => this.store.findByMid(chatKey, mid));
       if (channel) { mcpRun.platform = channel.platform || 'wechat'; mcpRun.approvalAllowed = category => category === 'native' && channel.allowed(chatKey) && channel.config().nativeApproval === true; mcpRun.channelEnabled = () => channel.allowed(chatKey); }
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）
@@ -2734,6 +2738,10 @@ export class Orchestrator {
       markActivity('');
 
       if (response.toolsExecutedViaMcp) session.cliMcpCompleted = true;
+      if (response.toolsExecutedViaMcp && response.raw?.status === 'HOST_FINALIZED_AFTER_TIMEOUT') {
+        session.finishReason = 'QQ 回复已确认送达，CLI 收尾超时，由宿主结束';
+        log.info(`[orchestrator] ${session.id} 已确认 QQ 发送，ACP 收尾超时后由宿主结束`);
+      }
       let toolCalls = normalizedToolCalls;
       // 兼容：少数模型把工具调用写成文本而不是原生 tool_calls。解析成功后需要把
       // 该 assistant 消息改成 tool_calls 形态回填 messages，并追加真正的 tool 结果。

@@ -117,6 +117,10 @@ export async function prepareMcpInvocation({ config, tools, toolChoice, mcpRun, 
         return false;
       },
       calls: () => Math.max(calls, bridge.ledger().length),
+      lastToolSucceeded: name => {
+        const last = bridge.ledger().at(-1);
+        return last?.name === name && last.state === 'succeeded';
+      },
       finished: () => mcpRun.isFinished?.() === true,
       policyChanged: () => typeof mcpRun.approvalAllowed === 'function'
         && (mcpRun.approvalAllowed('qq') !== config.qqApproval || mcpRun.approvalAllowed('native') !== config.nativeApproval),

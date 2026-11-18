@@ -34,12 +34,13 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     if (mode === 'pool-probe' || mode === 'pool-cancel') sessionId = `session-${++sessionCount}`;
     const server = message.params?.mcpServers?.[0];
     if (message.params?.mcpServers?.length !== 1 || server?.name !== 'qq_run' || !server.command || !Array.isArray(server.env)) process.exit(3);
-    if (['mcp-probe', 'pool-probe', 'pool-cancel', 'mcp-only'].includes(mode)) {
+    if (['mcp-probe', 'pool-probe', 'pool-cancel', 'mcp-only', 'send-then-hang'].includes(mode)) {
       mcp = new McpStdioClient({ id: server.name, command: server.command, args: server.args,
         env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])), timeoutMs: 3000,
         log: { info() {}, warn() {}, error() {} } });
       await mcp.start();
-      if (!mcp.tools.some(tool => tool.name === 'qq_probe')) process.exit(5);
+      const expectedTool = mode === 'send-then-hang' ? 'qq_send_message' : 'qq_probe';
+      if (!mcp.tools.some(tool => tool.name === expectedTool)) process.exit(5);
     }
     send({ id, result: { sessionId,
     modes: { availableModes: [{ id: 'default' }] },
@@ -49,6 +50,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   else if (method === 'session/cancel') send({ id: promptId, result: { stopReason: 'cancelled' } });
   else if (method === 'session/prompt') {
     promptId = id;
+    if (mode === 'send-then-hang') {
+      await mcp.callTool('qq_send_message', { messages: ['offline reply'] });
+      continue;
+    }
     if (mode === 'prompt-image') {
       const image = message.params.prompt.find(part => part.type === 'image');
       if (image?.mimeType !== 'image/png' || image.data !== 'YQ==') process.exit(6);

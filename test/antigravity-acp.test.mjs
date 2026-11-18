@@ -15,6 +15,30 @@ import { antigravityCompletion, antigravityStatus, closeAntigravityProcesses } f
 
 const run = { chatKey: 'private:1', runId: 'test', allowed: () => true, approvalAllowed: () => true };
 
+test('ACP timeout finalizes only a host-confirmed send and never repeats delivery', async t => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'agy-finish-timeout-'));
+  t.after(async () => { await closeAntigravityProcesses(); await fs.rm(workspace, { recursive: true, force: true }); });
+  for (const confirmed of [true, false]) {
+    let sends = 0;
+    const pending = antigravityCompletion({
+      config: { enabled: true, nativeApproval: true, workspace, timeoutMs: 1800 },
+      messages: [{ role: 'user', content: 'offline prompt' }],
+      tools: [{ function: { name: 'send_message', parameters: { type: 'object' } } }],
+      mcpRun: { ...run, approvalAllowed: category => category === 'native',
+        execute: async () => { sends++; return { content: 'sent' }; },
+        canFinalizeDeliveredReply: () => confirmed && sends === 1 }
+    }, {
+      verifyNative: async () => {},
+      spawnProcess: (_exe, _args, opts) => spawn(process.execPath,
+        [fileURLToPath(new URL('./fixtures/antigravity-acp.mjs', import.meta.url)), 'send-then-hang'], opts)
+    });
+    if (confirmed) assert.equal((await pending).raw.status, 'HOST_FINALIZED_AFTER_TIMEOUT');
+    else await assert.rejects(pending, /timed out/);
+    assert.equal(sends, 1);
+    assert.equal(antigravityStatus().active, 0);
+  }
+});
+
 test('ACP attaches preloaded images in the first prompt without native file calls', async () => {
   let loads = 0;
   const result = await acpCompletion({ config: { executable: process.execPath, agent: 'qq-mcp', effort: 'low', timeoutMs: 3000, maxToolCalls: 8 },

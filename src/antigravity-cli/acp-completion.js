@@ -13,6 +13,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
   const scopedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const startedAt = Date.now(), timings = {};
   let phase = 'initialization', pendingPermissions = 0;
+  let nativeRequested = false, deliveredAtTimeout = false, timeoutError;
   let sessionId, response = '', hostFinished = false, peer, lease, abortPeer, finishTimer, healthy = false;
   const deniedTools = new Set();
   let liveConfigOptions;
@@ -22,7 +23,13 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     imageAccess: invocation.imageAccess });
   const native = createAcpNativeClient({ sessionId: () => sessionId, workspace: invocation.workspace, controlRoot: config.workspace, mcpRun,
     signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls, onUnknownWrite: error => controller.abort(error) });
-  const cancelTimeout = scheduleLongTimeout(() => controller.abort(new Error(`Antigravity CLI timed out (${config.timeoutMs}ms; phase=${phase}; hostCalls=${invocation.calls()}; pendingPermissions=${pendingPermissions})`)), config.timeoutMs);
+  const cancelTimeout = scheduleLongTimeout(() => {
+    timeoutError = new Error(`Antigravity CLI timed out (${config.timeoutMs}ms; phase=${phase}; hostCalls=${invocation.calls()}; pendingPermissions=${pendingPermissions})`);
+    deliveredAtTimeout = phase === 'session/prompt' && pendingPermissions === 0 && !nativeRequested
+      && invocation.lastToolSucceeded?.('send_message') === true && mcpRun.canFinalizeDeliveredReply?.() === true;
+    controller.abort(timeoutError);
+    invocation.revoke?.();
+  }, config.timeoutMs);
   const guard = setInterval(() => {
     if (!isEnabled()) controller.abort(runCancelled('cli-disabled', 'Antigravity CLI disabled'));
     else if (invocation.policyChanged()) controller.abort(runCancelled('cli-policy-changed', 'Antigravity permission policy changed'));
@@ -41,6 +48,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     const handlers = {
       request: (method, params) => {
         if (method === 'session/request_permission') {
+          if (describeAcpPermission(params?.toolCall)?.category !== 'mcp') nativeRequested = true;
           pendingPermissions++;
           return permit(params).then(result => {
             const selected = params?.options?.find(option => option.optionId === result.outcome?.optionId);
@@ -51,6 +59,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
             return result;
           }).finally(() => { pendingPermissions--; });
         }
+        nativeRequested = true;
         return native.request(method, params);
       },
       update: (method, params) => {
@@ -153,6 +162,10 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     return completed(hostFinished ? 'HOST_FINISHED' : 'SUCCESS');
   } catch (error) {
     if ((hostFinished || invocation.finished()) && !signal?.aborted && isEnabled() && !invocation.policyChanged()) return completed('HOST_FINISHED');
+    if (deliveredAtTimeout && scopedSignal.reason === timeoutError && !signal?.aborted && isEnabled()
+        && !invocation.policyChanged() && mcpRun.canFinalizeDeliveredReply?.() === true) {
+      return completed('HOST_FINALIZED_AFTER_TIMEOUT');
+    }
     throw scopedSignal.aborted ? scopedSignal.reason : error;
   } finally {
     cancelTimeout(); clearTimeout(finishTimer); clearInterval(guard);
