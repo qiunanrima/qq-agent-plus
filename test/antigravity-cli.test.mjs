@@ -94,7 +94,7 @@ test('rejects unknown tools, invalid arguments, missing required tools and multi
 
 test('defaults, lifecycle independence and routing boundaries', () => {
   assert.equal(ANTIGRAVITY_DEFAULTS.timeoutMs, 90000);
-  assert.equal(normalizeAntigravityConfig({ timeoutMs: 120000 }).timeoutMs, 90000);
+  assert.equal(normalizeAntigravityConfig({ timeoutMs: 900000 }).timeoutMs, 900000);
   assert.equal(ANTIGRAVITY_DEFAULTS.enabled, false);
   assert.equal(normalizeAntigravityConfig({ graduated: true }).enabled, false);
   assert.throws(() => normalizeAntigravityConfig({ enabled: true }), /absolute workspace/);

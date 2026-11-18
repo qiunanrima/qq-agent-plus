@@ -9,6 +9,7 @@ import { verifyNativeHooks } from './verify-native-hooks.js';
 import { buildMcpPrompt } from './prompt.js';
 import { createAcpPool } from './acp-pool.js';
 import { runCancelled } from '../core/run-cancellation.js';
+import { scheduleLongTimeout } from '../core/long-timeout.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const queue = createCliQueue();
@@ -90,7 +91,10 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
   const args = ['--input-format', 'stream-json', '--output-format', 'stream-json', '--agent', cfg.agent,
     '--settings', JSON.stringify(SESSION_SETTINGS), '--disable-slash-commands',
     '--effort', cfg.effort,
-    '--json-schema', JSON.stringify(schemaFor(tools, toolChoice)), '--print-timeout', `${cfg.timeoutMs}ms`];
+    '--json-schema', JSON.stringify(schemaFor(tools, toolChoice))];
+  // The CLI uses a signed 64-bit duration in nanoseconds. The host timer is
+  // authoritative and can represent millisecond values beyond that range.
+  args.push('--print-timeout', `${Math.min(cfg.timeoutMs, 9_223_372_036_854)}ms`);
   if (cfg.model) args.push('--model', cfg.model);
   const release = await queue.acquire({ chatKey, limit: cfg.maxConcurrent, signal, isEnabled });
   let invocation;
@@ -107,7 +111,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       }
     }
     const result = await new Promise((resolve, reject) => {
-      let child, timer, guard, killTimer, failure, hostResult, bytes = 0, stderrBytes = 0, stdout = '', lineBuffer = '', initialized = false, hostFinished = false;
+      let child, cancelTimeout, guard, killTimer, failure, hostResult, bytes = 0, stderrBytes = 0, stdout = '', lineBuffer = '', initialized = false, hostFinished = false;
       const stop = error => {
         failure ||= error;
         invocation?.revoke();
@@ -123,7 +127,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       };
       const abort = () => stop(signal.reason || new Error('Antigravity cancelled'));
       const cleanup = () => {
-        clearTimeout(timer); clearTimeout(killTimer); clearInterval(guard);
+        cancelTimeout?.(); clearTimeout(killTimer); clearInterval(guard);
         signal?.removeEventListener('abort', abort);
       };
       try {
@@ -199,7 +203,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
           resolve(results[0].result);
         } catch { reject(new Error('Invalid Antigravity result stream')); }
       });
-      timer = setTimeout(() => stop(new Error('Antigravity CLI timed out')), cfg.timeoutMs);
+      cancelTimeout = scheduleLongTimeout(() => stop(new Error('Antigravity CLI timed out')), cfg.timeoutMs);
       guard = setInterval(() => {
         if (!isEnabled()) stop(runCancelled('cli-disabled', 'Antigravity CLI disabled'));
         else if (invocation?.policyChanged()) stop(runCancelled('cli-policy-changed', 'Antigravity approval policy changed'));

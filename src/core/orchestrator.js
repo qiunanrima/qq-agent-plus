@@ -4,6 +4,7 @@ import { wechatBindingContext } from '../agent-wechat/config.js';
 import { crossPlatformMemoryTools } from '../agent-wechat/memory-bridge.js';
 import { proactiveCandidates, triggerKindForTier, shouldAutoConsolidate, mergeImpressionLists } from './orchestrator-helpers.js';
 import { ensureCliSummary } from '../antigravity-cli/summary.js';
+import { scheduleLongTimeout } from './long-timeout.js';
 import { promptImageMessageIds } from '../antigravity-cli/prompt-images.js';
 import { blocksToolFinish } from '../tools/tool-outcome.js';
 import { runCancelled, isIntentionalCancellation } from './run-cancellation.js';
@@ -1326,6 +1327,11 @@ export class Orchestrator {
     }
 
     runTimeoutMs = Math.min(240000, Math.max(1000, Number(cfgNow.api.runTimeoutMs) || 180000));
+    const agyTimeoutMs = cfgNow.antigravityCli?.timeoutMs;
+    if (cfgNow.antigravityCli?.enabled && Number.isSafeInteger(agyTimeoutMs)) {
+      // Reserve time for admission and host work outside the CLI deadline.
+      runTimeoutMs = Math.max(runTimeoutMs, agyTimeoutMs + 75_000);
+    }
     lease = proactive ? null : this.store.claimUnread(chatKey, {
       limit: cfgNow.store.batchLimit, maxChars: cfgNow.store.batchMaxChars, leaseMs: runTimeoutMs + 60000,
       fromId: claimFromId
@@ -1432,11 +1438,11 @@ export class Orchestrator {
       session.leaseId = lease?.id || session.id;
       controller = new AbortController();
       this.controllers.set(chatKey, controller);
-      runTimer = setTimeout(() => controller.abort(new Error('Run deadline exceeded')), runTimeoutMs);
+      runTimer = scheduleLongTimeout(() => controller.abort(new Error('Run deadline exceeded')), runTimeoutMs);
       releaseTimeGuard = watchTimeWindow((error) => controller.abort(error), chatKey);
       this.emit('chat-update', chatKey);
     } catch (setupError) {
-      if (runTimer !== null) clearTimeout(runTimer);
+      runTimer?.();
       releaseTimeGuard?.();
       if (controller) this.controllers.delete(chatKey);
       this.activeRuns.delete(chatKey);
@@ -1595,7 +1601,7 @@ export class Orchestrator {
       this.emit('session-end', { sessionId: session.id, chatKey, status, error: session.error });
     } finally {
       releaseTimeGuard();
-      clearTimeout(runTimer);
+      runTimer?.();
       this.controllers.delete(chatKey);
       this.activeRuns.delete(chatKey);
       this.runningChats.delete(chatKey);

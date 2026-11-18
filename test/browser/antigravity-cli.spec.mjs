@@ -20,10 +20,12 @@ test('separate native and QQ approvals, escaped previews and explicit decisions'
     await page.goto('/'); await switchTo(page, 'settings');
     await page.click('button[data-section="experiments"]'); await page.click('#agy-open');
     await expect(page.locator('#agy-native-approval')).not.toBeChecked();
+    await page.locator('#agy-timeoutMs').fill('900000');
     await page.check('#agy-qq-approval');
     await page.click('#agy-save');
     await expect(page.locator('#agy-save-result')).toContainText('已保存');
     const cfg = (await (await page.request.get('/api/config')).json()).antigravityCli;
+    expect(cfg.timeoutMs).toBe(900000);
     expect(cfg.nativeApproval).toBe(false); expect(cfg.qqApproval).toBe(true); expect(cfg.enabled).toBe(false);
     await page.check('#agy-native-approval');
     await page.click('#agy-save');
@@ -43,7 +45,7 @@ test('separate native and QQ approvals, escaped previews and explicit decisions'
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
     await page.screenshot({ path: '.codex/antigravity-ui/approval-mobile.png' });
   } finally {
-    await page.request.post('/api/config', { data: { antigravityCli: { enabled: false, nativeApproval: false, qqApproval: false } } });
+    await page.request.post('/api/config', { data: { antigravityCli: { enabled: false, nativeApproval: false, qqApproval: false, timeoutMs: 90000 } } });
   }
 });
 

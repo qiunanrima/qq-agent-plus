@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { toMcpContent } from './mcp-content.js';
+import { scheduleLongTimeout } from '../core/long-timeout.js';
 import { normalizeToolArgumentAliases } from '../tools/argument-aliases.js';
 
 const LIMIT = 8 * 1024 * 1024;
@@ -97,7 +98,7 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
   authorize, timeoutMs = 120000, maxCalls = 16 }) {
   if (!chatKey || !runId || typeof execute !== 'function' || typeof authorize !== 'function') throw new Error('MCP run requires scope, executor and authorization');
   if (!Array.isArray(tools) || tools.length > 128 || !Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 128
-    || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 600000) throw new Error('Invalid MCP limits');
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 100) throw new Error('Invalid MCP limits');
   signal?.throwIfAborted();
   const catalog = new Map();
   for (const tool of tools) {
@@ -200,11 +201,11 @@ export async function createRunToolMcp({ tools, execute, chatKey, runId, signal,
   const close = () => {
     if (closed) return;
     closed = true; controller.abort(new Error('MCP run revoked'));
-    clearTimeout(timer); signal?.removeEventListener('abort', close);
+    cancelTimeout(); signal?.removeEventListener('abort', close);
     for (const socket of sockets) socket.destroy();
     server.close();
   };
-  const timer = setTimeout(close, timeoutMs);
+  const cancelTimeout = scheduleLongTimeout(close, timeoutMs);
   signal?.addEventListener('abort', close, { once: true });
   if (signal?.aborted) close();
   return {

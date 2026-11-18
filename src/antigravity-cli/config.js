@@ -22,9 +22,7 @@ export function normalizeAntigravityConfig(raw = {}) {
   if (!['low', 'medium', 'high'].includes(cfg.effort)) throw new Error('Invalid Antigravity effort');
   if (!['json', 'mcp'].includes(cfg.transport)) throw new Error('Invalid Antigravity transport');
   if (!Number.isInteger(cfg.maxToolCalls) || cfg.maxToolCalls < 1 || cfg.maxToolCalls > 128) throw new Error('Invalid Antigravity maxToolCalls');
-  if (!Number.isInteger(cfg.timeoutMs) || cfg.timeoutMs < 1000 || cfg.timeoutMs > 600000) throw new Error('Antigravity timeoutMs must be 1000..600000');
-  // Preserve old installations while enforcing the conversation process deadline.
-  cfg.timeoutMs = Math.min(cfg.timeoutMs, 90000);
+  if (!Number.isSafeInteger(cfg.timeoutMs) || cfg.timeoutMs < 1000) throw new Error('Antigravity timeoutMs must be a safe integer >= 1000');
   if (!Number.isInteger(cfg.maxConcurrent) || cfg.maxConcurrent < 1 || cfg.maxConcurrent > 4) throw new Error('Antigravity maxConcurrent must be 1..4');
   return cfg;
 }

@@ -355,11 +355,16 @@ export async function chatCompletionWithRetry(args, retries = 2) {
         onFallback: (from, to, error) => {
           llmRuntimeStats.fallbackUses += 1;
           const message = String(error?.message || '');
+          const acpFailure = /\bACP (initialize|session\/(?:new|set_mode|set_config_option|prompt)) failed \((-?\d{1,10})\)/.exec(message);
+          const agyPhase = /phase=(initialization|session\/new|MCP discovery|session configuration|image preparation|session\/prompt); hostCalls=(\d+); pendingPermissions=(\d+)/.exec(message);
           const reason = /quota|capacity|容量|额度|429|rate.limit/i.test(message) ? '额度或限流'
             : /timeout|timed.out|超时/i.test(message) ? '请求超时'
             : /401|403|auth|登录/i.test(message) ? '认证失败'
+            : acpFailure ? `ACP ${acpFailure[1]} 失败，错误码 ${acpFailure[2]}`
+            : /Codex (?:model|reasoning effort) unavailable/.test(message) ? '模型或思考档位不可用'
             : /workspace|ENOENT|executable|目录|configuration/i.test(message) ? '路径或配置不可用' : '后端请求失败';
-          log.warn(`[model-fallback] ${from} 失败（${reason}），切换到 ${to}`);
+          const stage = agyPhase ? `，阶段 ${agyPhase[1]}，工具 ${agyPhase[2]}，待审批 ${agyPhase[3]}` : '';
+          log.warn(`[model-fallback] ${from} 失败（${reason}${stage}），切换到 ${to}`);
         }
       });
     } catch (error) { if (!args.fallbackAttempt) llmRuntimeStats.failures += 1; throw error; }

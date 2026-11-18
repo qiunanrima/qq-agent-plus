@@ -5,6 +5,7 @@ import { createAcpPermissionHandler, describeAcpPermission } from './acp-permiss
 import { verifyNativeHooks } from './verify-native-hooks.js';
 import { createAcpNativeClient } from './acp-native-client.js';
 import { runCancelled } from '../core/run-cancellation.js';
+import { scheduleLongTimeout } from '../core/long-timeout.js';
 
 /** One ACP session per host run; no permanent permissions or automatic retry. */
 export async function acpCompletion({ config, invocation, prompt, mcpRun, signal, isEnabled, spawnProcess }, { verify = verifyNativeHooks, pool } = {}) {
@@ -21,7 +22,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     imageAccess: invocation.imageAccess });
   const native = createAcpNativeClient({ sessionId: () => sessionId, workspace: invocation.workspace, controlRoot: config.workspace, mcpRun,
     signal: scopedSignal, isEnabled, maxCalls: config.maxToolCalls, onUnknownWrite: error => controller.abort(error) });
-  const timer = setTimeout(() => controller.abort(new Error(`Antigravity CLI timed out (${config.timeoutMs}ms; phase=${phase}; hostCalls=${invocation.calls()}; pendingPermissions=${pendingPermissions})`)), config.timeoutMs);
+  const cancelTimeout = scheduleLongTimeout(() => controller.abort(new Error(`Antigravity CLI timed out (${config.timeoutMs}ms; phase=${phase}; hostCalls=${invocation.calls()}; pendingPermissions=${pendingPermissions})`)), config.timeoutMs);
   const guard = setInterval(() => {
     if (!isEnabled()) controller.abort(runCancelled('cli-disabled', 'Antigravity CLI disabled'));
     else if (invocation.policyChanged()) controller.abort(runCancelled('cli-policy-changed', 'Antigravity permission policy changed'));
@@ -154,7 +155,7 @@ export async function acpCompletion({ config, invocation, prompt, mcpRun, signal
     if ((hostFinished || invocation.finished()) && !signal?.aborted && isEnabled() && !invocation.policyChanged()) return completed('HOST_FINISHED');
     throw scopedSignal.aborted ? scopedSignal.reason : error;
   } finally {
-    clearTimeout(timer); clearTimeout(finishTimer); clearInterval(guard);
+    cancelTimeout(); clearTimeout(finishTimer); clearInterval(guard);
     scopedSignal.removeEventListener('abort', abortPeer);
     controller.abort();
     await native.close();
