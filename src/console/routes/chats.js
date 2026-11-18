@@ -112,6 +112,11 @@ export function registerChatRoutes(router, deps = {}) {
     emit('chat-update', key);
     return json(res, 200, { ok: true, control, decision, backlog });
   });
+  addConversationRoute('GET', /^\/api\/chats\/(group|private)_(\d+)\/decisions$/, async (req, res, params) => {
+    const chatKey = `${params[1]}:${params[2]}`;
+    return json(res, 200, { decisions: store.recentChatDecisions(chatKey) });
+  });
+
   addConversationRoute('GET', /^\/api\/chats\/(group|private)_(\d+)\/messages$/, async (req, res, params, url) => {
     const chatKey = `${params[1]}:${params[2]}`;
     // 服务端游标分页：默认 500，普通上限 2000。旧客户端传 limit=100000 仍然兼容，但会被封顶。

@@ -322,7 +322,6 @@ export class Orchestrator {
     this.wakeTimers = new Map();       // chatKey -> timer
     this.pendingWake = new Set();      // 防抖中等待聚批的 chatKey
     this.directPending = new Set();    // 这批等待来自 @/私聊/引用：普通消息不能把它延长回 8-12 秒
-    this.lastDecisions = new Map();    // chatKey -> 最近一次"不回"的档位/原因（内存态，够控制台排查）
     this.pendingSessions = new Map();  // chatKey -> waiting sessionId（防抖期可见的“等待中”会话）
     this.firstPendingAt = new Map();
     this.controllers = new Map();
@@ -625,7 +624,21 @@ export class Orchestrator {
 
   /** 最近一次"为什么没回"（档位/原因/概率）；没有记录返回 null。 */
   decisionFor(chatKey) {
-    return this.lastDecisions?.get(String(chatKey)) || null;
+    const [latest] = this.store.recentChatDecisions?.(chatKey, 1) || [];
+    return latest?.outcome === 'skipped' ? latest : null;
+  }
+
+  #recordDecision(chatKey, outcome, { tier, reason } = {}, { messageCount = 0, sentCount = 0, note = '' } = {}) {
+    // 只记录编排器自己的判定，不把输入、模型输出或异常正文写进决策历史。
+    const decision = { at: Date.now(), outcome, tier: tier || 0, reason: reason || '未触发',
+      percent: Number(storeConfigForChat(chatKey).randomPercent) || 0,
+      messageCount, sentCount, note };
+    try {
+      this.store.recordChatDecision?.(chatKey, decision);
+    } catch (error) {
+      log.warn(`[orchestrator] ${chatKey} 决策记录写入失败：`, error?.message ?? error);
+    }
+    return decision;
   }
 
   /** 自主节奏是否作用于该会话（按 pacing.scope 判定）。 */
@@ -1229,6 +1242,7 @@ export class Orchestrator {
     if (budget.enabled && budget.exceeded) {
       if (budget.notify) this.#maybeNotifyBudgetExceeded(budget);
       if (budget.onExceed === 'block' && !budgetExempt) {
+        this.#recordDecision(chatKey, 'blocked', { reason: '本轮额度已用完' });
         const activeMode = String(getConfig().runtime?.mode || 'active') !== 'observe';
         // 只在"有新消息"这一路回话：主动/自主节奏唤醒没有人在等，插一句只会变成刷屏。
         if (activeMode && !proactive && !paced) await this.#maybeSayBudgetExhausted(chatKey);
@@ -1255,6 +1269,7 @@ export class Orchestrator {
           ? this.store.findPending(chatKey, mentionMatcher)
           : (inWindow ? { id: 0 } : null);
         if (!hit && !inWindow) {
+          this.#recordDecision(chatKey, 'blocked', { reason: '预算降级：仅回应 @ 或拍一拍' }, { messageCount: pendingEntries.length });
           if (waitingSessionId) this.#discardWaiting(waitingSessionId);
           return;   // 保留未读：被 @ 时（或跨日重置后）自然会再进这里
         }
@@ -1309,14 +1324,7 @@ export class Orchestrator {
         const marked = this.store.markRead(chatKey, pendingEntries.map((m) => m.id));
         // 关键：让等待会话**干净消失**，而不是标成"中止"留在列表里
         if (waitingSessionId) this.#discardWaiting(waitingSessionId);
-        const decision = {
-          at: Date.now(),
-          tier: Number(tierResult0.tier) || 0,
-          reason: String(tierResult0.reason || '未触发'),
-          percent: Number(storeConfigForChat(chatKey).randomPercent) || 0
-        };
-        this.lastDecisions.set(chatKey, decision);
-        if (this.lastDecisions.size > 500) this.lastDecisions.delete(this.lastDecisions.keys().next().value);
+        const decision = this.#recordDecision(chatKey, 'skipped', tierResult0, { messageCount: pendingEntries.length });
         this.emit('chat-update', chatKey);
         if (marked) {
           log.info(`[orchestrator] ${chatKey} ${marked} 条未命中触发条件（概率 ${decision.percent}%，${decision.reason}），已标记已读、不响应`);
@@ -1459,6 +1467,7 @@ export class Orchestrator {
       } catch (cleanupError) {
         log.warn(`[orchestrator] ${chatKey} 唤醒准备段中断后的清理失败：${cleanupError?.message ?? cleanupError}`);
       }
+      this.#recordDecision(chatKey, 'error', tierResult, { messageCount: triggerEntries.length, note: '启动失败' });
       throw setupError;
     }
 
@@ -1475,6 +1484,7 @@ export class Orchestrator {
         log.info(`[perception] ${chatKey} marked=${decision.marked} wake=${decision.wake} pending=${decision.ids.length}`);
         if (!decision.wake) {
           if (lease) this.store.ackLease(lease.id);
+          this.#recordDecision(chatKey, 'noreply', tierResult, { messageCount: triggerEntries.length, note: '感知未唤醒' });
           this.sessions.finish(session.id, 'noreply');
           this.emit('session-end', { sessionId: session.id, chatKey, status: 'noreply' });
           return;
@@ -1534,6 +1544,9 @@ export class Orchestrator {
         triggerEntries,
         sent: session.sent
       });
+      this.#recordDecision(chatKey, status === 'done' || session.visibleReply === true ? 'replied' : 'noreply', tierResult,
+        { messageCount: triggerEntries.length, sentCount: session.sent.length,
+          note: session.budgetStopped ? '本轮达到预算上限' : '' });
       this.emit('session-end', { sessionId: session.id, chatKey, status,
         sent: session.sent.length, finishReason: session.finishReason, usage: session.usage });
       // 主动好友候选已整体退役（Issue #10，见 docs/KNOWN-ISSUES.md）：
@@ -1598,6 +1611,8 @@ export class Orchestrator {
       }
       const status = timeClosed || cancelled ? 'aborted' : 'error';
       this.sessions.finish(session.id, status);
+      this.#recordDecision(chatKey, status, tierResult, { messageCount: triggerEntries.length, sentCount: session.sent.length,
+        note: timeClosed ? '时间窗口已关闭' : '' });
       this.emit('session-end', { sessionId: session.id, chatKey, status, error: session.error });
     } finally {
       releaseTimeGuard();

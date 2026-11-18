@@ -19,6 +19,7 @@ import {
   lifecycleRemainingText, lifecycleRunsFor, lifecycleStateOf, triggerKindLabel
 } from '../core/lifecycle-labels.js';
 import { startLifecycleTicker, startWaitTicker, state } from '../core/state.js';
+import { bindDecisionHistory, refreshDecisionHistory, renderDecisionHistory } from './chat-decisions.js';
 function sessionStatusText(s) {
   const base = STATUS_LABEL[s.status] || s.status;
   return s.conversationMode === 'lifecycle' && ['done', 'noreply'].includes(s.status)
@@ -103,6 +104,7 @@ function renderSessionThreadTimeline(s) {
 
 // ── 会话视图 ──
 async function loadSessions({ quiet = false } = {}) {
+  if (state.tab === 'sessions') refreshDecisionHistory($('#session-detail'));
   try {
     // 最近 2000 条封顶：会话索引可能很大，前端再有筛选和分页渲染；不再一次拉 100 万条。
     const data = await api('/api/sessions?limit=2000');
@@ -595,7 +597,8 @@ function renderSessionDetail(s, {
     </div>
     ${renderSessionModeBand(s)}
     ${renderLifecycleOverview(s)}
-    ${renderSessionThreadTimeline(s)}`);
+    ${renderSessionThreadTimeline(s)}
+    ${renderDecisionHistory(s.chatKey)}`);
 
   const jsonMode = state.sessionJsonMode === s.id;
   if (jsonMode) {
@@ -685,15 +688,18 @@ function renderSessionDetail(s, {
 
   // 折叠面板的展开状态也要保留（否则每次刷新"系统提示"都被折回去）
   const openStates = new Map();
-  detail.querySelectorAll('details.collapsible').forEach((d, i) => openStates.set(i, d.open));
+  const previousDecisions = detail.querySelector('[data-chat-decisions]');
+  const otherDetails = 'details.collapsible:not([data-chat-decisions])';
+  detail.querySelectorAll(otherDetails).forEach((d, i) => openStates.set(i, d.open));
   detail.innerHTML = html.join('');
+  bindDecisionHistory(detail, previousDecisions);
   if (detail.querySelector('.lifecycle-remaining[data-deadline]')) {
     startLifecycleTicker();
   }
   $('#session-mobile-back')?.addEventListener('click', () => {
     $('#view-sessions')?.classList.remove('mobile-detail-open');
   });
-  detail.querySelectorAll('details.collapsible').forEach((d, i) => { if (openStates.has(i)) d.open = openStates.get(i); });
+  detail.querySelectorAll(otherDetails).forEach((d, i) => { if (openStates.has(i)) d.open = openStates.get(i); });
   const jsonBtn = $('#json-mode-btn');
   if (jsonBtn) jsonBtn.addEventListener('click', () => {
     state.sessionJsonMode = state.sessionJsonMode === s.id ? null : s.id;

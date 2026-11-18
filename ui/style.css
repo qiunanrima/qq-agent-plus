@@ -927,6 +927,11 @@ html[data-glass='liquid'] .chat-item.selected { padding-left: 17px; }
 .collapsible > summary::before { content: '▸ '; }
 .collapsible[open] > summary::before { content: '▾ '; }
 .collapsible .coll-body { padding: 4px 14px 12px; white-space: pre-wrap; font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); line-height: 1.65; max-height: 300px; overflow-y: auto; }
+.chat-decisions > summary { cursor: pointer; padding: 8px 14px; }
+.chat-decisions > summary::before { content: none; }
+.chat-decisions .coll-body { white-space: normal; font-family: inherit; overflow-wrap: anywhere; }
+.chat-decisions ol { margin: 0; padding-inline-start: 1.4em; }
+.chat-decisions li + li { margin-top: 6px; }
 .memory-handoff .coll-body { max-height: none; overflow: visible; white-space: normal; font-family: inherit; color: var(--text); font-size: var(--fs-md); line-height: 1.6; }
 /* 表单区不再是一整块死白：跟页面其他表面一样带一点透感，但**不加 backdrop-filter**
    （父级已经是玻璃，嵌套会让子层采到空 backdrop root，整块发白）。 */

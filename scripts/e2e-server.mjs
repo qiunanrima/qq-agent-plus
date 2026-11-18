@@ -181,6 +181,10 @@ app.store.appendIncoming(`group:${E2E_GROUP}`, {
   ts: Date.now() - 60 * 60 * 1000
 }, { recordOnly: true });
 const e2eScope = `group:${E2E_GROUP}`;
+app.store.recordChatDecision(e2eScope, { at: Date.now() - 2000, outcome: 'skipped', reason: '未触发', percent: 0, messageCount: 1 });
+app.store.recordChatDecision(e2eScope, { at: Date.now() - 1000, outcome: 'replied', reason: '被艾特', messageCount: 1, sentCount: 1 });
+const e2eSession = app.sessions.create({ chatKey: e2eScope, trigger: [], triggerSummary: '测试会话决策' });
+app.sessions.finish(e2eSession.id, 'done');
 await app.livingMemory.create({
   scopeKey: e2eScope,
   type: 'project',

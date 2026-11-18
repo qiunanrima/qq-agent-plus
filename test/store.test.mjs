@@ -17,6 +17,22 @@ describe('ChatStore', () => {
     return store.appendIncoming('group:1', { mid, text, senderId: '42', senderName: 'member' });
   }
 
+  it('keeps decision history bounded, per chat, and persistent until the archive is cleared', (t) => {
+    const { store, dir } = fixture(t);
+    store.recordChatDecision('group:2', { at: 0, outcome: 'skipped' });
+    for (let i = 1; i <= 21; i += 1) store.recordChatDecision('group:1', { at: i, outcome: 'replied' });
+    assert.deepEqual(store.recentChatDecisions('group:1', 21).map((item) => item.at),
+      Array.from({ length: 20 }, (_, i) => 21 - i));
+    for (let i = 3; i <= 482; i += 1) store.recordChatDecision(`group:${i}`, { at: i, outcome: 'noreply' });
+    const reopened = new ChatStore(0, { dataDir: dir });
+    try {
+      assert.deepEqual(reopened.recentChatDecisions('group:2'), []);
+      assert.deepEqual(reopened.recentChatDecisions('group:1', 2).map((item) => item.at), [21, 20]);
+      reopened.clearAllArchive();
+      assert.deepEqual(store.recentChatDecisions('group:1'), []);
+    } finally { reopened.close(); }
+  });
+
   it('deduplicates replayed messages and preserves pagination order', (t) => {
     const { store } = fixture(t);
     append(store, 1);

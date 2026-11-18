@@ -700,7 +700,7 @@ describe('Orchestrator', () => {
   });
 
   it('records why a batch was skipped for the console', async (t) => {
-    const { runner, cfg, append } = fixture(t);
+    const { runner, cfg, append, store } = fixture(t);
     cfg.store.randomPercent = 0;
     append(1, '普通群消息');
     await runner.wake('group:1');
@@ -709,6 +709,12 @@ describe('Orchestrator', () => {
     assert.equal(decision.percent, 0);
     assert.equal(typeof decision.reason, 'string');
     assert.ok(decision.at > 0);
+    assert.equal(decision.outcome, 'skipped');
+    assert.equal(decision.messageCount, 1);
+    assert.equal(JSON.stringify(decision).includes('普通群消息'), false);
+    append(2, '另一条普通群消息');
+    await runner.wake('group:1');
+    assert.equal(store.recentChatDecisions('group:1').length, 2);
   });
 
   it('only acknowledges the claimed batch after successful model processing', async (t) => {
@@ -725,6 +731,7 @@ describe('Orchestrator', () => {
     assert.equal(calls, 1);
     assert.equal(store.findByMid('group:1', 1).read, true);
     assert.equal(store.findByMid('group:1', 2).read, false);
+    assert.equal(store.recentChatDecisions('group:1', 1)[0].outcome, 'noreply');
   });
 
   it('preserves failed input and recorded token usage without clearing a run', async (t) => {
@@ -2180,6 +2187,9 @@ describe('Orchestrator', () => {
     const latest = sessions.get(sessions.listSummaries(1)[0].id);
     assert.equal(latest.status, 'done');
     assert.equal(latest.sent.length, 2);
+    const [decision] = store.recentChatDecisions('group:1');
+    assert.equal(decision.outcome, 'replied');
+    assert.equal(decision.sentCount, 2);
     assert.equal(latest.budgetStopped, true);
     assert.equal(latest.budgetStopReason, 'next-call-budget');
     assert.equal(latest.usage.totalTokens, 124711);

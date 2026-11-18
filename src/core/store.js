@@ -121,6 +121,10 @@ export class ChatStore {
       );
       CREATE INDEX IF NOT EXISTS thread_turns_lookup
         ON thread_turns(thread_id, sequence);
+      CREATE TABLE IF NOT EXISTS chat_decisions (
+        id INTEGER PRIMARY KEY, chat_key TEXT NOT NULL, decision_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS chat_decisions_recent ON chat_decisions(chat_key, id DESC);
       CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
       -- 出站副作用账本（docs/EFFECT-LEDGER.md）：所有"对外做了一件事"的操作
       -- 在执行前 planned、结果确定后结算；unknown 是终态，绝不自动重试。
@@ -1219,7 +1223,7 @@ export class ChatStore {
     return this.#transaction(() => {
       const messages = Number(this.db.prepare('SELECT COUNT(*) AS n FROM messages').get().n);
       const context = this.clearAllContext();
-      this.db.exec('DELETE FROM messages; UPDATE chats SET message_count=0;');
+      this.db.exec('DELETE FROM messages; DELETE FROM chat_decisions; UPDATE chats SET message_count=0;');
       // 保留 next_id 和外部发送账本，避免旧引用撞上新消息或未知发送被再次执行。
       return { messages, legacyFiles: legacy.length, ...context };
     });
@@ -1230,6 +1234,25 @@ export class ChatStore {
       this.db.exec('DELETE FROM thread_turns; DELETE FROM thread_checkpoints; DELETE FROM conversation_threads;');
       return { threads };
     });
+  }
+
+  recordChatDecision(chatKey, decision) {
+    this.#transaction(() => {
+      this.db.prepare('INSERT INTO chat_decisions (chat_key, decision_json) VALUES (?, ?)')
+        .run(chatKey, JSON.stringify(decision));
+      this.db.prepare(`DELETE FROM chat_decisions WHERE chat_key=? AND id < (
+        SELECT id FROM chat_decisions WHERE chat_key=? ORDER BY id DESC LIMIT 1 OFFSET 19
+      )`).run(chatKey, chatKey);
+      this.db.exec(`DELETE FROM chat_decisions WHERE id < (
+        SELECT id FROM chat_decisions ORDER BY id DESC LIMIT 1 OFFSET 499
+      )`);
+    });
+  }
+
+  recentChatDecisions(chatKey, limit = 10) {
+    const count = Math.max(1, Math.min(20, Math.floor(Number(limit)) || 10));
+    return this.db.prepare(`SELECT decision_json FROM chat_decisions WHERE chat_key=?
+      ORDER BY id DESC LIMIT ?`).all(chatKey, count).map((row) => JSON.parse(row.decision_json));
   }
 
   appendThreadTurns(chatKey, threadId, runId, messages = []) {

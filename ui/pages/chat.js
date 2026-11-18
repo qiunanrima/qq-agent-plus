@@ -15,6 +15,7 @@ import {
   sliderToTierUI_tierToSlider
 } from '../core/format.js';
 import { state } from '../core/state.js';
+import { bindDecisionHistory, refreshDecisionHistory, renderDecisionHistory } from './chat-decisions.js';
 
 /** 主动开话题的一个时段行（新增/删除共用同一份 HTML，避免两处漂移）。 */
 export function proactiveWindowRowHtml(window = {}) {
@@ -875,6 +876,7 @@ async function searchArchivedPerson(offset = 0) {
  */
 async function loadChatMessages(key, { keepView = false } = {}) {
   const epoch = state.chatArchiveEpoch;
+  if (keepView) refreshDecisionHistory($('#chat-detail'));
   // 注册给滚动加载器（模块求值期不碰 state：真 ESM 环境里有 TDZ / 环引用风险）
   state.chatLoadOlder = loadOlderChatMessages;
   try {
@@ -970,11 +972,13 @@ function renderChatMessages() {
     ? `${meta.thread.mode} · ${meta.thread.state} · v${meta.thread.version}`
     : '无活动线程';
 
+  const previousDecisions = detail.querySelector('[data-chat-decisions]');
   detail.innerHTML = `
     <div class="detail-header">
       <h2>${esc(name)} ${meta.unread ? `<span class="unread-pill">${meta.unread} 未读</span>` : ''}</h2>
       <div class="sub"><span data-field="chat-msg-count"></span><span>${esc(threadStatus)}</span></div>
     </div>
+    ${renderDecisionHistory(key)}
     <div class="chat-toolbar">
       <button class="btn btn-small" id="chat-wake-btn">主动唤醒</button>
       ${key.startsWith('group:') && state.config?.incidentPilot?.enabled === true
@@ -992,6 +996,7 @@ function renderChatMessages() {
     <div class="list-more muted" id="chat-msg-more"></div>`;
 
   // 工具栏事件：只在这里绑一次
+  bindDecisionHistory(detail, previousDecisions);
   $('#chat-wake-btn').addEventListener('click', async () => {
     const button = $('#chat-wake-btn');
     const result = $('#chat-wake-result');

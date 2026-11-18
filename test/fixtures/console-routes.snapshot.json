@@ -397,6 +397,24 @@
   },
   {
     "method": "GET",
+    "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/decisions$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/^\\/api\\/chats\\/(group|private)_(wechat_[a-f0-9]{64})\\/decisions$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/^\\/api\\/chats\\/(private)_(bilibili_[1-9]\\d{0,24}_[1-9]\\d{0,24})\\/decisions$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
     "path": "/^\\/api\\/chats\\/(group|private)_(\\d+)\\/messages$/",
     "auth": true,
     "keyEndpoint": false
@@ -1130,6 +1148,12 @@
   {
     "method": "GET",
     "path": "/api/personality-memory/status",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/memory/shared-experiences",
     "auth": true,
     "keyEndpoint": false
   },
