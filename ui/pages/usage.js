@@ -15,6 +15,10 @@ import {
 } from '../core/format.js';
 import { state } from '../core/state.js';
 import { openPriceDialog } from './settings.js';
+const FEATURE_LABELS = { chat: '聊天', hippocampus: '海马消化', 'personality-extract': '人格提取',
+  'personality-review': '人格核验', 'living-memory': '长期记忆提炼', 'memory-consolidation': '记忆整理',
+  'group-digest': '群日报', 'admin-briefing': '管理员早报', perception: '感知唤醒', subagent: '子代理',
+  external: '其他后台', unattributed: '历史未分类' };
 /** 设置页「远程价格表」状态行：来源（在线/缓存/内置）、时间、条目数、错误。 */
 /**
  * 渠道价目表列表（设置页）：每个渠道的地址、条数、上次时间、错误 + 拉取/删除。
@@ -671,8 +675,10 @@ function renderUsagePage(stats, st, prices) {
           <tbody></tbody>
         </table>
       </div>
-    </div>`;
-
+    </div>
+  <section data-block="features"><h3 class="usage-h3">今日按功能</h3>
+    <p>统计今日，包含运行中的聊天；升级前用途未知的费用列为历史未分类。调用次数按模型请求计，不等于聊天轮数。</p>
+    <table class="usage-table" data-table="features"><thead><tr><th>功能</th><th class="r">调用</th><th class="r">Token</th><th class="r">成本</th></tr></thead><tbody></tbody></table></section>`;
   // 「调用次数」卡片可点开明细（骨架重建后重新绑定，所以放在 renderUsagePage 里）
   const runsCard = $('#usage-page #runs-card');
   if (runsCard) runsCard.addEventListener('click', () => openToolBreakdown());
@@ -1038,6 +1044,11 @@ function updateUsagePage(stats, st, prices) {
       <td class="r">${((m.cacheHitRate || 0) * 100).toFixed(0)}%</td>
       <td class="r">${costCell(m)}</td>
     </tr>`, { collapsible: true, expandBtn: '#models-expand' });
+  const features = Object.entries(stats?.features || {}).map(([key, row]) => ({ ...row, key }))
+    .sort((a, b) => (Number(b.cost) || 0) - (Number(a.cost) || 0));
+  fill('features', features, row => `<tr data-key="${esc(row.key)}"><td>${esc(FEATURE_LABELS[row.key] || row.key)}</td>
+    <td class="r">${Number(row.calls) || 0}</td><td class="r">${fmtTok(Number(row.tokens) || 0)}</td>
+    <td class="r">${row.unpricedCalls ? `${fmtYuan(Number(row.cost) || 0)} + ${Number(row.unpricedCalls)}次未计价` : fmtYuan(Number(row.cost) || 0)}</td></tr>`);
 }
 
 async function loadUsageView({ force = false } = {}) {

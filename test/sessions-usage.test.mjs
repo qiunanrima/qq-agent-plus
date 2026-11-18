@@ -13,6 +13,28 @@ process.on('exit', () => { try { fs.rmSync(dataDir, { recursive: true, force: tr
 const { SessionRegistry } = await import('../src/core/sessions.js');
 const { setRuntimeConfig, DEFAULT_CONFIG } = await import('../src/core/config.js');
 const { todayKey } = await import('../src/core/util.js');
+const { featureSnapshot } = await import('../src/core/usage-features.js');
+
+test('历史未分类、后台来源和在途聊天按功能分摊且不丢原始台账', () => {
+  const cfg = structuredClone(DEFAULT_CONFIG); cfg.api.model = 'deepseek-chat'; setRuntimeConfig(cfg);
+  const reg = new SessionRegistry(0);
+  reg.recordExternalUsage({ promptTokens: 100, completionTokens: 10, totalTokens: 110, calls: 1 }, { source: 'personality-review', model: 'deepseek-chat' });
+  reg.recordExternalUsage({ promptTokens: 200, completionTokens: 20, totalTokens: 220, calls: 1 }, { source: 'group-digest', model: 'deepseek-chat' });
+  reg.current.set('in-flight', { usage: { promptTokens: 300, completionTokens: 30, totalTokens: 330, calls: 3 }, model: 'deepseek-chat' });
+  const usage = reg.todayUsage(todayKey());
+  assert.equal(usage.byFeature['personality-review'].tokens, 110);
+  assert.equal(usage.byFeature['group-digest'].tokens, 220);
+  assert.equal(usage.byFeature.chat.calls, 3);
+  assert.equal(Object.values(usage.byFeature).reduce((sum, row) => sum + row.tokens, 0), usage.totalTokens);
+  assert.ok(Math.abs(Object.values(usage.byFeature).reduce((sum, row) => sum + row.cost, 0) - usage.estimatedYuan) < 1e-10);
+  const ledger = fs.readFileSync(path.join(dataDir, 'external-usage', `${todayKey()}.jsonl`), 'utf8');
+  assert.match(ledger, /personality-review/); assert.match(ledger, /group-digest/);
+  const old = { totalTokens: 1000, estimatedYuan: 2, byFeature: { chat: { tokens: 200, cost: 0.5 } } };
+  assert.equal(featureSnapshot(old).unattributed.tokens, 800);
+  assert.equal(featureSnapshot(old).unattributed.cost, 1.5);
+  assert.equal(old.byFeature.unattributed, undefined);
+  fs.rmSync(path.join(dataDir, 'usage-today.json'), { force: true });
+});
 
 test('todayUsage 计入在途会话的估算金额', () => {
   // 固定时钟：deepseek-flash 有峰谷价、todayKey 还会跨午夜；两次调用恰好跨过边界时

@@ -3,6 +3,7 @@
 // data/sessions/.sessions-index.jsonl（追加式摘要日志），启动只读它，不再全量解析留档。
 import fs from 'node:fs';
 import { appendExternalUsage } from './external-usage.js';
+import { addFeatureUsage, featureSnapshot, usageFeature } from './usage-features.js';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
@@ -831,6 +832,7 @@ export class SessionRegistry {
     // 由集成用例抓到）。
     let estimatedYuan = 0;
     let unpricedRuns = 0;
+    let byFeature = {};
     // 结束的会话记在汇总文件里
     try {
       const data = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'usage-today.json'), 'utf8'));
@@ -843,6 +845,7 @@ export class SessionRegistry {
         webSearchCount = data.webSearchCount || 0;
         estimatedYuan = Number(data.estimatedYuan) || 0;
         unpricedRuns = Number(data.unpricedRuns) || 0;
+        byFeature = featureSnapshot(data);
       }
     } catch { /* 无记录 */ }
     // 加上运行中的。token 与**估算金额**都要加：只加 token 时，并发运行的会话在结束落盘前
@@ -871,10 +874,11 @@ export class SessionRegistry {
         });
         const cost = Number(est?.cost) || 0;
         estimatedYuan += cost;
+        addFeatureUsage(byFeature, 'chat', { totalTokens: total, calls: usage.calls || (total ? 1 : 0), cost, unpriced: est?.unpriced === true && total > 0 });
         if (total > 0 && est?.unpriced === true) unpricedRuns += 1;
       } catch { /* 估价失败不影响 token 统计（最坏情况＝这项当天少算） */ }
     }
-    return { dayKey, promptTokens, completionTokens, totalTokens, cachedTokens, runs, webSearchCount, estimatedYuan, unpricedRuns };
+    return { dayKey, promptTokens, completionTokens, totalTokens, cachedTokens, runs, webSearchCount, estimatedYuan, unpricedRuns, byFeature };
   }
 
   /** 在会话结束时累加今日用量。 */
@@ -893,7 +897,7 @@ export class SessionRegistry {
       cachedTokens: Number(s.usage?.cachedTokens) || 0,
       runs: 1,
       webSearchCount: Number(s.webSearchCount) || 0
-    }, { model: s.model, vendor: s.vendor });
+    }, { model: s.model, vendor: s.vendor, feature: 'chat', calls: s.usage?.calls || 1 });
   }
 
   /**
@@ -901,7 +905,7 @@ export class SessionRegistry {
    * —— 控制台"今日花费"与预算判定都偏乐观（2026-10-07 复审 P3）。
    * 与 #bumpTodayUsage 共用同一份文件与估价口径，但不计 runs（不是一次会话运行）。
    */
-  recordExternalUsage(usage, { model = '', vendor = '', source = 'auxiliary' } = {}) {
+  recordExternalUsage(usage, { model = '', vendor = '', source = 'auxiliary', feature = '' } = {}) {
     const totalTokens = Number(usage?.totalTokens) || 0;
     if (!(totalTokens > 0)) return;
     const cfg = getConfig();
@@ -918,23 +922,25 @@ export class SessionRegistry {
       cachedTokens: Number(usage.cachedTokens) || 0,
       runs: 0,
       webSearchCount: 0
-    }, { model, vendor });
+    }, { model, vendor, feature: usageFeature(source, feature), calls: usage.calls || 1 });
   }
 
   /** 把一份用量增量并进 usage-today.json（读盘合并 → 估算金额 → 原子落盘）。 */
-  #mergeTodayUsage(delta, { model = '', vendor = '' } = {}) {
+  #mergeTodayUsage(delta, { model = '', vendor = '', feature = 'chat', calls = 1 } = {}) {
     const dayKey = todayKey(Date.now());
     let data = { dayKey, promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, runs: 0, webSearchCount: 0 };
     try {
       const parsed = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'usage-today.json'), 'utf8'));
       if (parsed?.dayKey === dayKey) data = parsed;
     } catch { /* 新的一天 */ }
+    data.byFeature = featureSnapshot(data);
     data.promptTokens += delta.promptTokens;
     data.completionTokens += delta.completionTokens;
     data.totalTokens += delta.totalTokens;
     data.cachedTokens = (data.cachedTokens || 0) + delta.cachedTokens;
     data.runs += delta.runs;
     data.webSearchCount = (data.webSearchCount || 0) + delta.webSearchCount;
+    let featureCost = 0, featureUnpriced = false;
     // 估算金额（改进方案 #8/J.3）：按实际模型估价；价格缺失记 0 并计 unpricedRuns
     // —— budgetStatus 会把它暴露给控制台，防"没价＝永远不超限"的静默失效。
     try {
@@ -947,9 +953,11 @@ export class SessionRegistry {
         vendor: vendor || vendorOfConfig(cfgNow)
       });
       const cost = Number(est?.cost) || 0;
+      featureCost = cost; featureUnpriced = delta.totalTokens > 0 && est?.unpriced === true;
       data.estimatedYuan = (Number(data.estimatedYuan) || 0) + cost;
       if (delta.totalTokens > 0 && est?.unpriced === true) data.unpricedRuns = (Number(data.unpricedRuns) || 0) + 1;
     } catch { /* 估价失败不影响用量累加（最坏情况＝这项当天少算） */ }
+    addFeatureUsage(data.byFeature, usageFeature('', feature), { totalTokens: delta.totalTokens, calls, cost: featureCost, unpriced: featureUnpriced });
     const tmp = path.join(DATA_DIR, `usage-today.json.${process.pid}.tmp`);
     try { fs.rmSync(tmp, { force: true }); } catch { /* 不存在就算了 */ }
     fs.writeFileSync(tmp, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 });

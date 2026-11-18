@@ -345,3 +345,37 @@ test('容量和旧模式正文预算仍受限；过长证据不截断后核验',
   await assert.rejects(f.capture({ kind: 'preference', topic: '长消息', content: '新内容',
     evidence: [{ messageId: f.say('group:1', long).messageId, quote: '这是一段很长的证据。' }] }), /消息过长/);
 });
+
+test('后天习惯跨日积累，原有偏好仍独立保留', async (t) => {
+  const { capture, preference, memory } = fixture(t);
+  const old = await capture(preference());
+  const before = memory.list().find(row => row.id === old.id);
+  const content = '我现在习惯先问对方想不想听建议';
+  const habit = days => ({ ...preference(content, 'group:1', days), kind: 'habit', topic: '倾听' });
+  const first = await capture(habit(1));
+  assert.equal(first.status, 'tentative');
+  const second = await capture(habit(0));
+  assert.equal(second.id, first.id);
+  assert.equal(second.status, 'active');
+  assert.deepEqual(memory.list().find(row => row.id === old.id), before);
+});
+
+test('共同经历按记忆入口查询，两种召回模式均只在经历分区展示正文', async (t) => {
+  const { memory, cfg, capture, say } = fixture(t);
+  const chatKey = 'group:1';
+  const content = '一起聊过钢琴曲';
+  const { id } = await capture({ kind: 'experience', topic: '音乐', content, evidence: [
+    say(chatKey, '我们聊聊钢琴曲'), say(chatKey, '我也喜欢这一首', { self: false })
+  ] });
+  const read = (name) => JSON.parse(memory.toolDefs({ chatKey, persona })
+    .find(tool => tool.name === name).execute({}, { id }).content);
+  assert.equal(read('shared_experience_lookup').content, content);
+  assert.ok(read('personality_lookup').error);
+  assert.equal(memory.list({ kind: 'experience' })[0].id, id);
+  for (const enabled of [true, false]) {
+    cfg.memory.hippocampusEnabled = enabled;
+    const [traits, experiences] = memory.prompt({ chatKey, persona }).split('【记忆 · 共同经历】');
+    assert.ok(!traits.includes(content));
+    assert.ok(experiences.includes(content));
+  }
+});

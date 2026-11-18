@@ -156,7 +156,7 @@ export class AgentWechatChannel {
         execute: (ctx, args) => readWechatImages(this, key, ctx, args) };
       if (def.name === 'send_message') return { ...def, description: '向当前微信私聊发送文字；messages 为字符串或字符串数组，不可指定其他目标。',
         parameters: { type: 'object', properties: { messages: def.parameters.properties.messages }, required: ['messages'] } };
-      if (!['memory_query', 'person_memory_lookup', 'memory_card_list', 'memory_card_lookup', 'hippocampus_lookup', 'personality_lookup'].includes(def.name)) return def;
+      if (!['memory_query', 'person_memory_lookup', 'memory_card_list', 'memory_card_lookup', 'hippocampus_lookup', 'personality_lookup', 'shared_experience_lookup'].includes(def.name)) return def;
       return { ...def, execute: async (ctx, args = {}) => {
         if (!this.allowed(key) || ctx.signal?.aborted) return { isError: true, reportIncident: false, content: '当前微信会话已停止。' };
         if (key.startsWith('group:') && ['memory_query', 'person_memory_lookup'].includes(def.name)) {

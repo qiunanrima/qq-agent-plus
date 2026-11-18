@@ -330,6 +330,12 @@
     "keyEndpoint": false
   },
   {
+    "method": "GET",
+    "path": "/api/history/person",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "POST",
     "path": "/api/runtime",
     "auth": true,
@@ -889,6 +895,12 @@
   },
   {
     "method": "GET",
+    "path": "/api/memory/insights",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
     "path": "/api/memory/search",
     "auth": true,
     "keyEndpoint": false
@@ -944,6 +956,12 @@
   {
     "method": "GET",
     "path": "/api/living-memory/status",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/living-memory/last-recall",
     "auth": true,
     "keyEndpoint": false
   },
@@ -1112,6 +1130,12 @@
   {
     "method": "GET",
     "path": "/api/personality-memory/status",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/personality-memory/collect",
     "auth": true,
     "keyEndpoint": false
   },

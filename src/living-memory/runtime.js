@@ -5,6 +5,7 @@ import { safeSlice } from '../core/util.js';
 import { readLivingMemoryEmbeddingConfig } from './embedding.js';
 import { livingMemoryScopeAllowed, normalizeLivingMemoryConfig } from './config.js';
 import { LivingMemoryService } from './service.js';
+import { explainRecall } from './explain.js';
 import { ForgettingStore } from '../memory/forgetting.js';
 
 const SENSITIVE = /(?:密码|口令|验证码|密钥|token|api[ _-]?key|access[ _-]?key|secret|pass(?:word)?|cvv|银行卡|卡号|身份证|护照|家庭住址|详细地址|病历|诊断|病情|政治立场|投票意向)/i;
@@ -173,6 +174,7 @@ export class LivingMemoryRuntime {
       const entries = this.forgetting.rank('semantic', Array.isArray(result?.entries) ? result.entries : [], { automatic: !explicit });
       const context = renderContext(entries, cfg.maxInjectChars);
       const view = { at: Date.now(), query: cleanText(query, 1000), entries, mode: result?.mode || 'unknown', vectorError: result?.vectorError || '' };
+      view.injectedText = cfg.mode === 'active' ? context : '';
       this.lastRecall.set(chatKey, view);
       this.emit('living-memory-update', { chatKey, phase: 'recall', count: entries.length, mode: view.mode });
       return { text: cfg.mode === 'active' ? context : '', entries, mode: cfg.mode, audit: view };
@@ -369,7 +371,12 @@ export class LivingMemoryRuntime {
       deadlineMs: cfg.recallTimeoutMs,
       semantic: true
     });
-    return { ...result, injectedText: renderContext(result.entries || [], cfg.maxInjectChars) };
+    return explainRecall({ ...result, injectedText: renderContext(result.entries || [], cfg.maxInjectChars) }, service.store);
+  }
+
+  explainLastRecall(chatKey) {
+    if (!this.applies(chatKey)) return null;
+    return explainRecall(this.lastRecall.get(chatKey) || null, this.#service({ create: false })?.store);
   }
 
   stop() {

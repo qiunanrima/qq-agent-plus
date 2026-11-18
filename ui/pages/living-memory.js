@@ -341,8 +341,10 @@ function renderRecall(result) {
   if (!result) return '<div class="lm-empty">输入问题后运行测试；结果会显示最终注入文本和排序理由。</div>';
   if (result.error) return `<div class="skills-error">${esc(result.error)}</div>`;
   const rows = (result.entries || []).map((entry) => `<article class="lm-recall-row">
-    <div><strong>${esc(entry.summary)}</strong><p>${esc(entry.content)}</p></div>
-    <div><span>综合 ${Number(entry.retrieval?.score || 0).toFixed(3)}</span><small>语义 ${Number(entry.retrieval?.semantic || 0).toFixed(3)} · 关键词 ${Number(entry.retrieval?.lexical || 0)}</small></div>
+    <div><strong>${esc(entry.summary)}</strong><p>${esc(entry.content)}</p>
+      ${(entry.sourceTurns || []).length ? `<details><summary>来源回合</summary>${entry.sourceTurns.map(turn => `<div style="overflow-wrap:anywhere"><small>${esc(turn.scopeKey)} · ${esc(turn.sessionId || turn.id)}</small>${turn.lines.map(line => `<p>${esc(line.sender)}：${esc(line.text)}</p>`).join('')}</div>`).join('')}</details>` : ''}</div>
+    <div><span>综合 ${Number(entry.retrieval?.score || 0).toFixed(3)}</span><small>语义 ${Number(entry.retrieval?.semantic || 0).toFixed(3)} · 关键词 ${Number(entry.retrieval?.lexical || 0)}</small>
+      <small>${Object.entries(entry.retrieval || {}).filter(([key]) => !['score', 'semantic', 'lexical'].includes(key)).map(([key, value]) => `${esc(key)} ${esc(typeof value === 'number' ? value.toFixed(3) : String(value))}`).join(' · ')}</small></div>
   </article>`).join('');
   return `<div class="lm-recall-note"><strong>${esc(recallModeLabel(result.mode))}</strong>${result.vectorError ? ` · 向量降级：${esc(result.vectorError)}` : ''}</div>
     ${rows || '<div class="lm-empty">没有匹配记忆。</div>'}
@@ -358,6 +360,7 @@ function recallHtml() {
       <select id="lm-recall-scope" aria-label="召回测试范围">${scopeOptionsHtml(selectedScope()) || '<option value="">暂无会话</option>'}</select>
       <input id="lm-query" value="${esc(lm().query || '')}" placeholder="输入问题或关键词，例如：之前讨论过 NAS 向量记忆吗？" aria-label="召回测试问题" />
       <button type="button" class="btn btn-primary" id="lm-test">测试召回</button>
+      <button type="button" class="btn btn-small" id="lm-last-recall">最近自动检索</button>
     </div>
     <div id="lm-recall-result">${renderRecall(lm().recallResult)}</div>
   </section>`;
@@ -652,6 +655,15 @@ function bindPage(box) {
     if (event.target.closest('#lm-create')) { await createMemory(event.target.closest('#lm-create')); return; }
     if (event.target.closest('#lm-save-config')) { await saveConfig(event.target.closest('#lm-save-config')); return; }
     if (event.target.closest('#lm-test')) { await runRecallTest(event.target.closest('#lm-test')); return; }
+    if (event.target.closest('#lm-last-recall')) {
+      const button = event.target.closest('#lm-last-recall'); button.disabled = true;
+      try {
+        const data = await api(`/api/living-memory/last-recall?chatKey=${encodeURIComponent(selectedScope())}`);
+        lm().recallResult = data.result || { entries: [], mode: '', error: '暂无自动检索记录，重启后记录为空。实际采用请在会话记忆的召回解释中查看。' };
+      } catch (error) { lm().recallResult = { error: error.message }; }
+      finally { button.disabled = false; const host = $('#lm-recall-result'); if (host) host.innerHTML = renderRecall(lm().recallResult); }
+      return;
+    }
     if (event.target.closest('[data-lm-back]')) {
       lm().detail = null;
       lm().selectedMemoryId = '';

@@ -7,7 +7,7 @@ import { normalizeSubagentConfig, SUBAGENT_LIMITS as limits } from './config.js'
 const readTools = new Set([
   'search_history', 'get_recent_messages', 'get_message_detail',
   'search_web', 'fetch_url', 'knowledge_search', 'memory_query', 'person_memory_lookup',
-  'persona_background_lookup', 'personality_lookup', 'hippocampus_lookup',
+  'persona_background_lookup', 'personality_lookup', 'shared_experience_lookup', 'hippocampus_lookup',
   'memory_card_list', 'memory_card_lookup', 'semantic_memory_lookup'
 ]);
 const errorResult = (content) => ({ content, isError: true, reportIncident: false });
