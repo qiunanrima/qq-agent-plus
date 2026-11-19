@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { DATA_DIR, getConfig } from '../core/config.js';
 import { personaKeyOf, personaStateSnapshot } from '../core/persona-state.js';
-import { minuteOfDayInZone } from '../core/util.js';
+import { minuteOfDayInZone, shanghaiDayStart } from '../core/util.js';
 import { openDatabase } from '../core/sqlite.js';
 
 const file = path.join(DATA_DIR, 'character-life.sqlite');
@@ -45,10 +45,14 @@ function summarize(rows, now, legacy) {
     '愤怒': bound(5 + 12 * tension), '精力': energy, '安全感': bound(65 + 6 * comfort - 9 * tension),
     '孤独感': bound(22 - 4 * comfort) };
 }
-function activeGoals(rows, now) {
+function activeGoals(db, role, now, chat = null) {
+  const kinds = [...Object.keys(goals), '回应邀约'];
+  const scope = chat === null ? '' : ' AND chat=?';
+  const rows = db.prepare(`SELECT * FROM events WHERE role=? AND at BETWEEN ? AND ?
+    AND kind IN (${kinds.map(() => '?').join(',')})${scope} ORDER BY at DESC,rowid DESC`)
+    .all(role, now - 3 * day, now, ...kinds, ...(chat === null ? [] : [chat]));
   const seen = new Set();
   return rows.filter(row => {
-    if (now - row.at > 3 * day || (!goals[row.kind] && row.kind !== '回应邀约')) return false;
     const scope = JSON.stringify([row.chat,row.actor]);
     if (seen.has(scope)) return false;
     seen.add(scope);
@@ -85,7 +89,7 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
     db.exec('COMMIT');
     const rows = recent(db,role,now);
     const mood = summarize(rows,now,personaStateSnapshot(persona,now));
-    const goal = activeGoals(rows,now).find(row => row.chat === chatKey && triggerEntries.some(entry => String(entry.senderId) === row.actor));
+    const goal = activeGoals(db, role, now, chatKey).find(row => triggerEntries.some(entry => String(entry.senderId) === row.actor));
     return [mood['精力'] < 40 ? '这会儿容易困，语气可以轻一些。' : '', mood['愤怒'] > 15 ? '此刻有点不快。' : mood['愉悦'] > 56 ? '此刻心情轻快。' : '', goal ? '这个会话里有个近期邀约：'+goal.title+'。话题合适时可以接续。' : ''].filter(Boolean).join(' ');
   } finally { db.close(); }
 }
@@ -99,7 +103,7 @@ export function lifeStatus(now = Date.now()) {
       const legacy = personaStateSnapshot({templateId:role},now);
       const associations = db.prepare('SELECT e.chat,e.actor,l.memory,count(*) AS count FROM links l JOIN events e ON e.id=l.event WHERE e.role=? AND e.at>=? GROUP BY e.chat,e.actor,l.memory ORDER BY count DESC LIMIT 20').all(role,now - 7 * day);
       const reflections = db.prepare('SELECT date,kind,count FROM reflections WHERE role=? ORDER BY date DESC,count DESC LIMIT 16').all(role);
-      return { role, reflections, dimensions:summarize(rows,now,legacy), goals:activeGoals(rows,now), associations, events:rows.slice(0,24) };
+      return { role, reflections, dimensions:summarize(rows,now,legacy), goals:activeGoals(db, role, now), associations, events:rows.slice(0,24) };
     });
     return { enabled: cfg.characterLife?.enabled === true, profiles, rhythm:Array.from({length:24},(_,h)=>rhythm(h*60)) };
   } finally { db?.close(); }
@@ -119,8 +123,13 @@ export function claimInitiative(persona, chat, now = Date.now()) {
   if (!getConfig().characterLife?.enabled || !fs.existsSync(file) || rhythm(minuteOfDayInZone(now)) < 40) return '';
   const db = openDatabase(file);
   try {
-    const goal = activeGoals(recent(db,personaKeyOf(persona),now),now).find(row => row.chat===chat && now-row.at >= 8*hour);
-    if (!goal || !db.prepare('INSERT OR IGNORE INTO initiatives VALUES(?)').run(goal.id).changes) return '';
+    db.exec('BEGIN IMMEDIATE');
+    const claimed = db.prepare('SELECT 1 FROM initiatives WHERE event=?');
+    const goal = activeGoals(db, personaKeyOf(persona), now, chat)
+      .find(row => now - row.at >= 8 * hour && !claimed.get(row.id));
+    const inserted = goal && db.prepare('INSERT OR IGNORE INTO initiatives VALUES(?)').run(goal.id).changes;
+    db.exec('COMMIT');
+    if (!inserted) return '';
     return '本次主动聊天可以接续此前的邀约：'+goal.title+'。';
   } finally { db.close(); }
 }
@@ -130,8 +139,9 @@ export function reflectLife(now = Date.now()) {
   const db = openDatabase(file);
   try {
     db.exec('BEGIN IMMEDIATE');
+    const today = shanghaiDayStart(now);
     db.prepare(`INSERT OR REPLACE INTO reflections SELECT role,date(at/1000,'unixepoch','+8 hours'),kind,count(*)
-      FROM events WHERE at>=? AND at<? AND date(at/1000,'unixepoch','+8 hours') < date(?/1000,'unixepoch','+8 hours') GROUP BY role,date(at/1000,'unixepoch','+8 hours'),kind`).run(now-6*day,now,now);
+      FROM events WHERE at>=? AND at<? GROUP BY role,date(at/1000,'unixepoch','+8 hours'),kind`).run(today - 6 * day, today);
     db.prepare("DELETE FROM reflections WHERE date < date(?/1000,'unixepoch','+8 hours','-30 days')").run(now);
     db.prepare('DELETE FROM events WHERE at<?').run(now-7*day);
     db.exec('COMMIT');
