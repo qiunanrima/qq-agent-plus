@@ -6,7 +6,7 @@ import test from 'node:test';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(),'qqa-life-'));
 process.env.QQ_AGENT_DATA_DIR = dir;
 const { updateConfig } = await import('../src/core/config.js');
-const { lifeStatus, observeLife, linkedMemories, claimInitiative, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
+const { lifeStatus, observeLife, linkedMemories, claimInitiative, analyzeLife, lifeWillingness, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 test('启停、去重、会话隔离、动机完成和可视化数据', () => {
   const now=Date.now();
@@ -85,4 +85,31 @@ test('上海自然日的最早重算日期不会被半天计数覆盖', () => {
   assert.equal(count(), 2);
   reflectLife(now);
   assert.equal(count(), 2);
+});
+
+test('语境分析保留原话门槛，动机只由对应参与者的具体进展完成', async () => {
+  updateConfig({ characterLife: { enabled: true } });
+  const chat = 'group:1';
+  const promise = { id: 11, senderId: '10', text: '答应我等流星雨结束后一起挑照片', ts: now };
+  const wrongPerson = { id: 12, senderId: '20', text: '照片已经挑完了', ts: now + 1000 };
+  const completion = { id: 13, senderId: '10', text: '我们已经挑完流星雨照片', ts: now + 2000 };
+  const input = { persona, chat, allowed: () => true };
+  observe(chat, [promise]);
+  const before = lifeWillingness(persona, now);
+  const create = async () => ({ events: [{ index: 0, quote: promise.text, delta: [15,0,0,0,7,-8],
+    motive: { title: '一起挑流星雨照片', reason: '对方主动约好挑照片', condition: '双方确认照片已经选完', hours: 36, cooldownHours: 6 } }] });
+  assert.equal(await analyzeLife({ ...input, messages: [promise], now, complete: create }), 1);
+  assert.ok(lifeWillingness(persona, now) > before);
+  assert.equal(lifeStatus(now).profiles[0].goals[0].condition, '双方确认照片已经选完');
+  assert.equal(lifeStatus(now).willingness.length, 24);
+  assert.match(observe(chat, [wrongPerson], now + 1000), /虚拟日常/);
+  await analyzeLife({ ...input, messages: [wrongPerson], now: now + 1000, complete: async () =>
+    ({ events: [{ index: 0, quote: wrongPerson.text, completes: 0 }] }) });
+  assert.equal(lifeStatus(now + 1000).profiles[0].goals.length, 1);
+  observe(chat, [completion], now + 2000);
+  await analyzeLife({ ...input, messages: [completion], now: now + 2000, complete: async () =>
+    ({ events: [{ index: 0, quote: completion.text, completes: 0 }, { index: 1, quote: '杜撰的证据' }] }) });
+  assert.deepEqual(lifeStatus(now + 2000).profiles[0].goals, []);
+  assert.equal(await analyzeLife({ ...input, messages: [completion], now: now + 2000,
+    complete: () => assert.fail('已分析的事件无需再次调用模型') }), 0);
 });

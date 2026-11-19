@@ -7129,3 +7129,4 @@ button.life-graph-node {cursor:pointer}
 .life-graph-center,.life-graph-node[aria-pressed="true"] {border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--bg-2))}
 .life-graph-center {left:50%;top:50%;font-weight:700}
 .life-graph-detail {margin-top:.7rem;overflow-wrap:anywhere}
+.life-rhythm-willingness div {background:var(--green,currentColor)}

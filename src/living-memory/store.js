@@ -165,6 +165,7 @@ export class LivingMemoryStore {
     fs.chmodSync(file, 0o600);
   }
   clearAll() {
+    this.db.exec('DROP TABLE IF EXISTS duplicate_reviews');
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const memories = Number(this.db.prepare('SELECT COUNT(*) AS n FROM memories').get().n);
@@ -501,28 +502,60 @@ export class LivingMemoryStore {
         ) AS canonical
         FROM memories WHERE scope_key=? AND status='active' AND (expires_at=0 OR expires_at>?)
       ) SELECT * FROM ranked WHERE duplicate<>canonical ORDER BY duplicate LIMIT 20`).all(scopeKey, time);
-      const touched = new Set();
-      const archive = this.db.prepare("UPDATE memories SET status='archived', archived_at=? WHERE id=?");
-      const merge = this.db.prepare('UPDATE memories SET source_json=? WHERE id=?');
-      let merged = 0;
-      for (const row of rows) {
-        const keep = this.getMemory(row.canonical);
-        const duplicate = this.getMemory(row.duplicate);
-        const source = { ...keep.source };
-        for (const key of ['sessionIds', 'turnIds', 'participantIds']) {
-          const values = value => Array.isArray(value) ? value : [];
-          const union = [...new Set([...values(keep.source[key]), ...values(duplicate.source[key])])];
-          if (union.length) source[key] = union.slice(-256);
-        }
-        merge.run(stableJson(source), keep.id);
-        archive.run(time, duplicate.id);
-        if (keep.importance >= 7 && source.turnIds?.length >= 2
-          && source.turnIds.length > (keep.source.turnIds?.length || 0)) touched.add(keep.id);
-        merged++;
-      }
-      const reinforced = this.getMemories([...touched]);
+      const { merged, reinforced } = this.#mergeCopies(rows, time);
       this.db.exec('COMMIT');
       return { merged, reinforced };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  #mergeCopies(rows, time) {
+  const touched = new Set();
+  const archive = this.db.prepare("UPDATE memories SET status='archived', archived_at=? WHERE id=?");
+  const merge = this.db.prepare('UPDATE memories SET source_json=? WHERE id=?');
+  let merged = 0;
+  for (const row of rows) {
+    const keep = this.getMemory(row.canonical);
+    const duplicate = this.getMemory(row.duplicate);
+    const source = { ...keep.source };
+    for (const key of ['sessionIds', 'turnIds', 'participantIds']) {
+      const values = value => Array.isArray(value) ? value : [];
+      const union = [...new Set([...values(keep.source[key]), ...values(duplicate.source[key])])];
+      if (union.length) source[key] = union.slice(-256);
+    }
+    merge.run(stableJson(source), keep.id);
+    archive.run(time, duplicate.id);
+    if (keep.importance >= 7 && source.turnIds?.length >= 2
+      && source.turnIds.length > (keep.source.turnIds?.length || 0)) touched.add(keep.id);
+    merged++;
+  }
+  const reinforced = this.getMemories([...touched]);
+    return { merged, reinforced };
+  }
+
+  wasReviewed(key) {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='duplicate_reviews'").get()) return false;
+    return Boolean(this.db.prepare('SELECT 1 FROM duplicate_reviews WHERE key=?').get(key));
+  }
+
+  resolveDuplicateReview({ key, keep, copy, equivalent }) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('CREATE TABLE IF NOT EXISTS duplicate_reviews(key TEXT PRIMARY KEY, checked INTEGER NOT NULL)');
+      const current = [keep, copy].map(row => this.getMemory(row.id));
+      const time = now();
+      const unchanged = current.every((row, i) => row?.status === 'active' && (!row.expiresAt || row.expiresAt > time)
+        && stableJson(row) === stableJson([keep, copy][i]));
+      let result = { merged: 0, reinforced: [] };
+      if (unchanged && !this.wasReviewed(key)) {
+        if (equivalent) result = this.#mergeCopies([{ canonical: keep.id, duplicate: copy.id }], time);
+        this.db.prepare('INSERT INTO duplicate_reviews VALUES (?,?)').run(key, time);
+        this.db.exec('DELETE FROM duplicate_reviews WHERE key IN (SELECT key FROM duplicate_reviews ORDER BY checked DESC LIMIT -1 OFFSET 5000)');
+      }
+      this.db.exec('COMMIT');
+      return result;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;

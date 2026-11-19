@@ -77,7 +77,7 @@ import { assertTimeAllowed, isTimeActive, TimeControlError, timeUntilActive, wat
 import { vendorOfConfig, vendorOfBaseUrl } from '../pricing/model-prices.js';
 import { budgetStatus } from './budget.js';
 import { readOwnerUin } from './notify-owner.js';
-import { observeLife, claimInitiative, linkedMemories } from '../character-life/index.js';
+import { observeLife, claimInitiative, linkedMemories, lifeWillingness, analyzeLife } from '../character-life/index.js';
 import { notePersonaInteraction, personaStatePrompt } from './persona-state.js';
 import { memeDensityPrompt } from '../llm/humanize.js';
 import { memesForPrompt } from '../memes/store.js';
@@ -3353,7 +3353,7 @@ export class Orchestrator {
           if (sent >= maxPerTick) break;
           if (nowTick - Number(state.chats[chatKey] || 0) < minGapMs) continue;
           touched.push(chatKey);
-          if (chance <= 0 || this.random() >= chance) continue;
+          if (chance <= 0 || this.random() >= chance * this.#lifeProactiveFactor(cfg, chatKey, nowTick)) continue;
           if (this.runningChats.size >= Math.max(1, Number(cfg.maxConcurrentRuns) || 2)) break;
           if (quietPrivateChat(chatKey, cfg) && !writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick)) {
             log.warn(`[proactive] 跳过 ${chatKey}：私聊冷却未能保存，未发起消息`);
@@ -3386,6 +3386,7 @@ export class Orchestrator {
       // 真要开口了，才把该范围这一轮用掉（另一个范围仍有自己的机会）
       writeProactiveAttempt(PROACTIVE_STATE_FILE, scope, nowTick);
       const chatKey = candidates[Math.floor(this.random() * candidates.length)];
+      if (cfg.characterLife?.enabled && this.random() >= this.#lifeProactiveFactor(cfg, chatKey, nowTick)) return;
       if (quietPrivateChat(chatKey, cfg) && !writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick)) {
         log.warn(`[proactive] 跳过 ${chatKey}：私聊冷却未能保存，未发起消息`);
         return;
@@ -3397,6 +3398,16 @@ export class Orchestrator {
     // 两个范围错开启动，避免重启/保存配置后同一秒同时判定、同时开口。
     if (scopes.groups) schedule('group', 15000);
     if (scopes.private) schedule('private', 45000);
+  }
+
+  #lifeProactiveFactor(cfg, chatKey, now) {
+    if (!cfg.characterLife?.enabled) return 1;
+    try {
+      return lifeWillingness(resolvePersona(cfg, chatKey), now) / 100;
+    } catch (error) {
+      log.warn('[character-life] 主动意愿读取失败', error.message);
+      return 1;
+    }
   }
 
   #proactiveCandidates(cfg, scope) {
@@ -3425,6 +3436,31 @@ export class Orchestrator {
   // 否则记忆为空的群点整理会得到"没有可整理的群友"，功能对新群完全无效。
   static DISCOVER_MIN_MESSAGES = 20;      // 至少发过这么多条才值得分析
   static DISCOVER_MAX_MEMBERS = 3;        // 单次最多发现几个人（控制成本）
+
+  async reflectCharacterLife(chatKey, { signal } = {}) {
+    const allowed = () => !signal?.aborted && !this.paused && !this.aborted && !this.runningChats.size
+      && getConfig().characterLife?.enabled && canRun(chatKey)
+      && getConfig().runtime?.mode === 'active'
+      && !budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {}).exceeded;
+    const complete = async messages => {
+      if (!allowed()) return null;
+      const result = await this.#memoryChat(messages, { signal, timeoutMs: 30000,
+        session: { usage: emptyUsage(), auxiliaryUsage: emptyUsage() },
+        usageSource: 'character-life-reflection', thinkingIntent: 'off' });
+      return extractJsonObject(String(result?.message?.content ?? ''));
+    };
+    const cfg = getConfig();
+    if (!allowed()) return { merged: 0, reinforced: 0, analyzed: 0 };
+    const blocked = new Set((cfg.blocklist?.[chatKey.split(':')[1]] || []).map(String));
+    const messages = this.store.recent(chatKey, { limit: 100, readOnly: true, scope: 'chat' })
+      .filter(row => row.eventKind === 'message' && !blocked.has(String(row.senderId)));
+    let analyzed = 0;
+    try { analyzed = await analyzeLife({ persona: resolvePersona(cfg, chatKey), chat: chatKey, messages, complete, allowed }); }
+    catch (error) { if (allowed()) log.warn('[character-life] 语境分析跳过', error.message); }
+    if (!allowed()) return { merged: 0, reinforced: 0, analyzed };
+    const result = await this.livingMemory.consolidateForLife(chatKey, { complete, allowed });
+    return { ...result, analyzed };
+  }
 
   async collectPersonality(chatKey, { session = null, manual = false, idle = false } = {}) {
     if (!this.personalityMemory) return { phase: 'disabled', saved: 0 };

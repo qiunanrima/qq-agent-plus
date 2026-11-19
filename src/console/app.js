@@ -815,34 +815,36 @@ function buildApp({
     getIncidentPilot: () => incidentPilot
   });
   let lifeReflectionTimer;
+  let lifeReflectionFirstTick;
   let lifeReflectionBusy = false;
-  const lastReflectionByChat = new Map();
+  let lifeReflectionController;
   function syncLifeReflection() {
     clearInterval(lifeReflectionTimer);
+    clearTimeout(lifeReflectionFirstTick);
     if (!getConfig().characterLife?.enabled) {
+      lifeReflectionController?.abort();
       if (lifeReflectionBusy) personalityMemory.cancelPending();
       return;
     }
-    lifeReflectionTimer = setInterval(async () => {
+    const runReflection = async () => {
       if (lifeReflectionBusy || orchestrator.runningChats.size || orchestrator.paused || !getConfig().characterLife?.enabled) return;
       lifeReflectionBusy = true;
+      lifeReflectionController = new AbortController();
       try {
         reflectLife();
-        const chats = reflectionChats();
-        for (const key of lastReflectionByChat.keys()) {
-          if (!chats.includes(key)) lastReflectionByChat.delete(key);
-        }
-        chats.sort((a, b) => (lastReflectionByChat.get(a) || 0) - (lastReflectionByChat.get(b) || 0));
-        const chat = chats[0];
+        const [chat] = reflectionChats();
         if (!chat) return;
-        lastReflectionByChat.set(chat, Date.now());
-        const result = livingMemory.consolidateExact(chat);
+        const result = await orchestrator.reflectCharacterLife(chat, { signal: lifeReflectionController.signal });
+        if (lifeReflectionController.signal.aborted) return;
         recordReflectionRun(chat, result);
         if (result.merged) emit('living-memory-update', { chatKey: chat, phase: 'consolidate', ...result });
         if (personalityMemory.applies(chat)) await orchestrator.collectPersonality(chat, { idle: true });
       } catch (error) { moduleLog('character-life')(error.message); }
-      finally { lifeReflectionBusy = false; }
-    }, 30 * 60 * 1000);
+      finally { lifeReflectionBusy = false; lifeReflectionController = undefined; }
+    };
+    lifeReflectionFirstTick = setTimeout(runReflection, 60_000);
+    lifeReflectionFirstTick.unref();
+    lifeReflectionTimer = setInterval(runReflection, 30 * 60 * 1000);
     lifeReflectionTimer.unref();
   }
   syncLifeReflection();
@@ -3722,6 +3724,8 @@ function buildApp({
     incidentPilot = null;
     livingMemory.stop();
     clearInterval(lifeReflectionTimer);
+    clearTimeout(lifeReflectionFirstTick);
+    lifeReflectionController?.abort();
     personalityMemory.cancelPending();
     onebot.close();
     await orchestrator.abortAll();

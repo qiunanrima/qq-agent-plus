@@ -153,10 +153,15 @@ async function loadCharacterLife() {
     const bar = (name, value) => `<div class="life-meter"><span>${esc(name)}</span><meter min="0" max="100" value="${Number(value)}"></meter><b>${Number(value)}</b></div>`;
     const scopes = [...new Set(data.profiles.flatMap(profile =>
       [...profile.events, ...profile.associations].map(entry => entry.chat)).filter(Boolean))];
+    const rhythmBars = (label, values, style = '') => `<div class="life-rhythm ${style}" aria-label="${label}">
+      ${values.map((value, hour) => `<div title="${hour}:00 · ${Number(value)}" style="height:${Number(value)}%"></div>`).join('')}</div>`;
     box.innerHTML = `<h2>角色生命系统</h2><p>${data.enabled ? '运行中' : '已停用'} <button class="btn btn-small" id="life-refresh">刷新</button></p>
       ${data.profiles.length ? '' : '<p>暂无互动记录。启用后，角色参与的 QQ 对话会显示在这里。</p>'}
       ${data.profiles.map(p => `<article><h3>${esc(p.role)}</h3><h4>当前情绪</h4>${Object.entries(p.dimensions).map(([k,v])=>bar(k,v)).join('')}
-        <h4>内在动机</h4>${p.goals.map(g=>bar(g.title+' · '+g.chat,g.strength)).join('') || '暂无待续邀约'}
+        ${p.activity ? `<p>虚拟日常 · ${esc(p.activity)} · 当前聊天意愿 ${Number(p.willingness)}/100</p>` : ''}
+        <h4>内在动机</h4>
+        ${p.goals.map(g => `<div>${bar(g.title + ' · ' + g.chat, g.strength)}
+          ${g.reason ? `<p>${esc(g.reason)} · 完成条件 ${esc(g.condition)} · ${esc(new Date(g.expires).toLocaleString())} 到期</p>` : ''}</div>`).join('') || '暂无进行中的动机'}
         <h4>近期互动</h4>${p.events.map(e=>`<div>${esc(new Date(e.at).toLocaleString())} · ${esc(e.kind)} · ${esc(e.chat)}</div>`).join('')}
         <h4>空闲整理</h4>${p.reflections.map(r=>`<div>${esc(r.date)} · ${esc(r.kind)} · ${Number(r.count)} 次</div>`).join('') || '尚无整理记录'}
         <h4>共同召回的记忆</h4>${p.associations.map(a=>`<div>${esc(a.chat)} · ${esc(a.actor)} → ${esc(a.memory)}（${Number(a.count)} 次）</div>`).join('') || '暂无关联'}</article>`).join('')}
@@ -165,8 +170,11 @@ async function loadCharacterLife() {
         <select id="life-graph-scope"><option value="">选择会话</option>${scopes.map(scope => `<option value="${esc(scope)}">${esc(scope)}</option>`).join('')}</select>
         <div id="life-graph" aria-live="polite"></div>` : '<p>暂无可查看的会话关系</p>'}
       <h3>记忆巩固</h3>
-      ${(data.reflectionRuns || []).map(run => `<p>${esc(run.chat)} · 最近整理 ${esc(new Date(run.at).toLocaleString())} · 累计合并 ${Number(run.merged)} 条 · 巩固 ${Number(run.reinforced)} 条</p>`).join('') || '<p>等待空闲整理</p>'}
-      <h3>24 小时节律基线</h3><p>按当前睡眠时段推算的精力（0–100）</p><div class="life-rhythm" aria-label="全天精力参考值">${data.rhythm.map((v,h)=>`<div title="${h}:00 · ${v}" style="height:${Number(v)}%"></div>`).join('')}</div><div class="life-axis"><span>00:00</span><span>12:00</span><span>23:00</span></div>`;
+      ${(data.reflectionRuns || []).map(run => `<p>${esc(run.chat)} · 最近整理 ${esc(new Date(run.at).toLocaleString())} · 累计合并 ${Number(run.merged)} 条 · 巩固 ${Number(run.reinforced)} 条 · 分析互动 ${Number(run.analyzed || 0)} 条</p>`).join('') || '<p>等待空闲整理</p>'}
+      <h3>24 小时节律基线</h3>
+      <p>精力（0–100）</p>${rhythmBars('全天精力', data.rhythm)}
+      <p>聊天意愿（0–100）</p>${rhythmBars('全天聊天意愿', data.willingness || [], 'life-rhythm-willingness')}
+      <div class="life-axis"><span>00:00</span><span>12:00</span><span>23:00</span></div>`;
     $('#life-graph-scope')?.addEventListener('change', async event => {
       const select = event.currentTarget;
       const scope = select.value;

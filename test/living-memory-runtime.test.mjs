@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { LivingMemoryRuntime } from '../src/living-memory/runtime.js';
+import { LivingMemoryStore } from '../src/living-memory/store.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-living-memory-runtime-'));
 after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
@@ -159,5 +160,30 @@ test('aging drops detail before the normal forgetting threshold removes a card',
     assert.doesNotMatch(aged.text, /保存在 Agent 数据目录/);
     runtime.forgetting.now = () => start + 7 * 86400000;
     assert.equal((await runtime.recall(input)).text, '');
+  } finally { runtime.stop(); }
+});
+
+test('语义等价审核归档改写副本，保留不同事件且已审核候选不再送审', async () => {
+  const store = new LivingMemoryStore({ file: path.join(root, 'review.sqlite') });
+  const runtime = new LivingMemoryRuntime({
+    dataDir: root, service: { store, close: () => store.close() },
+    getConfig: () => ({ characterLife: { enabled: true }, livingMemory: { enabled: true } })
+  });
+  try {
+    const common = { scopeKey: 'group:100', type: 'episode', entities: ['天文照片'] };
+    const canonical = store.upsertMemory({ ...common, importance: 8, summary: '一起选好周一的流星雨照片', content: '周一两人从流星雨照片中选出一张。' });
+    const paraphrase = store.upsertMemory({ ...common, summary: '周一共同挑选流星雨照片', content: '周一两人一起挑了一张流星雨照片。' });
+    const other = store.upsertMemory({ ...common, summary: '周五共同挑选流星雨照片', content: '周五两人一起挑了一张流星雨照片。' });
+    let calls = 0;
+    const complete = async messages => {
+      calls++;
+      const pairs = JSON.parse(messages[1].content);
+      return { decisions: pairs.map(({ index, cards }) => ({ index, equivalent: cards.every(card => card.content.includes('周一')) })) };
+    };
+    for (let round = 0; round < 3; round++) await runtime.consolidateForLife('group:100', { allowed: () => true, complete });
+    assert.equal(store.getMemory(canonical.id).status, 'active');
+    assert.equal(store.getMemory(paraphrase.id).status, 'archived');
+    assert.equal(store.getMemory(other.id).status, 'active');
+    assert.equal(calls, 2);
   } finally { runtime.stop(); }
 });
