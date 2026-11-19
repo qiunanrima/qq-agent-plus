@@ -2224,7 +2224,18 @@ export function updateConfig(patch, { force = false } = {}) {
   next.tokenSaver = { ...(next.tokenSaver || {}), mode: normalizeTokenSaverMode(next.tokenSaver?.mode) };
   next.timeControl = normalizeTimeControl(next.timeControl);
   next.livingMemory = normalizeLivingMemoryConfig(next.livingMemory);
-  next.characterLife = { enabled: next.characterLife?.enabled === true, graduated: next.characterLife?.graduated === true };
+  const life = next.characterLife || {};
+  const validTime = value => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  const schedule = validTime(life.sleepStart) && validTime(life.sleepEnd) && life.sleepStart !== life.sleepEnd;
+  next.characterLife = {
+    enabled: life.enabled === true, graduated: life.graduated === true, adaptive: life.adaptive !== false,
+    sleepStart: schedule ? life.sleepStart : '', sleepEnd: schedule ? life.sleepEnd : '',
+    aliases: Object.fromEntries(Object.entries(life.aliases || {}).filter(([key, values]) =>
+      /^(group|private):\d+$/.test(key) && Array.isArray(values)).slice(0, 100).map(([key, values]) => [key,
+      values.slice(0, 75).filter(pair => Array.isArray(pair) && pair.length === 2
+        && pair.every(value => typeof value === 'string' && value.trim() && value.length <= 80))
+        .map(pair => pair.map(value => value.trim()))]))
+  };
   next.personalityMemory = normalizePersonalityMemoryConfig(next.personalityMemory);
   try { next.agentWechat = normalizeWechatConfig(next.agentWechat); }
   catch (error) { throw invalidConfig(error.message); }

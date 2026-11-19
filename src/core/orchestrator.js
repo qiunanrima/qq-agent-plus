@@ -77,7 +77,7 @@ import { assertTimeAllowed, isTimeActive, TimeControlError, timeUntilActive, wat
 import { vendorOfConfig, vendorOfBaseUrl } from '../pricing/model-prices.js';
 import { budgetStatus } from './budget.js';
 import { readOwnerUin } from './notify-owner.js';
-import { observeLife, claimInitiative, linkedMemories, lifeWillingness, analyzeLife } from '../character-life/index.js';
+import { observeLife, claimInitiative, linkedMemories, lifeWillingness, analyzeLife, reviewGraphAliases } from '../character-life/index.js';
 import { notePersonaInteraction, personaStatePrompt } from './persona-state.js';
 import { memeDensityPrompt } from '../llm/humanize.js';
 import { memesForPrompt } from '../memes/store.js';
@@ -3459,6 +3459,11 @@ export class Orchestrator {
     catch (error) { if (allowed()) log.warn('[character-life] 语境分析跳过', error.message); }
     if (!allowed()) return { merged: 0, reinforced: 0, analyzed };
     const result = await this.livingMemory.consolidateForLife(chatKey, { complete, allowed });
+    if (allowed() && this.livingMemory.applies(chatKey)) {
+      try {
+        await reviewGraphAliases({ chat: chatKey, graph: this.livingMemory.graph({ scopeKeys: [chatKey], limit: 24 }), complete, allowed });
+      } catch (error) { if (allowed()) log.warn('[character-life] 节点同一性审核跳过', error.message); }
+    }
     return { ...result, analyzed };
   }
 

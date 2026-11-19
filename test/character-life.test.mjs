@@ -6,7 +6,7 @@ import test from 'node:test';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(),'qqa-life-'));
 process.env.QQ_AGENT_DATA_DIR = dir;
 const { updateConfig } = await import('../src/core/config.js');
-const { lifeStatus, observeLife, linkedMemories, claimInitiative, analyzeLife, lifeWillingness, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
+const { lifeStatus, observeLife, linkedMemories, claimInitiative, analyzeLife, lifeWillingness, reviewGraphAliases, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 test('启停、去重、会话隔离、动机完成和可视化数据', () => {
   const now=Date.now();
@@ -112,4 +112,32 @@ test('语境分析保留原话门槛，动机只由对应参与者的具体进�
   assert.deepEqual(lifeStatus(now + 2000).profiles[0].goals, []);
   assert.equal(await analyzeLife({ ...input, messages: [completion], now: now + 2000,
     complete: () => assert.fail('已分析的事件无需再次调用模型') }), 0);
+});
+
+test('没有互动也提供六维基线，晚间的多日互动可推迟节律且可以关掉微调', () => {
+  updateConfig({ characterLife: { enabled: true, sleepStart: '00:00', sleepEnd: '07:00', adaptive: true } });
+  assert.equal(Object.keys(lifeStatus(now, persona).profiles[0].dimensions).length, 6);
+  const at = Date.parse('2026-11-19T23:10:00+08:00');
+  for (let date = 18; date <= 19; date++) {
+    observe('group:1', [21,22,23].map(hour => ({ id: date * 100 + hour, senderId:'10', text:'你好',
+      ts: Date.parse(`2026-11-${date}T${hour}:00:00+08:00`) })), at);
+  }
+  const adaptive = lifeStatus(at).profiles[0];
+  assert.ok(adaptive.rhythmShift > 0);
+  updateConfig({ characterLife: { adaptive: false } });
+  const fixed = lifeStatus(at).profiles[0];
+  assert.equal(fixed.rhythmShift, 0);
+  assert.notDeepEqual(adaptive.rhythm, fixed.rhythm);
+});
+
+test('图谱语义别名独立按会话储存，阻止合并不同账号且图谱未变时不重复审核', async () => {
+  updateConfig({ characterLife: { enabled: true } });
+  observe('group:1', [{ id: 1, senderId:'10', text:'你好', ts:now }]);
+  const nodes = ['该角色','茉雪儿','QQ:10','QQ:20'].map((label,i) => ({ id:String(i), type:'entity', label }));
+  const input = { chat:'group:1', graph:{ nodes, edges:[] }, now, allowed:() => true };
+  assert.equal(await reviewGraphAliases({ ...input, complete:async () => ({ aliases:[{from:0,to:1},{from:2,to:3}] }) }), 1);
+  assert.deepEqual(lifeStatus(now).learnedAliases, {'group:1':[['该角色','茉雪儿']]});
+  assert.equal(await reviewGraphAliases({ ...input, complete:() => assert.fail('相同图谱无需重新审核') }), 0);
+  clearLife(dir);
+  assert.deepEqual(lifeStatus(now).learnedAliases, {});
 });

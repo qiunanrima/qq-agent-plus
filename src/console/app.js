@@ -819,7 +819,9 @@ function buildApp({
   let lifeReflectionBusy = false;
   let lifeReflectionController;
   function syncLifeReflection() {
+    if (getConfig().characterLife?.enabled && lifeReflectionTimer) return;
     clearInterval(lifeReflectionTimer);
+    lifeReflectionTimer = undefined;
     clearTimeout(lifeReflectionFirstTick);
     if (!getConfig().characterLife?.enabled) {
       lifeReflectionController?.abort();
@@ -3006,7 +3008,7 @@ function buildApp({
     }
   });
 
-  router.add('GET', '/api/character-life/status', async (req, res) => json(res, 200, lifeStatus()));
+  router.add('GET', '/api/character-life/status', async (req, res) => json(res, 200, lifeStatus(Date.now(), resolvePersona(getConfig(), ''))));
   router.add('GET', '/api/humanize/state', async (req, res, params, url) => {
     const chatKey = String(url?.searchParams?.get('chatKey') || '').trim();
     const cfg = getConfig();

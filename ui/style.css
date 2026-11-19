@@ -7130,3 +7130,17 @@ button.life-graph-node {cursor:pointer}
 .life-graph-center {left:50%;top:50%;font-weight:700}
 .life-graph-detail {margin-top:.7rem;overflow-wrap:anywhere}
 .life-rhythm-willingness div {background:var(--green,currentColor)}
+
+.life-section {margin:1rem 0 1.4rem}
+.life-section-heading {display:flex;align-items:center;flex-wrap:wrap;gap:.65rem}
+.life-section-heading h3 {margin:0}
+.life-profile {margin:.75rem 0;padding:.8rem;border:1px solid var(--border);border-radius:var(--r-md)}
+.life-profile h4,.life-profile h5 {margin:.3rem 0 .6rem}
+.life-emotion-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(15rem,100%),1fr));gap:.7rem;max-width:54rem}
+.life-meter {grid-template-columns:minmax(3.2em,1fr) minmax(3em,2fr) 2.2em}
+.life-meter-track {height:.6rem;border-radius:1rem;overflow:hidden;background:color-mix(in srgb,var(--text) 15%,transparent)}
+.life-meter-track span {display:block;height:100%;border-radius:inherit;background:var(--accent);transition:width .2s ease}
+.life-interactions,.life-section details {margin:.7rem 0}
+.life-interactions summary,.life-section details summary {cursor:pointer}
+#life-schedule {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin:.65rem 0}
+#life-aliases {display:block;width:min(100%,32rem);box-sizing:border-box;margin:.4rem 0}
