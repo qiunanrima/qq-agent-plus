@@ -68,6 +68,11 @@ export async function readWechatImages(runtime, key, ctx, args = {}) {
     } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
       isError = true;
+      if (error.code === 'sticker_source_not_allowed') {
+        try { runtime.log('[agent-wechat] 表情包读取失败：sticker_source_not_allowed'); } catch { /* Logging is optional. */ }
+        content.push({ type: 'text', text: '微信协议端拒绝下载这个表情包，未看到画面。可请对方发成普通图片或截图；如已如实回复可用 errorAcknowledged:true 结束。' });
+        continue;
+      }
       content.push({ type: 'text', text: error.publicReason ? error.message + ' 不要声称已看见；如已如实回复可用 errorAcknowledged:true 结束。'
         : '微信图片或表情包未能读取（可能尚未下载或协议不支持该来源）；不要声称已看见，也不要换用 QQ 或原生文件工具查找。' });
     }

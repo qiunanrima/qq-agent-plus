@@ -20,7 +20,14 @@ export class AgentWechatApi {
       headers: { authorization: `Bearer ${token}`, ...(!form ? { 'content-type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}) },
       ...(form ? { body: form } : body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)])
     });
-    if (!res.ok) throw new Error(`微信本地接口错误 (${res.status})`);
+    if (!res.ok) {
+      const error = new Error(`微信本地接口错误 (${res.status})`);
+      if (res.status === 409 && /^\/messages\/[^/]+\/media$/.test(route)) {
+        const response = await readJsonBounded(res, 16 * 1024).catch(() => null);
+        if (response?.error?.code === 'sticker_source_not_allowed') error.code = 'sticker_source_not_allowed';
+      }
+      throw error;
+    }
     if (binary) {
       const limit = 12 * 1024 * 1024, chunks = []; let size = 0;
       if (Number(res.headers.get('content-length')) > limit) { await res.body?.cancel(); throw new Error('微信图片超过 12 MiB'); }
