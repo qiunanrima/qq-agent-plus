@@ -23,7 +23,7 @@ async function render(url, signal) {
       args: [
         '--disable-quic',
         '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-        '--host-resolver-rules=MAP * ~NOTFOUND'
+        '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
       ],
       timeout: 5_000
     });
@@ -32,7 +32,7 @@ async function render(url, signal) {
     const page = await context.newPage();
     const response = await page.goto(target.href, { waitUntil: 'domcontentloaded', timeout: 8_000 });
     if (!response?.ok()) throw new Error('Chromium navigation failed');
-    await delay(1_500, undefined, { signal });
+    await delay(2_500, undefined, { signal });
     return await page.evaluate(limit => {
       const main = document.querySelector('main, article, [role="main"]');
       return (main?.innerText?.trim() || document.body?.innerText?.trim() || '').slice(0, limit);
