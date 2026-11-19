@@ -76,6 +76,7 @@ For the current modules:
 | Character life | `characterLife.enabled` | `characterLife.graduated` | `character-life` / 角色生命系统 |
 | Personality growth memory | `personalityMemory.enabled` | `personalityMemory.graduated` | `personality-memory` / 人格成长 |
 | Restricted subagents | `subagent.enabled` | `subagent.graduated` | 生命周期卡片；调用记录沿用会话详情与日志 |
+| Obscura web fetch | `webFetchBrowser.enabled`（默认关） | `webFetchBrowser.graduated` | 生命周期卡片；沿用 `fetch_url` |
 | Group games | `groupGame.enabled`（默认关） | —（无固化开关） | `settings` / 设置页的「实验功能」开关与「群游戏」分区 |
 
 ## 4. API And Persistence

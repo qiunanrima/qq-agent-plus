@@ -5,6 +5,8 @@ import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getConfig } from '../core/config.js';
 import { safeFetch } from './safe-fetch.js';
+import { tryStartWebFetchBrowser } from '../web-fetch-browser/config.js';
+import { fetchBrowserPage } from '../web-fetch-browser/index.js';
 import { withTimeWindow } from '../core/time-gate.js';
 import { readJsonBounded, readTextBounded } from '../core/http-body.js';
 
@@ -709,12 +711,23 @@ async function deepSeekResponsesSearch({ query, cfg, apiKey, signal }) {
 }
 
 /** 抓取网页正文（走 safe-fetch 的 SSRF 全防护）。 */
-export async function webFetch(url, { signal, maxBytes, headers } = {}) {
+export async function webFetch(url, { signal, maxBytes, headers, render = false } = {}) {
   // safeFetch 的 `timeout` 只是空闲超时；慢速响应（每隔十几秒吐一个字节）能把请求吊很久。
   // 这里再叠一个整次抓取的总截止时间，并保留调用方（本轮运行）的中止信号。
   const total = AbortSignal.timeout(20_000);
   const combined = signal ? AbortSignal.any([signal, total]) : total;
-  return safeFetch(url, { signal: combined, maxBytes, headers });
+  const binary = process.env.QQ_AGENT_OBSCURA_BIN;
+  const slot = render === true && binary && maxBytes === undefined && headers === undefined
+    ? tryStartWebFetchBrowser(getConfig()) : null;
+  if (!slot) {
+    const result = await safeFetch(url, { signal: combined, maxBytes, headers });
+    return render === true ? { ...result, rendered: false } : result;
+  }
+  try {
+    return await fetchBrowserPage(url, { signal: combined, renderSignal: slot.signal, binary });
+  } finally {
+    slot.release();
+  }
 }
 
 /** 智谱 Web Search API（结构化结果：标题/链接/摘要/网站名/日期）。 */

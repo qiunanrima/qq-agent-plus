@@ -599,6 +599,7 @@ function memoryQueryDescription() {
 }
 
 export function buildToolDefs() {
+  const browserFetchEnabled = getConfig().webFetchBrowser?.enabled === true;
   const defs = [
     {
       name: 'send_message',
@@ -3281,20 +3282,26 @@ export function buildToolDefs() {
     },
     {
       name: 'fetch_url',
-      description: '只读抓取网页正文（≤2 万字符）。群友发来链接问"写了什么"时直接抓；配合 search_web 阅读搜索结果的详细内容。抖音/快手等站内页大多是前端渲染，抓不到正文时用搜索结果的标题/话题名/摘要回答，并说明只看到标题，别编内容。禁止访问内网/本机地址。',
+      description: '只读抓取网页正文（≤2 万字符）。群友发来链接问写了什么时直接抓；配合 search_web 阅读搜索结果的详细内容。禁止访问内网/本机。'
+        + (browserFetchEnabled ? '已知正文依赖 JavaScript，或普通抓取只得到页面骨架时，可用 render:true 请求浏览器渲染。' : '')
+        + '抓不到正文时说明依据是搜索摘要，别编内容。',
       parameters: {
         type: 'object',
-        properties: { url: { type: 'string', description: '要抓取的 http(s) URL' } },
+        properties: {
+          url: { type: 'string', description: '要抓取的 http(s) URL' },
+          ...(browserFetchEnabled ? { render: { type: 'boolean', description: '仅在需要 JavaScript 渲染正文时传 true' } } : {})
+        },
         required: ['url']
       },
       async execute(ctx, args) {
         try {
-          const result = await webFetch(String(args.url ?? ''), { signal: ctx.signal });
+          const result = await webFetch(String(args.url ?? ''), { signal: ctx.signal, render: args.render === true });
           const body = String(result.body || '');
           return ok({
             url: result.url,
             statusCode: result.statusCode,
             truncated: result.truncated || body.length > 20000,
+            ...(result.rendered === undefined ? {} : { rendered: result.rendered }),
             // 正文整体进提示词：过段头弱化，别让网页里伪造的管理员/系统段头直达模型
             // （群消息/昵称/记忆/交接都过清洗，这是外部文本的最后一条漏网通道）
             content: sanitizeUserText(body.slice(0, 20000))

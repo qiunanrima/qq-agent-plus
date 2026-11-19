@@ -144,7 +144,7 @@ async function lookupWithTimeout(hostname) {
   return Promise.race([dnsLookup(hostname, { all: true, verbatim: true }), timeout]).finally(() => clearTimeout(timer));
 }
 
-async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
+async function resolveSafeHost(hostname, { allowPrivate = false, allowFakeIpDns = true } = {}) {
   const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!h) throw new Error('主机名为空');
   if (!allowPrivate && (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local'))) {
@@ -165,10 +165,10 @@ async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
     // fake-ip 代理会把任意域名解析到配置的 fake-ip 网段；只放行"DNS 结果"，
     // 直接在 URL 里写这些 IP 仍会被上面的 net.isIP 分支拦住。
     const security = getConfig().security || {};
-    const allowFakeIpDns = security.allowFakeIpDns !== false;
+    const useFakeIpDns = allowFakeIpDns && security.allowFakeIpDns !== false;
     const fakeCidrs = security.fakeIpCidrs;
     for (const { address } of addresses) {
-      if (isPrivateIp(address) && !(allowFakeIpDns && isFakeIpAddress(address, fakeCidrs))) {
+      if (isPrivateIp(address) && !(useFakeIpDns && isFakeIpAddress(address, fakeCidrs))) {
         throw new Error('域名解析到内网/本机地址，已阻止');
       }
     }
@@ -179,7 +179,7 @@ async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
 }
 
 /** 校验 URL 的 scheme 与主机（DNS 级）。返回 { url, ip }。 */
-export async function validateFetchUrl(raw, { allowPrivate = false } = {}) {
+export async function validateFetchUrl(raw, { allowPrivate = false, allowFakeIpDns = true } = {}) {
   let url;
   try {
     url = new URL(String(raw ?? '').trim());
@@ -188,7 +188,7 @@ export async function validateFetchUrl(raw, { allowPrivate = false } = {}) {
   }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('仅允许 http/https');
   if (url.username || url.password) throw new Error('URL 不能包含凭据');
-  const ip = await resolveSafeHost(url.hostname, { allowPrivate });
+  const ip = await resolveSafeHost(url.hostname, { allowPrivate, allowFakeIpDns });
   return { url, ip };
 }
 
@@ -564,14 +564,14 @@ export async function safeFetch(urlString, { maxBytes = 50000, signal, headers, 
  */
 export async function safeFetchRequest(urlString, {
   method = 'GET', headers = null, body = null, maxBytes = 50000, signal, decompress = false,
-  allowedDomains = null, allowPrivate = false, withSetCookies = false, redirect = 'follow'
+  allowedDomains = null, allowPrivate = false, allowFakeIpDns = true, withSetCookies = false, redirect = 'follow'
 } = {}) {
   const verb = String(method || 'GET').toUpperCase();
   if (!['GET', 'POST'].includes(verb)) throw new Error(`不支持的请求方法：${verb}（只允许 GET / POST）`);
   const payload = body === null || body === undefined ? null : Buffer.from(String(body), 'utf8');
   if (payload && payload.length > 64 * 1024) throw new Error('请求体超过 64KB 上限');
   const cap = Math.max(1, Math.floor(Number(maxBytes) || 50000));
-  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate });
+  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate, allowFakeIpDns });
   assertAllowedHost(url, allowedDomains, '请求');
   // 凭据只交给起始源：重定向到别的源（含 https→http 降级）时剥掉 Cookie/Authorization。
   // 白名单允许的是"这个域可以访问"，不是"可以把登录态转发给它"（2026-10-24 审查 P2）。
@@ -597,7 +597,7 @@ export async function safeFetchRequest(urlString, {
         && (nextUrl.protocol !== url.protocol || nextUrl.host !== url.host)) {
         currentHeaders = stripCredentialHeaders(currentHeaders);
       }
-      ({ url, ip } = await validateFetchUrl(next, { allowPrivate }));
+      ({ url, ip } = await validateFetchUrl(next, { allowPrivate, allowFakeIpDns }));
       assertAllowedHost(url, allowedDomains, '重定向');
       continue;
     }

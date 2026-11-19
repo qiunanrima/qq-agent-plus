@@ -18,12 +18,14 @@ import {
   suspendLegacyExperimentalGates
 } from './stable-feature-policy.js';
 import { validateBlacklistKeywordRules } from './keyword-rules.js';
+import { syncWebFetchBrowser } from '../web-fetch-browser/config.js';
 
 export * from './config-legacy.js';
 
 function stabilize(config, { persist = false } = {}) {
   const before = stableFeatureFingerprint(config);
   applyStableFeaturePolicy(config);
+  syncWebFetchBrowser(config);
   if (persist && before !== stableFeatureFingerprint(config)) {
     legacy.scheduleConfigSave();
   }
@@ -374,7 +376,7 @@ export function updateConfig(patch, options = {}) {
 }
 
 export function setRuntimeConfig(config) {
-  return legacy.setRuntimeConfig(applyStableFeaturePolicy(config));
+  return legacy.setRuntimeConfig(stabilize(config));
 }
 
 export function scheduleConfigSave() {

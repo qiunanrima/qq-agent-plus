@@ -20,6 +20,7 @@ import { saveConfig } from './settings-save.js';
 import { renderLifeExperiment } from './character-life.js';
 import { renderPersonalityMemoryExperiment } from './personality-memory.js';
 import { renderSubagentExperiment } from './subagents.js';
+import { renderWebFetchBrowserExperiment } from './web-fetch-browser.js';
 import { renderAgentWechatExperiment } from './agent-wechat.js';
 import { renderAntigravityExperiment } from './antigravity-cli.js';
 function renderExperimentalSettingsSectionImpl(c) {
@@ -93,6 +94,7 @@ function renderExperimentalSettingsSectionImpl(c) {
       ${renderLifeExperiment(c)}
       ${renderPersonalityMemoryExperiment(c)}
       ${renderSubagentExperiment(c)}
+      ${renderWebFetchBrowserExperiment(c)}
       ${renderAntigravityExperiment(c)}
       ${renderCodexExperiment(c)}
       ${renderModelFallbackExperiment(c)}
