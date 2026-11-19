@@ -61,7 +61,7 @@ export class LivingMemoryService {
     };
   }
 
-  async upsertMemory(raw) {
+  async upsertMemory(raw, { preserveEvidence = false } = {}) {
     // 服务层自己始终做敏感信息检查；allowSensitive 只用于内部迁移，不能从控制台传进来。
     const redactionText = [
       raw?.summary || '', raw?.content || '',
@@ -70,7 +70,7 @@ export class LivingMemoryService {
     ].join('\n');
     const rejected = redactionReason(redactionText);
     if (rejected) throw new Error(`拒绝保存：${rejected}`);
-    const duplicate = raw?.id ? null : this.store.findDuplicate({
+    const duplicate = raw?.id || preserveEvidence ? null : this.store.findDuplicate({
       scopeKey: raw?.scopeKey,
       type: raw?.type,
       summary: raw?.summary,

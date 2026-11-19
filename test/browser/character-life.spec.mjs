@@ -32,10 +32,16 @@ test('窄屏真实页面渲染六维读数、动机强度与关联记录',async 
       goals:[{title:'继续聊约好的剧集',chat:'private:1',strength:85}],events:[],reflections:[],
       associations:[{chat:'private:1',actor:'1',memory:'sample-memory-id',count:2}]}]
   }}));
+  await page.route('**/api/living-memory/graph?*', route => route.fulfill({ json: {
+    nodes: [{id:'rain',label:'打雷'}, {id:'person',label:'QQ:42'}, {id:'memory:episode',label:'一起等到雨停'}],
+    edges: [{source:'rain',target:'person',type:'陪伴',memoryId:'episode'}]
+  } }));
   await page.goto('/');
   await switchTo(page,'character-life');
   await expect(page.locator('.life-meter meter')).toHaveCount(7);
   await expect(page.locator('.life-meter meter').first()).toHaveAttribute('value','72');
   await expect(page.locator('#character-life-page')).toContainText('sample-memory-id');
+  await page.selectOption('#life-graph-scope','private:1');
+  await expect(page.locator('#life-graph')).toContainText('一起等到雨停');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

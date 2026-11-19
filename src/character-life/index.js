@@ -70,6 +70,7 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
     db.exec(`CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,role TEXT, chat TEXT, actor TEXT, at INTEGER, kind TEXT);
       CREATE TABLE IF NOT EXISTS initiatives(event TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS reflections(role TEXT, date TEXT, kind TEXT, count INTEGER,PRIMARY KEY(role,date,kind));
+      CREATE TABLE IF NOT EXISTS reflection_runs(chat TEXT PRIMARY KEY, at INTEGER NOT NULL, merged INTEGER NOT NULL, reinforced INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS role_time ON events(role,at);
       CREATE TABLE IF NOT EXISTS links(event TEXT REFERENCES events(id) ON DELETE CASCADE,memory TEXT,PRIMARY KEY(event,memory));
       BEGIN IMMEDIATE`);
@@ -105,7 +106,9 @@ export function lifeStatus(now = Date.now()) {
       const reflections = db.prepare('SELECT date,kind,count FROM reflections WHERE role=? ORDER BY date DESC,count DESC LIMIT 16').all(role);
       return { role, reflections, dimensions:summarize(rows,now,legacy), goals:activeGoals(db, role, now), associations, events:rows.slice(0,24) };
     });
-    return { enabled: cfg.characterLife?.enabled === true, profiles, rhythm:Array.from({length:24},(_,h)=>rhythm(h*60)) };
+    const reflectionRuns = db && db.prepare("SELECT 1 FROM sqlite_master WHERE name='reflection_runs'").get()
+      ? db.prepare('SELECT * FROM reflection_runs ORDER BY at DESC LIMIT 20').all() : [];
+    return { enabled: cfg.characterLife?.enabled === true, profiles, reflectionRuns, rhythm:Array.from({length:24},(_,h)=>rhythm(h*60)) };
   } finally { db?.close(); }
 }
 export function linkedMemories(persona, chat, ids) {
@@ -131,6 +134,27 @@ export function claimInitiative(persona, chat, now = Date.now()) {
     db.exec('COMMIT');
     if (!inserted) return '';
     return '本次主动聊天可以接续此前的邀约：'+goal.title+'。';
+  } finally { db.close(); }
+}
+
+export function recordReflectionRun(chat, { merged, reinforced }, at = Date.now()) {
+  if (!getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  const db = openDatabase(file);
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS reflection_runs(chat TEXT PRIMARY KEY, at INTEGER NOT NULL, merged INTEGER NOT NULL, reinforced INTEGER NOT NULL)');
+    db.prepare(`INSERT INTO reflection_runs VALUES(?,?,?,?) ON CONFLICT(chat) DO UPDATE SET
+      at=excluded.at, merged=reflection_runs.merged+excluded.merged, reinforced=reflection_runs.reinforced+excluded.reinforced`)
+      .run(chat, at, merged, reinforced);
+  } finally { db.close(); }
+}
+
+export function reflectionChats(now = Date.now()) {
+  if (!getConfig().characterLife?.enabled || !fs.existsSync(file)) return [];
+  const db = openDatabase(file, { readOnly: true });
+  try {
+    return db.prepare(`SELECT chat, MAX(at) AS lastAt FROM events
+      WHERE at >= ? GROUP BY chat ORDER BY lastAt DESC, chat`)
+      .all(now - 3 * day).map(row => row.chat);
   } finally { db.close(); }
 }
 

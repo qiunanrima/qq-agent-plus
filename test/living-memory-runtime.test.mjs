@@ -89,3 +89,25 @@ test('disabled runtime does not create its SQLite database while the page is onl
   assert.equal(fs.existsSync(path.join(dataDir, 'living-memory', 'living-memory.sqlite')), false);
   runtime.stop();
 });
+
+test('active relation expansion enforces prompt scope and preserves direct recall on graph failure', async () => {
+  const service = serviceFixture();
+  service.store.relatedMemories = () => [
+    { id: 'other', scopeKey: 'group:200', status: 'active', summary: '另一群的信息' },
+    { id: 'related', scopeKey: 'group:100', status: 'active', summary: '共同经历' }
+  ];
+  const runtime = new LivingMemoryRuntime({
+    dataDir: root,
+    getConfig: () => ({ livingMemory: { enabled: true, mode: 'active', maxRecallItems: 3 } }), service
+  });
+  try {
+    const input = { chatKey: 'group:100', triggerEntries: [{ text: 'SQLite' }], expandRelations: true };
+    const result = await runtime.recall(input);
+    assert.deepEqual(result.directEntries.map(row => row.id), ['m_1']);
+    assert.match(result.text, /共同经历/);
+    assert.doesNotMatch(result.text, /另一群的信息/);
+    service.store.relatedMemories = () => { throw new Error('图谱读取故障'); };
+    const fallback = await runtime.recall(input);
+    assert.match(fallback.text, /本地 SQLite 向量记忆/);
+  } finally { runtime.stop(); }
+});

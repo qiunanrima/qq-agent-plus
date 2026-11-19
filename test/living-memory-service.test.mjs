@@ -132,3 +132,37 @@ test('embedding configuration stays in process environment and long-memory defau
   assert.equal(embedding.baseUrl, 'https://embed.example.com/v1');
   assert.equal(embedding.apiKey, 'secret');
 });
+
+test('relation recall follows evidenced entities within the seed scope and excludes expired cards', () => {
+  const service = fakeService();
+  try {
+    const store = service.store;
+    const seed = store.upsertMemory({ scopeKey: 'group:100', summary: '她怕打雷',
+      entities: ['打雷'], relations: [{ source: '打雷', predicate: '曾陪伴', target: 'QQ:42' }] });
+    const experience = store.upsertMemory({ scopeKey: 'group:100', summary: '共同度过的夜晚', entities: ['QQ:42'] });
+    store.upsertMemory({ scopeKey: 'group:200', summary: '另一群的夜晚', entities: ['QQ:42'] });
+    store.upsertMemory({ scopeKey: 'group:100', summary: '已经过期的记忆', entities: ['QQ:42'], expiresAt: 1 });
+    assert.deepEqual(store.relatedMemories([seed], 10).map(row => row.id), [experience.id]);
+    store.archiveMemory(experience.id);
+    assert.deepEqual(store.relatedMemories([seed], 10), []);
+  } finally { service.close(); }
+});
+
+test('idle consolidation archives exact copies and combines independent evidence', () => {
+  const service = fakeService();
+  try {
+    const store = service.store;
+    const evidence = { scopeKey: 'group:100', type: 'episode', summary: '有人陪她度过雷雨',
+      content: 'QQ:42 和她聊天到雨停', importance: 8 };
+    const keep = store.upsertMemory({ ...evidence, confidence: 0.9, source: { turnIds: ['a'] } });
+    const duplicate = store.upsertMemory({ ...evidence, confidence: 0.8, source: { turnIds: ['b'] } });
+    const different = store.upsertMemory({ ...evidence, content: 'QQ:42 先离开了' });
+    const result = store.consolidateExact('group:100');
+    assert.equal(result.merged, 1);
+    assert.deepEqual(result.reinforced.map(row => row.id), [keep.id]);
+    assert.deepEqual(store.getMemory(keep.id).source.turnIds, ['a','b']);
+    assert.equal(store.getMemory(duplicate.id).status, 'archived');
+    assert.equal(store.getMemory(different.id).status, 'active');
+    assert.equal(store.consolidateExact('group:100').merged, 0);
+  } finally { service.close(); }
+});

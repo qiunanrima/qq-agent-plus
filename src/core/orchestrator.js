@@ -1533,7 +1533,7 @@ export class Orchestrator {
       if (!isExternalChat(chatKey) && getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
       const status = session.sent.length > 0 ? 'done' : 'noreply';
       this.sessions.finish(session.id, status);
-      if (status === 'done') void this.collectPersonality(chatKey, { session }).catch(error => log.warn('[personality-memory]', error?.message));
+      if (status === 'done' && !getConfig().characterLife?.enabled) void this.collectPersonality(chatKey, { session }).catch(error => log.warn('[personality-memory]', error?.message));
       try {
         this.memory.hippocampus?.capture({ chatKey, session, triggerEntries,
           persona: session.memoryPersona || resolvePersona(getConfig(), chatKey) });
@@ -2232,7 +2232,7 @@ export class Orchestrator {
     let livingRecall = { text: '', entries: [], mode: 'disabled' };
     try {
       if (!channel && cfg.memory?.hippocampusEnabled !== true) {
-        livingRecall = await this.livingMemory?.recall?.({ chatKey, triggerEntries, signal, relatedIds: cfg.characterLife?.enabled ? ids => linkedMemories(persona,chatKey,ids) : null }) || livingRecall;
+        livingRecall = await this.livingMemory?.recall?.({ chatKey, triggerEntries, signal, expandRelations: cfg.characterLife?.enabled, relatedIds: cfg.characterLife?.enabled ? ids => linkedMemories(persona,chatKey,ids) : null }) || livingRecall;
       }
     } catch (error) {
       log.warn(`[living-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error);
@@ -3426,11 +3426,12 @@ export class Orchestrator {
   static DISCOVER_MIN_MESSAGES = 20;      // 至少发过这么多条才值得分析
   static DISCOVER_MAX_MEMBERS = 3;        // 单次最多发现几个人（控制成本）
 
-  async collectPersonality(chatKey, { session = null, manual = false } = {}) {
+  async collectPersonality(chatKey, { session = null, manual = false, idle = false } = {}) {
     if (!this.personalityMemory) return { phase: 'disabled', saved: 0 };
     const persona = session?.memoryPersona || resolvePersona(getConfig(), chatKey);
     const meter = { usage: structuredClone(session?.usage || emptyUsage()), auxiliaryUsage: structuredClone(session?.auxiliaryUsage || emptyUsage()) };
     const allowed = () => !this.paused && !this.aborted && canRun(chatKey)
+      && (!idle || (getConfig().characterLife?.enabled && !this.runningChats.size))
       && getConfig().runtime?.mode === 'active' && !getConfig().runtime?.paused
       && !budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {}).exceeded;
     return this.personalityMemory.automatic.scan({ chatKey, persona, personaKey: personalityKey(persona), store: this.store, manual, allowed,

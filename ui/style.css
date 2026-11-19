@@ -7117,3 +7117,7 @@ html[data-side-rail='1'] .tab .pending-badge { top: 3px; right: 4px; min-width: 
 .life-rhythm {height:7rem;display:flex;align-items:end;gap:2px;max-width:36em}
 .life-rhythm div {background:var(--accent,currentColor);flex:1}
 .life-axis {display:flex;justify-content:space-between;max-width:36em}
+.life-graph-edges {padding:0;list-style:none;max-width:52em;display:grid;gap:.4em}
+.life-graph-edges li {display:grid;grid-template-columns:minmax(0,1fr) minmax(4em,auto) minmax(0,1fr);gap:.6em;align-items:center;overflow-wrap:anywhere}
+.life-graph-edges span {border-block-end:1px solid currentColor;text-align:center}
+.life-graph-edges small {grid-column:1/-1}

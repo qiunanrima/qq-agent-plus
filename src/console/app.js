@@ -30,7 +30,7 @@ import { EffectLedger } from '../core/effects.js';
 import { MemoryStore } from '../memory/memory.js';
 import { registerMemoryManagementRoutes } from './routes/memory-management.js';
 import { LivingMemoryRuntime } from '../living-memory/runtime.js';
-import { lifeStatus, reflectLife } from '../character-life/index.js';
+import { lifeStatus, reflectLife, reflectionChats, recordReflectionRun } from '../character-life/index.js';
 import { PersonalityMemory } from '../personality-memory/index.js';
 import { registerPersonalityMemoryRoutes } from '../personality-memory/routes.js';
 import { StickerManager } from '../onebot/sticker-manager.js';
@@ -815,12 +815,33 @@ function buildApp({
     getIncidentPilot: () => incidentPilot
   });
   let lifeReflectionTimer;
+  let lifeReflectionBusy = false;
+  const lastReflectionByChat = new Map();
   function syncLifeReflection() {
     clearInterval(lifeReflectionTimer);
-    if (!getConfig().characterLife?.enabled) return;
-    lifeReflectionTimer = setInterval(() => {
-      if (orchestrator.runningChats.size || !getConfig().characterLife?.enabled) return;
-      try { reflectLife(); } catch (error) { moduleLog('character-life')(error.message); }
+    if (!getConfig().characterLife?.enabled) {
+      if (lifeReflectionBusy) personalityMemory.cancelPending();
+      return;
+    }
+    lifeReflectionTimer = setInterval(async () => {
+      if (lifeReflectionBusy || orchestrator.runningChats.size || orchestrator.paused || !getConfig().characterLife?.enabled) return;
+      lifeReflectionBusy = true;
+      try {
+        reflectLife();
+        const chats = reflectionChats();
+        for (const key of lastReflectionByChat.keys()) {
+          if (!chats.includes(key)) lastReflectionByChat.delete(key);
+        }
+        chats.sort((a, b) => (lastReflectionByChat.get(a) || 0) - (lastReflectionByChat.get(b) || 0));
+        const chat = chats[0];
+        if (!chat) return;
+        lastReflectionByChat.set(chat, Date.now());
+        const result = livingMemory.consolidateExact(chat);
+        recordReflectionRun(chat, result);
+        if (result.merged) emit('living-memory-update', { chatKey: chat, phase: 'consolidate', ...result });
+        if (personalityMemory.applies(chat)) await orchestrator.collectPersonality(chat, { idle: true });
+      } catch (error) { moduleLog('character-life')(error.message); }
+      finally { lifeReflectionBusy = false; }
     }, 30 * 60 * 1000);
     lifeReflectionTimer.unref();
   }

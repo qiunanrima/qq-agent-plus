@@ -465,11 +465,74 @@ export class LivingMemoryStore {
     return { archived: rows.map((row) => row.id), turnsRemoved };
   }
 
+  relatedMemories(seeds, limit) {
+    const candidates = new Map();
+    const concepts = memory => new Set([...memory.entities,
+      ...memory.relations.flatMap(relation => [relation?.source, relation?.target])].filter(Boolean));
+    const seedIds = new Set(seeds.map(memory => memory.id));
+    for (const seed of seeds) {
+      const terms = [...concepts(seed)];
+      if (!terms.length) continue;
+      const rows = this.db.prepare(`SELECT ${MEMORY_TEXT_COLUMNS} FROM memories
+        WHERE scope_key=? AND status='active' AND (expires_at=0 OR expires_at>?)
+          AND (EXISTS (SELECT 1 FROM json_each(entities_json) WHERE value IN (SELECT value FROM json_each(?)))
+            OR EXISTS (SELECT 1 FROM json_each(relations_json)
+              WHERE CASE WHEN type='object' THEN json_extract(value, '$.source') END IN (SELECT value FROM json_each(?))
+                 OR CASE WHEN type='object' THEN json_extract(value, '$.target') END IN (SELECT value FROM json_each(?))))
+        ORDER BY importance DESC, updated_at DESC, id LIMIT ?`)
+        .all(seed.scopeKey, now(), JSON.stringify(terms), JSON.stringify(terms), JSON.stringify(terms), limit);
+      for (const row of rows) {
+        if (!seedIds.has(row.id)) candidates.set(row.id, rowToMemory(row));
+      }
+    }
+    return [...candidates.values()].slice(0, limit);
+  }
+
+  consolidateExact(scopeKey) {
+    const time = now();
+    // Include metadata and expiry in equality so conflicting evidence and retention remain independent.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`WITH ranked AS (
+        SELECT id AS duplicate, FIRST_VALUE(id) OVER (
+          PARTITION BY type, summary, content, tags_json, entities_json, relations_json, expires_at
+          ORDER BY importance DESC, confidence DESC, created_at, id
+        ) AS canonical
+        FROM memories WHERE scope_key=? AND status='active' AND (expires_at=0 OR expires_at>?)
+      ) SELECT * FROM ranked WHERE duplicate<>canonical ORDER BY duplicate LIMIT 20`).all(scopeKey, time);
+      const touched = new Set();
+      const archive = this.db.prepare("UPDATE memories SET status='archived', archived_at=? WHERE id=?");
+      const merge = this.db.prepare('UPDATE memories SET source_json=? WHERE id=?');
+      let merged = 0;
+      for (const row of rows) {
+        const keep = this.getMemory(row.canonical);
+        const duplicate = this.getMemory(row.duplicate);
+        const source = { ...keep.source };
+        for (const key of ['sessionIds', 'turnIds', 'participantIds']) {
+          const values = value => Array.isArray(value) ? value : [];
+          const union = [...new Set([...values(keep.source[key]), ...values(duplicate.source[key])])];
+          if (union.length) source[key] = union.slice(-256);
+        }
+        merge.run(stableJson(source), keep.id);
+        archive.run(time, duplicate.id);
+        if (keep.importance >= 7 && source.turnIds?.length >= 2
+          && source.turnIds.length > (keep.source.turnIds?.length || 0)) touched.add(keep.id);
+        merged++;
+      }
+      const reinforced = this.getMemories([...touched]);
+      this.db.exec('COMMIT');
+      return { merged, reinforced };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   graph({ scopeKeys, memoryId = '', limit = 160 } = {}) {
     const scopes = scopeList(scopeKeys);
     if (!scopes.length) return { nodes: [], edges: [] };
-    const filters = [`scope_key IN (${scopes.map(() => '?').join(', ')})`, "status = 'active'"];
-    const values = [...scopes];
+    const filters = [`scope_key IN (${scopes.map(() => '?').join(', ')})`, "status = 'active'", '(expires_at=0 OR expires_at>?)'];
+    const values = [...scopes, now()];
     if (memoryId) { filters.push('id = ?'); values.push(asText(memoryId, 100)); }
     const rows = this.db.prepare(`SELECT * FROM memories WHERE ${filters.join(' AND ')} ORDER BY importance DESC, updated_at DESC LIMIT ?`)
       .all(...values, clampInt(limit, 1, 500, 160)).map(rowToMemory);
@@ -490,7 +553,7 @@ export class LivingMemoryStore {
         const targetId = `entity:${target}`;
         if (!nodes.has(sourceId)) nodes.set(sourceId, { id: sourceId, type: 'entity', label: source });
         if (!nodes.has(targetId)) nodes.set(targetId, { id: targetId, type: 'entity', label: target });
-        edges.push({ id: `${memory.id}:relation:${source}:${target}`, source: sourceId, target: targetId, type: asText(relation?.predicate, 48) || 'related' });
+        edges.push({ id: `${memory.id}:relation:${source}:${target}`, source: sourceId, target: targetId, type: asText(relation?.predicate, 48) || 'related', memoryId: memory.id });
       }
     }
     return { nodes: [...nodes.values()], edges };
