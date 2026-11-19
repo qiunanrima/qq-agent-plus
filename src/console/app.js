@@ -1895,13 +1895,14 @@ function buildApp({
     const cfgNow = getConfig();
     if (!allowed(isGroup ? 'group' : 'private', id, cfgNow)) return;
 
-    const operatorId = String(event.user_id ?? '');
+    // SnowLuma 私聊的 user_id 是会话对端，sender_id 才是发起者。群聊使用 user_id。
+    const operatorId = String((isGroup ? event.user_id : event.sender_id ?? event.user_id) ?? '');
+    const selfId = onebot.selfId || String(event.self_id ?? '');
     // 自己拍的拍（send_poke 的 OneBot 回显）不触发处理——与 message_sent 同理，发送时已留档
-    if (operatorId && operatorId === onebot.selfId) return;
+    if (operatorId && operatorId === selfId) return;
     // 屏蔽名单对拍一拍同样生效（操作者是被屏蔽群员则丢弃）
     if (isGroup && operatorId && (cfgNow.blocklist?.[id] || []).map(String).includes(operatorId)) return;
     const targetId = String(event.target_id ?? event.user_id ?? '');
-    const selfId = onebot.selfId;
     // 拍一拍也要记下真实群名片：原先这里硬编码"（拍一拍事件）"，
     // 会覆盖同一 QQ 在普通消息里的真实昵称 —— 记忆整理时取名字会拿到这个占位符，
     // 导致"<uin> 的名字叫（拍一拍事件）"这种脏数据。
@@ -1922,7 +1923,7 @@ function buildApp({
     let text;
     if (String(targetId) === String(selfId)) {
       // 拍机器人是最常见的拍法：这条分支以前漏了清洗，群名片里的段标记能原样进提示词
-      text = sanitizeUserText(`[拍一拍] 你拍了拍${isGroup ? '' : '你'}（来自 ${operatorName}）`);
+      text = sanitizeUserText(`[拍一拍] ${operatorName} 拍了拍你`);
     } else {
       const targetName = isGroup ? (await nameBudget.run(resolveAtName(id, targetId), null)) || targetId : targetId;
       text = operatorId === targetId ? `[拍一拍] ${operatorName} 拍了拍自己` : `[拍一拍] ${operatorName} 拍了拍 ${targetName}`;

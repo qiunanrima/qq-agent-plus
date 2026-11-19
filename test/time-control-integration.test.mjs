@@ -61,6 +61,26 @@ function fixture(t, mode = 'legacy') {
   return { cfg, app, receive, calls: () => calls, bodies };
 }
 
+test('private poke uses the sender for attribution and drops outgoing echoes', async (t) => {
+  const { app } = fixture(t);
+  const notify = (fields) => app.onebot.onEvent({
+    post_type: 'notice', notice_type: 'notify', sub_type: 'poke', self_id: 888, user_id: 2, ...fields
+  });
+  const rows = () => app.store.recent('private:2', { limit: 500 });
+  const before = rows().length;
+  await notify({ sender_id: 888, target_id: 2 });
+  assert.equal(rows().length, before);
+  for (const fields of [{ sender_id: 2, target_id: 888 }, { target_id: 888 }]) {
+    await notify(fields);
+    const latest = rows().at(-1);
+    assert.equal(latest.senderId, '2');
+    assert.equal(latest.targetUserId, '888');
+    assert.match(latest.text, /拍了拍你$/);
+  }
+  await notify({ sender_id: 2, target_id: 2 });
+  assert.match(rows().at(-1).text, /拍了拍自己$/);
+});
+
 for (const mode of ['legacy', 'threaded', 'lifecycle']) {
   test(`${mode}: inactive messages and pokes are archived without AI or catch-up`, async (t) => {
     const { cfg, app, receive, calls } = fixture(t, mode);
