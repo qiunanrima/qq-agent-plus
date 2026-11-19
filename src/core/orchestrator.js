@@ -2226,7 +2226,8 @@ export class Orchestrator {
     });
     // 状态行放本轮 user 消息，不拼进 system prompt：system 前缀参与 cacheKey/线程续接判定，
     // 每半小时变一次会让前缀缓存和 lifecycle 线程反复失效。
-    let personaStateLine = personaStatePrompt(persona);
+    const useCharacterLife = !channel && cfg.characterLife?.enabled === true;
+    let personaStateLine = personaStatePrompt(persona, Date.now(), { includeText: !useCharacterLife });
     // 长期语义记忆属于每轮临时上下文：放入 user 内容而非 system 前缀，避免检索结果变化让
     // lifecycle 线程与前缀缓存失效。服务不可用时仅跳过召回，聊天主链路照常。
     let livingRecall = { text: '', entries: [], mode: 'disabled' };
@@ -2237,7 +2238,7 @@ export class Orchestrator {
     } catch (error) {
       log.warn(`[living-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error);
     }
-    if (!channel && cfg.characterLife?.enabled) {
+    if (useCharacterLife) {
       try {
         const hint = proactive && !triggerEntries?.length ? claimInitiative(persona,chatKey)
           : observeLife({ persona, chatKey, triggerEntries, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });

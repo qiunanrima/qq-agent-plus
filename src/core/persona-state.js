@@ -133,7 +133,7 @@ export function personaStateSnapshot(persona = {}, now = Date.now()) {
 }
 
 /** 取当前状态并格式化；关闭时返回空串（提示词与升级前逐字一致）。 */
-export function personaStatePrompt(persona = {}, now = Date.now()) {
+export function personaStatePrompt(persona = {}, now = Date.now(), { includeText = true } = {}) {
   if (!enabled() || cardDecidesTone(persona)) return '';
   try {
     const all = readAll();
@@ -145,7 +145,7 @@ export function personaStatePrompt(persona = {}, now = Date.now()) {
       all[key] = { ...state, savedAt: now };
       writeAll(all);
     }
-    return stateLine(state);
+    return includeText ? stateLine(state) : '';
   } catch { return ''; }
 }
 
