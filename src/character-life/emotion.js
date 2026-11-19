@@ -21,30 +21,45 @@ const ruleDeltas = {
 };
 const hour = 3600000;
 
-export function interactionText(value, reply) {
-  if (typeof value !== 'string') return '';
-  let text = value.trim();
+const media = /\[(?:CQ:[^\]]+|图片|QQ表情\d*[^\]\r\n]*|表情包?|视频|语音|文件[^\]\r\n]*)\]/gi;
+const quoteStart = /^\[引用(?:#-?\d+(?:·[^：\]]*)?|[^：\]\[]*)：/;
+
+export function readInteraction(value, reply) {
+  let text = typeof value === 'string' ? value.trim() : '';
   const prefix = formatQuoteRef(reply);
-  if (prefix && text.startsWith(prefix)) text = text.slice(prefix.length).trimStart();
-  // Archive rows may have only the rendered prefix. Bracketed media can occur inside it.
-  while (/^\[引用(?:#-?\d+(?:·[^：\]]*)?|[^：\]\[]*)：/.test(text)) {
-    let depth = 1;
-    let end = 1;
-    for (; end < text.length && depth; end++) {
-      if (text[end] === '[') depth++;
-      else if (text[end] === ']') depth--;
+  let quoted = '';
+  if (typeof reply?.bodyText === 'string') {
+    quoted = prefix;
+    text = reply.bodyText;
+  } else if (prefix && text.startsWith(prefix)) {
+    quoted = prefix;
+    text = text.slice(prefix.length);
+  } else {
+    text = text.replace(/^(?:\[引用消息\]\s*)+/, '');
+    if (quoteStart.test(text)) {
+      // Archive-only previews have no escaping for literal brackets. Recognize
+      // media placeholders, and abstain if any other bracket obscures the boundary.
+      const withoutMedia = text.replace(media, match => ' '.repeat(match.length));
+      const end = withoutMedia.indexOf(']', 1);
+      if (end < 0 || withoutMedia.slice(1, end).includes('[') || withoutMedia.slice(end + 1).includes(']')) {
+        return { text: '', kind: '互动', quoted: '', ambiguous: true };
+      }
+      quoted = text.slice(0, end + 1);
+      text = text.slice(end + 1);
     }
-    if (depth) break;
-    text = text.slice(end).trimStart();
   }
-  const body = text.replace(/\[(?:CQ:[^\]]+|图片|QQ表情\d*[^\]\r\n]*|表情包?|视频|语音|文件)\]/gi, '').trim();
-  return /[\p{L}\p{N}]/u.test(body) ? body : '';
+  const body = text.replace(media, '').trim();
+  text = /[\p{L}\p{N}]/u.test(body) ? body : '';
+  const kind = text ? interactionRules.find(([, rule]) => rule.test(text))?.[0] || '文字互动' : '互动';
+  return { text, kind, quoted, ambiguous: false };
+}
+
+export function interactionText(value, reply) {
+  return readInteraction(value, reply).text;
 }
 
 export function interactionKind(value, reply) {
-  const text = interactionText(value, reply);
-  if (!text) return '互动';
-  return interactionRules.find(([, rule]) => rule.test(text))?.[0] || '文字互动';
+  return readInteraction(value, reply).kind;
 }
 
 export function verifiedEmotionDelta(value) {

@@ -94,9 +94,9 @@ export function shapeBubbles(messages, { maxBubbles = 3, maxChars = 60 } = {}) {
     const numbered = numberedBubbles(list[0]);
     if (numbered.length) return numbered;
   }
-  // 模型已经主动分好条、且每条都不超长时，尊重它的分条，不再按短句重新打包。
+  // 模型已经分好条且条数在上限内，按原边界交给协议长度检查。
+  if (list.length > 1 && list.length <= bubbleLimit) return list;
   if (list.length > 1 && list.every((item) => item.length <= charLimit)) {
-    if (list.length <= bubbleLimit) return list.slice(0, bubbleLimit);
     return [...list.slice(0, bubbleLimit - 1), joinChunks(list[bubbleLimit - 1], list.slice(bubbleLimit).join(''))];
   }
 

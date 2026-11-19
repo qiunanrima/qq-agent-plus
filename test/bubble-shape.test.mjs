@@ -14,6 +14,14 @@ test('已经分好的数组不改变顺序；超过上限时并进最后一条',
   assert.deepEqual(shapeBubbles(['一', '二', '三', '四'], { maxBubbles: 3 }), ['一', '二', '三四']);
 });
 
+test('尊重模型已分好的长段，不截断 C++ 标识符', () => {
+  const messages = [
+    'vector<bool> 是位压缩特化的，它的引用不是真正的 bool&，是个代理对象（std::vector<bool>::reference）',
+    '直接写 for (auto&& i2 : i1) 或者 auto i2 就能过了'
+  ];
+  assert.deepEqual(shapeBubbles(messages, { maxBubbles: 3, maxChars: 60 }), messages);
+});
+
 test('代码块和 URL 不被拆开', () => {
   const code = '```js\nconst x = 1;\nconsole.log(x);\n```';
   const url = 'https://example.com/a/b?x=1&y=2';

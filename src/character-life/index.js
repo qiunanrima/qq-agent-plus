@@ -5,8 +5,8 @@ import { DATA_DIR, getConfig } from '../core/config.js';
 import { personaKeyOf, personaStateSnapshot } from '../core/persona-state.js';
 import { minuteOfDayInZone, shanghaiDayStart, sanitizeUserText } from '../core/util.js';
 import { openDatabase } from '../core/sqlite.js';
-import { emotionDimensions, interactionText, interactionKind, verifiedEmotionDelta, interactionAdjustments } from './emotion.js';
-import { commitmentEvidence, initMotiveEvidence, saveRecognizedMotive, saveMotive, reminderForTurn, confirmsMotive } from './motives.js';
+import { emotionDimensions, readInteraction, verifiedEmotionDelta, interactionAdjustments } from './emotion.js';
+import { commitmentEvidence, initMotiveEvidence, saveRecognizedMotive, saveMotive, reminderForTurn, confirmsMotive, quoteOnlyMotive } from './motives.js';
 
 const file = path.join(DATA_DIR, 'character-life.sqlite');
 const hour = 3600000;
@@ -94,9 +94,11 @@ function summarize(rows, now, legacy, schedule, shift) {
 function activeGoals(db, role, now, chat = null) {
   if (!hasTable(db, 'motive_evidence')) return [];
   const scope = chat === null ? '' : ' AND e.chat=?';
+  const valid = hasTable(db, 'motive_invalidations')
+    ? ' AND NOT EXISTS (SELECT 1 FROM motive_invalidations i WHERE i.event=m.event)' : '';
   const rows = db.prepare(`SELECT e.id,e.chat,e.actor,e.at,m.title,m.reason,m.condition,m.expires,m.cooldown,p.topic,p.due
     FROM motives m JOIN events e ON e.id=m.event JOIN motive_evidence p ON p.event=m.event
-    WHERE e.role=? AND e.at<=? AND m.expires>=? AND m.closed IS NULL${scope}
+    WHERE e.role=? AND e.at<=? AND m.expires>=? AND m.closed IS NULL${scope}${valid}
     ORDER BY e.at DESC,e.rowid DESC`).all(role, now, now, ...(chat === null ? [] : [chat]));
   return rows.map(row => ({ ...row, strength: clampScore(88 * Math.exp(-(now - row.at) / (row.expires - row.at))) }));
 }
@@ -122,12 +124,12 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
       CREATE TABLE IF NOT EXISTS links(event TEXT REFERENCES events(id) ON DELETE CASCADE,memory TEXT,PRIMARY KEY(event,memory));`);
     initMotiveEvidence(db);
     db.exec('BEGIN IMMEDIATE');
-    for (const entry of triggerEntries) {
-      if (entry.self || !entry.senderId || !(entry.id || entry.messageId || entry.ts)) continue;
+    const interactions = triggerEntries.filter(entry => !entry.self && entry.senderId)
+      .map(entry => ({ entry, ...readInteraction(entry.text, entry.reply) }));
+    for (const { entry, text, kind } of interactions) {
+      if (!(entry.id || entry.messageId || entry.ts)) continue;
       const actor = String(entry.senderId);
       const id = interactionId(role, chatKey, entry);
-      const text = interactionText(entry.text, entry.reply);
-      const kind = interactionKind(text);
       const at = Number(entry.ts) || now;
       if (at < now - 7 * day) continue;
       const inserted = db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)').run(id,role,chatKey,actor,Math.min(at,now),kind);
@@ -138,7 +140,7 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
       saveRecognizedMotive(db, { id, at: Math.min(at, now) }, text);
     }
 
-    const reminder = reminderForTurn(db, activeGoals(db, role, now, chatKey), triggerEntries,
+    const reminder = reminderForTurn(db, activeGoals(db, role, now, chatKey), interactions,
       entry => interactionId(role, chatKey, entry), now);
     db.exec('COMMIT');
     const rows = recent(db,role,now);
@@ -294,20 +296,22 @@ function recoverKnownInteractions(role, chat, messages, now) {
   try {
     initMotiveEvidence(db);
     db.exec('BEGIN IMMEDIATE');
-    const find = db.prepare(`SELECT e.id,e.at,e.kind,p.event AS verified,m.closed FROM events e
+    const find = db.prepare(`SELECT e.id,e.at,e.kind,p.event AS verified,m.closed,m.reason FROM events e
       LEFT JOIN motive_evidence p ON p.event=e.id LEFT JOIN motives m ON m.event=e.id
       WHERE e.id=? AND e.at BETWEEN ? AND ?`);
     const reclassify = db.prepare('UPDATE events SET kind=? WHERE id=?');
+    const invalidateMotive = db.prepare('INSERT OR IGNORE INTO motive_invalidations VALUES(?)');
     const invalidateAnalysis = hasTable(db, 'event_analysis') ? db.prepare('DELETE FROM event_analysis WHERE event=?') : null;
-    for (const entry of messages) {
-      if (entry.self || !entry.senderId) continue;
-      const text = interactionText(entry.text, entry.reply);
-      const kind = interactionKind(text);
+    for (const interaction of messages) {
+      const { entry, text, kind, ambiguous } = interaction;
       const event = find.get(interactionId(role, chat, entry), now - 3 * day, now);
       if (!event) continue;
       if (event.kind !== kind) {
         reclassify.run(kind, event.id);
-        if (event.kind !== '互动') invalidateAnalysis?.run(event.id);
+      }
+      if (ambiguous || (event.kind !== '互动' && event.kind !== kind)) invalidateAnalysis?.run(event.id);
+      if (event.verified && !event.closed && quoteOnlyMotive(event.reason, interaction, event.at)) {
+        invalidateMotive.run(event.id);
       }
       if (!event.verified && !event.closed && commitmentEvidence(text, event.at)?.topic) {
         saveRecognizedMotive(db, event, text);
@@ -320,16 +324,16 @@ function recoverKnownInteractions(role, chat, messages, now) {
 export async function analyzeLife({ persona, chat, messages, complete, allowed, now = Date.now() }) {
   if (!allowed() || !fs.existsSync(file)) return 0;
   const role = personaKeyOf(persona);
-  recoverKnownInteractions(role, chat, messages, now);
+  const interactions = messages.filter(entry => !entry.self && entry.senderId)
+    .map(entry => ({ entry, ...readInteraction(entry.text, entry.reply) }));
+  recoverKnownInteractions(role, chat, interactions, now);
   let batch, prior;
   const read = openDatabase(file, { readOnly: true });
   try {
     if (!hasTable(read, 'event_analysis')) return 0;
     const unprocessed = read.prepare(`SELECT e.id FROM events e LEFT JOIN event_analysis a ON a.event=e.id
       WHERE e.id=? AND a.event IS NULL AND e.at>=?`);
-    batch = messages.filter(entry => !entry.self && entry.senderId).map(entry => ({
-      entry, text: interactionText(entry.text, entry.reply)
-    })).filter(({ entry, text }) => text && !privateText.test(text)
+    batch = interactions.filter(({ entry, text }) => text && !privateText.test(text)
       && unprocessed.get(interactionId(role, chat, entry), now - 3 * day)).slice(-12);
     if (!batch.length) return 0;
     prior = activeGoals(read, role, now, chat).filter(goal => goal.condition).slice(0, 12);

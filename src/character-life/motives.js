@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { shanghaiDayStart, sanitizeUserText } from '../core/util.js';
-import { interactionText } from './emotion.js';
 
 const hour = 3600000;
 const day = 24 * hour;
@@ -49,14 +48,26 @@ export function initMotiveEvidence(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS motive_evidence(
     event TEXT PRIMARY KEY REFERENCES motives(event) ON DELETE CASCADE, topic TEXT NOT NULL, due INTEGER);
     CREATE TABLE IF NOT EXISTS motive_reminders(
-      event TEXT REFERENCES motives(event) ON DELETE CASCADE, signal TEXT, PRIMARY KEY(event,signal));`);
+      event TEXT REFERENCES motives(event) ON DELETE CASCADE, signal TEXT, PRIMARY KEY(event,signal));
+    CREATE TABLE IF NOT EXISTS motive_invalidations(
+      event TEXT PRIMARY KEY REFERENCES motives(event) ON DELETE CASCADE);`);
+}
+
+export function quoteOnlyMotive(reason, interaction, at) {
+  if (!reason || !interaction.quoted) return false;
+  const evidence = clean(reason);
+  const body = clean(interaction.text);
+  const quote = clean(interaction.quoted);
+  if (!evidence || body.includes(evidence)) return false;
+  return quote.includes(evidence) || (evidence.includes(quote) && !commitmentEvidence(body, at));
 }
 
 export function saveMotive(db, event, evidence, motive) {
   const alreadyOpen = db.prepare(`SELECT 1 FROM events source
     JOIN events earlier ON earlier.role=source.role AND earlier.chat=source.chat AND earlier.actor=source.actor
     JOIN motives m ON m.event=earlier.id JOIN motive_evidence p ON p.event=m.event
-    WHERE source.id=? AND earlier.id<>source.id AND m.closed IS NULL AND m.expires>=source.at AND m.reason=? AND p.due IS ?`)
+    WHERE source.id=? AND earlier.id<>source.id AND m.closed IS NULL AND m.expires>=source.at AND m.reason=? AND p.due IS ?
+      AND NOT EXISTS (SELECT 1 FROM motive_invalidations i WHERE i.event=m.event)`)
     .get(event.id, evidence.quote, evidence.due);
   if (alreadyOpen) return false;
   const found = db.prepare('INSERT OR IGNORE INTO motives(event,title,reason,condition,expires,cooldown) VALUES(?,?,?,?,?,?)')
@@ -97,9 +108,8 @@ export function reminderForTurn(db, goals, entries, goalId, now) {
   const get = db.prepare('SELECT 1 FROM motive_reminders WHERE event=? AND signal=?');
   const note = db.prepare('INSERT OR IGNORE INTO motive_reminders VALUES(?,?)');
   const candidates = [];
-  for (const entry of entries) {
-    if (entry.self || !entry.senderId || typeof entry.text !== 'string' || !entry.text.trim()) continue;
-    const text = clean(interactionText(entry.text, entry.reply));
+  for (const { entry, text: body } of entries) {
+    const text = clean(body);
     const normalized = normalize(text);
     if (!normalized || sensitive.test(text) || commitmentEvidence(text, now)) continue;
     const owned = goals.filter(goal => goal.actor === String(entry.senderId) && goal.id !== goalId(entry)

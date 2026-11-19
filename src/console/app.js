@@ -1427,6 +1427,10 @@ function buildApp({
       resolveAtName: (qq) => (kind === 'group' ? budget.run(resolveAtName(id, qq), null) : null)
     });
     let reply = replySegment ? await getReply(replySegment.data.id) : null;
+    if (reply) {
+      const bodyText = await segmentsToText(segments, { includeReply: false, selfId: String(onebot.selfId || '') });
+      reply = { ...reply, bodyText };
+    }
     let nextMedia = media;
     if (segments && looksForward && event.message_id != null && autoExpand) {
       const isCard = !text.includes('[合并转发') && !text.includes('[转发消息');

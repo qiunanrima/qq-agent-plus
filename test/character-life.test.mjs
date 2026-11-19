@@ -8,6 +8,7 @@ process.env.QQ_AGENT_DATA_DIR = dir;
 const { updateConfig } = await import('../src/core/config.js');
 const { buildUserPrompt } = await import('../src/llm/prompt.js');
 const { openDatabase } = await import('../src/core/sqlite.js');
+const { formatQuoteRef } = await import('../src/core/util.js');
 const { interactionAdjustments, interactionKind } = await import('../src/character-life/emotion.js');
 const { lifeStatus, observeLife, linkedMemories, claimInitiative, analyzeLife, lifeWillingness, reviewGraphAliases, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -289,4 +290,42 @@ test('QQ 引用和系统表情不会作为发言者的正文进入情绪分析',
   const profile = lifeStatus(now + 1).profiles[0];
   assert.deepEqual(profile.events.map(event => event.kind), ['文字互动', '互动']);
   assert.equal(profile.dimensions.愤怒, baseline.愤怒);
+});
+
+test('未转义的历史引用边界有歧义时不归因，结构化正文仍可识别', () => {
+  for (const text of ['看这里[滚开', '看这里]滚开']) {
+    const reply = { messageId: '123', sender: '甲', text };
+    const rendered = formatQuoteRef(reply) + '谢谢';
+    assert.equal(interactionKind(rendered), '互动');
+    assert.equal(interactionKind(rendered, reply), '称赞');
+    assert.equal(interactionKind('谢谢' + formatQuoteRef(reply), { ...reply, bodyText: '谢谢' }), '称赞');
+  }
+});
+
+test('回看旧消息后停用引用误建的待办，保留真实待办及历史证据', async () => {
+  const chat = 'private:12';
+  const role = { botName: '引用归因回归' };
+  updateConfig({ characterLife: { enabled: true } });
+  const promise = '我明天发歌给你';
+  const quoted = '[引用#123·甲：' + promise + ']';
+  const mistaken = { id: 121, senderId: '12', ts: now, text: quoted + '好' };
+  const real = { id: 122, senderId: '12', ts: now + 1, text: quoted + promise };
+  observeLife({ persona: role, chatKey: chat, triggerEntries: [mistaken, real], now: now + 1 });
+  const db = openDatabase(path.join(dir, 'character-life.sqlite'));
+  try {
+    const { id } = db.prepare('SELECT id FROM events WHERE chat=? AND at=?').get(chat, now);
+    db.prepare('INSERT INTO motives(event,title,reason,condition,expires,cooldown) VALUES(?,?,?,?,?,?)')
+      .run(id, '错误的约定', mistaken.text, '确认发歌', now + 3600000, 0);
+    db.prepare('INSERT INTO motive_evidence VALUES(?,?,?)').run(id, '歌曲', null);
+    await analyzeLife({ persona: role, chat, messages: [mistaken, real], now: now + 2,
+      allowed: () => true, complete: async () => ({ events: [] }) });
+    const profile = lifeStatus(now + 2).profiles.find(profile => profile.events.some(event => event.chat === chat));
+    assert.ok(profile);
+    assert.deepEqual(profile.goals.map(goal => goal.title), ['把约好的歌发给对方']);
+    assert.match(observeLife({ persona: role, chatKey: chat, now: now + 3, triggerEntries: [
+      { id: 123, senderId: '12', ts: now + 3, text: '歌单呢' }
+    ] }), /把约好的歌发给对方/);
+    assert.equal(db.prepare('SELECT reason FROM motives WHERE event=?').get(id).reason, mistaken.text);
+    assert.ok(db.prepare('SELECT 1 FROM motive_evidence WHERE event=?').get(id));
+  } finally { db.close(); }
 });
