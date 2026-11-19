@@ -36,6 +36,7 @@ function graduatedFeatureState(c = state.config || {}) {
     slang: c.slangPilot?.graduated === true,
     incidents: c.incidentPilot?.graduated === true,
     'living-memory': c.livingMemory?.graduated === true,
+    'character-life': c.characterLife?.graduated === true,
     'personality-memory': c.personalityMemory?.graduated === true
   };
 }

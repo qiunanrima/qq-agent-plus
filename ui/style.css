@@ -7111,3 +7111,9 @@ html[data-side-rail='1'] .tab .pending-badge { top: 3px; right: 4px; min-width: 
 .skills-market-refresh { margin-left: 2px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-2); }
 .skills-market-refresh:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); color: var(--text); }
 .skills-market-refresh.is-loading svg { animation: spin 1s linear infinite; }
+#view-character-life.view.active {display:block;overflow:auto;padding:18px}
+.life-meter {display:grid;grid-template-columns:minmax(6em,1fr) 2fr 3em;align-items:center;gap:.6em;max-width:36em}
+.life-meter meter {width:100%}
+.life-rhythm {height:7rem;display:flex;align-items:end;gap:2px;max-width:36em}
+.life-rhythm div {background:var(--accent,currentColor);flex:1}
+.life-axis {display:flex;justify-content:space-between;max-width:36em}

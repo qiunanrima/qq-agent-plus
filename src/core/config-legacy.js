@@ -936,6 +936,7 @@ export const DEFAULT_CONFIG = {
   },
   // 长期语义记忆：独立服务 + 向量库，默认关闭且先走 shadow，不改变既有 MemoryStore 行为。
   livingMemory: structuredClone(LIVING_MEMORY_DEFAULTS),
+  characterLife: { enabled: false, graduated: false },
   personalityMemory: structuredClone(PERSONALITY_MEMORY_DEFAULTS),
   subagent: structuredClone(SUBAGENT_DEFAULTS),
   // 技能包（Skill Pack）：只读 Markdown 流程 + 工具白名单，不执行第三方代码。
@@ -2220,6 +2221,7 @@ export function updateConfig(patch, { force = false } = {}) {
   next.tokenSaver = { ...(next.tokenSaver || {}), mode: normalizeTokenSaverMode(next.tokenSaver?.mode) };
   next.timeControl = normalizeTimeControl(next.timeControl);
   next.livingMemory = normalizeLivingMemoryConfig(next.livingMemory);
+  next.characterLife = { enabled: next.characterLife?.enabled === true, graduated: next.characterLife?.graduated === true };
   next.personalityMemory = normalizePersonalityMemoryConfig(next.personalityMemory);
   try { next.agentWechat = normalizeWechatConfig(next.agentWechat); }
   catch (error) { throw invalidConfig(error.message); }

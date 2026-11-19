@@ -73,6 +73,7 @@ For the current modules:
 | Slang research | retired | retired | 黑话资产并入观测页 |
 | Incident handling | `incidentPilot.enabled` | `incidentPilot.graduated` | `incidents` / 异常处理 |
 | Long-term semantic memory | `livingMemory.enabled` | `livingMemory.graduated` | `living-memory` / 长期记忆 |
+| Character life | `characterLife.enabled` | `characterLife.graduated` | `character-life` / 角色生命系统 |
 | Personality growth memory | `personalityMemory.enabled` | `personalityMemory.graduated` | `personality-memory` / 人格成长 |
 | Restricted subagents | `subagent.enabled` | `subagent.graduated` | 生命周期卡片；调用记录沿用会话详情与日志 |
 | Group games | `groupGame.enabled`（默认关） | —（无固化开关） | `settings` / 设置页的「实验功能」开关与「群游戏」分区 |

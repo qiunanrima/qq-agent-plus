@@ -154,7 +154,7 @@ export class LivingMemoryRuntime {
     return this.service;
   }
 
-  async recall({ chatKey, triggerEntries = [], signal = null, forceSemantic = false, explicit = false } = {}) {
+  async recall({ chatKey, triggerEntries = [], signal = null, forceSemantic = false, explicit = false, relatedIds = null } = {}) {
     const cfg = this.config();
     if (!this.applies(chatKey)) return { text: '', entries: [], mode: 'disabled' };
     if (signal?.aborted) return { text: '', entries: [], mode: 'aborted' };
@@ -172,12 +172,24 @@ export class LivingMemoryRuntime {
       });
       if (signal?.aborted) return { text: '', entries: [], mode: 'aborted' };
       const entries = this.forgetting.rank('semantic', Array.isArray(result?.entries) ? result.entries : [], { automatic: !explicit });
+      const directEntries = entries.slice();
+      if (relatedIds && cfg.mode === 'active' && entries.length && entries.length < cfg.maxRecallItems) {
+        const allowed = this.scopesFor(chatKey);
+        const ids = entries.map(row => row.id);
+        for (const id of relatedIds(ids)) {
+          if (ids.includes(id)) continue;
+          const row = service.store.getMemory(id);
+          if (!row || !allowed.includes(row.scopeKey) || row.status !== 'active' || (row.expiresAt && row.expiresAt <= Date.now())) continue;
+          if (this.forgetting.rank('semantic', [row], { automatic: true }).length) entries.push(row);
+          if (entries.length >= cfg.maxRecallItems) break;
+        }
+      }
       const context = renderContext(entries, cfg.maxInjectChars);
       const view = { at: Date.now(), query: cleanText(query, 1000), entries, mode: result?.mode || 'unknown', vectorError: result?.vectorError || '' };
       view.injectedText = cfg.mode === 'active' ? context : '';
       this.lastRecall.set(chatKey, view);
       this.emit('living-memory-update', { chatKey, phase: 'recall', count: entries.length, mode: view.mode });
-      return { text: cfg.mode === 'active' ? context : '', entries, mode: cfg.mode, audit: view };
+      return { text: cfg.mode === 'active' ? context : '', entries, directEntries, mode: cfg.mode, audit: view };
     } catch (error) {
       this.log(`[living-memory] 召回跳过：${error?.message || error}`);
       this.emit('living-memory-update', { chatKey, phase: 'recall-error', error: String(error?.message || error) });

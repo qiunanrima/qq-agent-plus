@@ -77,6 +77,7 @@ import { assertTimeAllowed, isTimeActive, TimeControlError, timeUntilActive, wat
 import { vendorOfConfig, vendorOfBaseUrl } from '../pricing/model-prices.js';
 import { budgetStatus } from './budget.js';
 import { readOwnerUin } from './notify-owner.js';
+import { observeLife, claimInitiative, linkedMemories } from '../character-life/index.js';
 import { notePersonaInteraction, personaStatePrompt } from './persona-state.js';
 import { memeDensityPrompt } from '../llm/humanize.js';
 import { memesForPrompt } from '../memes/store.js';
@@ -2225,16 +2226,23 @@ export class Orchestrator {
     });
     // 状态行放本轮 user 消息，不拼进 system prompt：system 前缀参与 cacheKey/线程续接判定，
     // 每半小时变一次会让前缀缓存和 lifecycle 线程反复失效。
-    const personaStateLine = personaStatePrompt(persona);
+    let personaStateLine = personaStatePrompt(persona);
     // 长期语义记忆属于每轮临时上下文：放入 user 内容而非 system 前缀，避免检索结果变化让
     // lifecycle 线程与前缀缓存失效。服务不可用时仅跳过召回，聊天主链路照常。
     let livingRecall = { text: '', entries: [], mode: 'disabled' };
     try {
       if (!channel && cfg.memory?.hippocampusEnabled !== true) {
-        livingRecall = await this.livingMemory?.recall?.({ chatKey, triggerEntries, signal }) || livingRecall;
+        livingRecall = await this.livingMemory?.recall?.({ chatKey, triggerEntries, signal, relatedIds: cfg.characterLife?.enabled ? ids => linkedMemories(persona,chatKey,ids) : null }) || livingRecall;
       }
     } catch (error) {
       log.warn(`[living-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error);
+    }
+    if (!channel && cfg.characterLife?.enabled) {
+      try {
+        const hint = proactive && !triggerEntries?.length ? claimInitiative(persona,chatKey)
+          : observeLife({ persona, chatKey, triggerEntries, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
+        personaStateLine = [personaStateLine, hint].filter(Boolean).join('\n');
+      } catch (error) { log.warn('[character-life] 状态更新失败', error.message); }
     }
     const triggerText = (triggerEntries || []).map((entry) => String(entry?.text || '')).join('\n');
     let personalityRecall = '';

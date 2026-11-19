@@ -30,6 +30,7 @@ import { EffectLedger } from '../core/effects.js';
 import { MemoryStore } from '../memory/memory.js';
 import { registerMemoryManagementRoutes } from './routes/memory-management.js';
 import { LivingMemoryRuntime } from '../living-memory/runtime.js';
+import { lifeStatus, reflectLife } from '../character-life/index.js';
 import { PersonalityMemory } from '../personality-memory/index.js';
 import { registerPersonalityMemoryRoutes } from '../personality-memory/routes.js';
 import { StickerManager } from '../onebot/sticker-manager.js';
@@ -813,6 +814,17 @@ function buildApp({
     getIdentityPilot: () => identityPilot,
     getIncidentPilot: () => incidentPilot
   });
+  let lifeReflectionTimer;
+  function syncLifeReflection() {
+    clearInterval(lifeReflectionTimer);
+    if (!getConfig().characterLife?.enabled) return;
+    lifeReflectionTimer = setInterval(() => {
+      if (orchestrator.runningChats.size || !getConfig().characterLife?.enabled) return;
+      try { reflectLife(); } catch (error) { moduleLog('character-life')(error.message); }
+    }, 30 * 60 * 1000);
+    lifeReflectionTimer.unref();
+  }
+  syncLifeReflection();
   const dailyMoments = new DailyMomentsManager({
     store,
     memory,
@@ -2971,6 +2983,7 @@ function buildApp({
     }
   });
 
+  router.add('GET', '/api/character-life/status', async (req, res) => json(res, 200, lifeStatus()));
   router.add('GET', '/api/humanize/state', async (req, res, params, url) => {
     const chatKey = String(url?.searchParams?.get('chatKey') || '').trim();
     const cfg = getConfig();
@@ -2991,7 +3004,7 @@ function buildApp({
     json, readBody, getConfig, updateConfig, auditWrite, emit, log,
     store, orchestrator, sessions, mcpManager, pluginRegistry,
     dailyMoments, lifeFeed, qzoneInteractions, groupDigest, adminBriefing,
-    safeConfigWithAsrStatus, personalityMemory,
+    safeConfigWithAsrStatus, personalityMemory, syncLifeReflection,
     syncIncidentPilot, syncIdentityPilot, syncSlangPilot, syncAgentWechat: () => agentWechat.sync(),
     getConfigConflict, getBoundServerHost: () => boundServerHost,
     dataDir: DATA_DIR, configLog: moduleLog('config'), mcpLog: moduleLog('mcp'), stableJson
@@ -3687,6 +3700,7 @@ function buildApp({
     await incidentPilot?.stop();
     incidentPilot = null;
     livingMemory.stop();
+    clearInterval(lifeReflectionTimer);
     personalityMemory.cancelPending();
     onebot.close();
     await orchestrator.abortAll();

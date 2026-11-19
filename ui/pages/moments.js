@@ -17,6 +17,7 @@ import { $, $$, esc } from '../core/dom.js';
 import { chatNameOf, fmtTime, formatChatTitle } from '../core/format.js';
 import { state } from '../core/state.js';
 import { saveConfig } from './settings-save.js';
+import { renderLifeExperiment } from './character-life.js';
 import { renderPersonalityMemoryExperiment } from './personality-memory.js';
 import { renderSubagentExperiment } from './subagents.js';
 import { renderAgentWechatExperiment } from './agent-wechat.js';
@@ -89,6 +90,7 @@ function renderExperimentalSettingsSectionImpl(c) {
           </div>
         </div>
       </div>
+      ${renderLifeExperiment(c)}
       ${renderPersonalityMemoryExperiment(c)}
       ${renderSubagentExperiment(c)}
       ${renderAntigravityExperiment(c)}

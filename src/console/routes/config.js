@@ -571,6 +571,7 @@ export function registerConfigRoutes(router, deps = {}) {
     }
     auditWrite('config.update', 'config', { req, before: auditBefore, after: next, changed: changedTopKeys(auditBefore, next) });
     personalityMemory?.syncConfig();
+    deps.syncLifeReflection?.();
     orchestrator.subagents?.syncConfig();
     if (patch.agentWechat) { try { await deps.syncAgentWechat?.(); } catch { log('[agent-wechat] 微信同步失败，QQ 继续运行'); } }
     store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
@@ -715,6 +716,7 @@ export function registerConfigRoutes(router, deps = {}) {
     const next = reloadConfig();
     try { await deps.syncAgentWechat?.(); } catch { log('[agent-wechat] 微信同步失败，QQ 继续运行'); }
     personalityMemory?.syncConfig();
+    deps.syncLifeReflection?.();
     orchestrator.subagents?.syncConfig();
     const warnings = [];
     const warn = (label, error) => {
@@ -725,6 +727,7 @@ export function registerConfigRoutes(router, deps = {}) {
     };
 
     personalityMemory?.syncConfig();
+    deps.syncLifeReflection?.();
     orchestrator.subagents?.syncConfig();
     store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
     store.setSynchronous(next.store?.sqliteSynchronous);

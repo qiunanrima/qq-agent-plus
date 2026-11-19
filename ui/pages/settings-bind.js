@@ -27,6 +27,7 @@ import { bindImageGenPreset, bindTtsControls } from './settings-voice.js';
 import { bindHumanizePreset, bindHumanizeRecommend, bindProactiveWindowEditor, loadHumanizeState } from './chat.js';
 import { bindSearchTest } from './search-test.js';
 import { hydrateExtensionStatus } from './settings-extensions.js';
+import { bindLifeExperiment } from './character-life.js';
 import { bindPersonalityMemoryExperiment } from './personality-memory.js';
 import {
   openBlocklistModal, openModelAddModal, openModelDeleteModal, openModelPicker, openPriceDialog,
@@ -300,6 +301,7 @@ function bindSettingsSaveAndSections() {
   });
 
   if ((state.settingsSection || 'api') === 'experiments') {
+    bindLifeExperiment();
     bindPersonalityMemoryExperiment();
     loadExperimentalFeatureStatuses();
     $('#lm-open-console')?.addEventListener('click', () => switchTab('living-memory'));

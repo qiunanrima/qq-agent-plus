@@ -1,3 +1,4 @@
+import { backupLife, clearLife } from '../character-life/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -25,11 +26,15 @@ export function resetAllMemory({ dataDir, memory, livingMemory, personalityMemor
   write('identity-profiles.json', assets.memoryResetSnapshot());
   livingMemory.createResetBackup(path.join(directory, 'living-memory.sqlite'));
   personalityMemory?.createResetBackup(path.join(directory, 'personality-memory.sqlite'));
-  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'hippocampus', 'perception', 'identity-profiles', 'living-memory', 'personality-memory'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
+  backupLife(directory,dataDir);
+  const manifest = { id, at: Date.now(), status: 'prepared', includes: ['chat-history', 'context', 'person-memory', 'hippocampus', 'perception', 'identity-profiles', 'living-memory', 'personality-memory','character-life'], preserves: ['send-ledger', 'member-notes', 'configuration', 'previous-backups'] };
   write('manifest.json', manifest);
   let stage = 'personality-memory';
   const cleared = {};
   try {
+    stage = 'character-life';
+    clearLife(dataDir);
+    stage = 'personality-memory';
     cleared.personality = personalityMemory?.clearAll() || { entries: 0 };
     stage = 'living-memory';
     cleared.semantic = livingMemory.clearAll();
