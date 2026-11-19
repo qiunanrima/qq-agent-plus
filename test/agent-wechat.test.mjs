@@ -416,3 +416,64 @@ test('real shared Agent handles WeChat then QQ with their own tool catalogs and 
   f.store.appendIncoming('private:12345', { mid: 'qq-turn', text: '你好', senderId: '12345' });
   await runner.wake('private:12345'); assert.deepEqual(qqSent, ['你好呀']); assert.equal(requests.length, 4);
 });
+
+test('WeChat character life reminds only on a relevant new cue and keeps bound QQ separate', async t => {
+  const f = fixture(t, { enabled: true, bindings: { wxid_test: '12345' }, groups: ['123@chatroom'] });
+  f.cfg.characterLife.enabled = true;
+  f.cfg.api.model = 'mock'; f.cfg.api.baseUrl = 'https://model.invalid'; f.cfg.api.maxRounds = 3;
+  f.cfg.humanize.enabled = true; f.cfg.humanize.personaState.enabled = true;
+  f.cfg.humanize.respectPersonaCard = false;
+  f.cfg.sticker.enabled = false; f.cfg.memory.consolidateEnabled = false;
+  f.cfg.webSearch.enabled = false; f.cfg.conversation.replyGuardEnabled = false;
+  setRuntimeConfig(f.cfg);
+  const requests = [];
+  const sender = { sendTextBatch: async (_key, texts) => ({
+    sent: texts.map(text => ({ text, messageId: String(requests.length) })), failed: []
+  }) };
+  const memory = { formatForPrompt: () => '', formatHandoffForPrompt: () => '', getHandoff: () => null, query: () => ({}) };
+  const runner = new Orchestrator({ store: f.store, sessions: new SessionRegistry(), memory, stickers: {}, sender,
+    onebot: { selfId: '88888', selfNickname: 'bot' } });
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    const { messages } = JSON.parse(options.body);
+    requests.push(messages.map(row => row.content).filter(Boolean).join('\n'));
+    if (messages[0].content.includes('你分析虚构角色的状态')) {
+      const input = JSON.parse(messages[1].content);
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ events: input.messages.map(row => ({
+        index: row.index, quote: row.text,
+        ...(row.text.includes('乐谱') ? { motive: { title: '整理乐谱', condition: '确认乐谱已经整理完', topic: '乐谱' } } : {})
+      })) }) } }], usage: { total_tokens: 10 } });
+    }
+    const name = 'finish';
+    return Response.json({ choices: [{ message: { tool_calls: [{ id: 'done', type: 'function',
+      function: { name, arguments: JSON.stringify({ summary: '已处理' }) } }] } }], usage: { total_tokens: 10 } });
+  };
+  t.after(async () => { globalThis.fetch = original; await runner.abortAll(); });
+  let id = 0;
+  async function turn(key, actor, text) {
+    f.store.appendIncoming(key, { mid: 'life-' + ++id, text, senderId: actor });
+    const before = requests.length;
+    await runner.wake(key);
+    assert.ok(requests.length > before, 'expected the shared Agent to build a prompt');
+    return requests[before];
+  }
+  const wx = text => turn(f.key, 'wxid_test', text);
+  assert.doesNotMatch(await wx('你变了'), /历史约定|虚拟日常|【你现在的状态】/);
+  assert.doesNotMatch(await wx('明天把那首歌发我'), /历史约定/);
+  assert.doesNotMatch(await wx('额度没了'), /历史约定|虚拟日常|【你现在的状态】/);
+  assert.doesNotMatch(await turn('private:12345', '12345', '那首歌呢'), /相关的历史约定/);
+  const wxGroup = wechatChatKey('test', '123@chatroom');
+  assert.doesNotMatch(await turn(wxGroup, 'wxid_test', '那首歌呢'), /相关的历史约定/);
+  assert.doesNotMatch(await turn(wxGroup, 'wxid_test', '下次我们一起追番'), /相关的历史约定/);
+  assert.match(await turn(wxGroup, 'wxid_test', '说的那部动漫呢'), /相关的历史约定.*一起追番/);
+  assert.match(await wx('那首歌呢'), /相关的历史约定.*明天把那首歌发我/);
+  assert.doesNotMatch(await wx('那首歌呢'), /相关的历史约定/);
+  await wx('明天我打算整理乐谱');
+  assert.ok((await runner.reflectCharacterLife(f.key)).analyzed > 0, 'allowed WeChat is included in idle analysis');
+  assert.match(await wx('乐谱呢'), /相关的历史约定.*整理乐谱/);
+  f.cfg.agentWechat.allow = [];
+  setRuntimeConfig(f.cfg);
+  const before = requests.length;
+  assert.equal((await runner.reflectCharacterLife(f.key)).analyzed, 0);
+  assert.equal(requests.length, before, 'revoked WeChat must not call the model');
+});

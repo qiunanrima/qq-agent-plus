@@ -303,7 +303,7 @@ async function loadCharacterLife() {
       renderLiveProfiles(box.querySelector('#life-live'), data);
       renderLifeRhythm(box.querySelector('#life-rhythm-data'), data);
       const scopes = [...new Set(data.profiles.flatMap(profile =>
-        [...profile.events, ...profile.associations].map(entry => entry.chat)).filter(Boolean))];
+        [...profile.events, ...profile.associations].map(entry => entry.chat)).filter(chat => /^(group|private):\d+$/.test(chat)))];
       const current = select.value;
       if (current && !scopes.includes(current)) scopes.push(current);
       if (select.options.length !== scopes.length + 1 || scopes.some((scope, i) => select.options[i + 1]?.value !== scope)) {

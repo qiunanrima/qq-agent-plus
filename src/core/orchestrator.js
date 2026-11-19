@@ -1,4 +1,4 @@
-import { channelForChat, isExternalChat } from '../channels/registry.js';
+import { channelForChat, isExternalChat, isWechatChat } from '../channels/registry.js';
 import { mountOnDemandTools } from '../tools/on-demand.js';
 import { wechatBindingContext } from '../agent-wechat/config.js';
 import { crossPlatformMemoryTools } from '../agent-wechat/memory-bridge.js';
@@ -2226,7 +2226,8 @@ export class Orchestrator {
     });
     // 状态行放本轮 user 消息，不拼进 system prompt：system 前缀参与 cacheKey/线程续接判定，
     // 每半小时变一次会让前缀缓存和 lifecycle 线程反复失效。
-    const useCharacterLife = !channel && cfg.characterLife?.enabled === true;
+    const useCharacterLife = cfg.characterLife?.enabled === true
+      && (!isExternalChat(chatKey) || (isWechatChat(chatKey) && channel?.allowed(chatKey)));
     let personaStateLine = personaStatePrompt(persona, Date.now(), { includeText: !useCharacterLife });
     // 长期语义记忆属于每轮临时上下文：放入 user 内容而非 system 前缀，避免检索结果变化让
     // lifecycle 线程与前缀缓存失效。服务不可用时仅跳过召回，聊天主链路照常。
@@ -2240,7 +2241,7 @@ export class Orchestrator {
     }
     if (useCharacterLife) {
       try {
-        const hint = proactive && !triggerEntries?.length ? claimInitiative(persona,chatKey)
+        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey)
           : observeLife({ persona, chatKey, triggerEntries, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
         personaStateLine = [personaStateLine, hint].filter(Boolean).join('\n');
       } catch (error) { log.warn('[character-life] 状态更新失败', error.message); }
@@ -3440,8 +3441,8 @@ export class Orchestrator {
 
   async reflectCharacterLife(chatKey, { signal } = {}) {
     const allowed = () => !signal?.aborted && !this.paused && !this.aborted && !this.runningChats.size
-      && getConfig().characterLife?.enabled && canRun(chatKey)
-      && getConfig().runtime?.mode === 'active'
+      && getConfig().characterLife?.enabled && (!isExternalChat(chatKey) || isWechatChat(chatKey))
+      && canRun(chatKey) && getConfig().runtime?.mode === 'active'
       && !budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {}).exceeded;
     const complete = async messages => {
       if (!allowed()) return null;
@@ -3458,7 +3459,7 @@ export class Orchestrator {
     let analyzed = 0;
     try { analyzed = await analyzeLife({ persona: resolvePersona(cfg, chatKey), chat: chatKey, messages, complete, allowed }); }
     catch (error) { if (allowed()) log.warn('[character-life] 语境分析跳过', error.message); }
-    if (!allowed()) return { merged: 0, reinforced: 0, analyzed };
+    if (!allowed() || isExternalChat(chatKey)) return { merged: 0, reinforced: 0, analyzed };
     const result = await this.livingMemory.consolidateForLife(chatKey, { complete, allowed });
     if (allowed() && this.livingMemory.applies(chatKey)) {
       try {
