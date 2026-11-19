@@ -26,3 +26,20 @@ test('短句原样保留，不为了凑条数硬拆', () => {
   assert.deepEqual(shapeBubbles('在的', { maxBubbles: 3, maxChars: 60 }), ['在的']);
   assert.deepEqual(shapeBubbles('', { maxBubbles: 3 }), []);
 });
+
+test('编号回复可以发超过三条，保留各项的说明和代码', () => {
+  const code = '~~~text\n9. 这是代码示例\n~~~';
+  const items = ['开场白\n1. 第一项\n继续解释', `2. 第二项\n${code}`, '3、第三项', '4）第四项', '5. 第五项'];
+  assert.deepEqual(shapeBubbles(items.join('\n'), { maxBubbles: 3, maxChars: 10 }), items);
+  assert.deepEqual(shapeBubbles('有两个问题：1. 第一项\n例子是 0.5\n2. 第二项'), [
+    '有两个问题：1. 第一项\n例子是 0.5', '2. 第二项'
+  ]);
+});
+
+test('超过八个编号项时合并相邻项并保留换行', () => {
+  const items = Array.from({ length: 10 }, (_, index) => `${index + 1}. 说明`);
+  const bubbles = shapeBubbles(items.join('\n'));
+  assert.equal(bubbles.length, 8);
+  assert.deepEqual(bubbles[0].split('\n'), items.slice(0, 2));
+  assert.equal(bubbles.join('\n'), items.join('\n'));
+});

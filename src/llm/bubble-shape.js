@@ -8,6 +8,7 @@ function protect(text) {
   const parts = [];
   const stash = (value) => `\u0000${parts.push(value) - 1}\u0000`;
   let out = String(text ?? '');
+  out = out.replace(/^( {0,3})(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^ {0,3}\2[ \t]*(?=\r?$)/gm, (match) => stash(match));
   out = out.replace(/```[\s\S]*?```/g, (match) => stash(match));
   out = out.replace(/`[^`\n]+`/g, (match) => stash(match));
   out = out.replace(/https?:\/\/[^\s，。！？；、"')】]+/gi, (match) => stash(match));
@@ -28,6 +29,28 @@ function joinChunks(left, right, separator = '') {
   // 中文/标点结尾直接拼；英文单词之间补一个空格。
   const glue = separator || (/[A-Za-z0-9]$/.test(a) && /^[A-Za-z0-9]/.test(b) ? ' ' : '');
   return `${a}${glue}${b}`;
+}
+
+/** 编号项连同下方的说明、公式和代码一起发送。 */
+function numberedBubbles(message) {
+  const { text, parts } = protect(message);
+  const items = [...text.matchAll(/^[ \t]{0,3}(?:\*\*)?\d{1,3}(?:[.)．](?!\d)|[、）])(?=[ \t]*\S)/gm)];
+  if (!items.length) return [];
+  // 首项也可能紧接在开场白后面，如「有两个问题：1. ……」。
+  const inlineFirst = /^[^\r\n]*?[:：][ \t]*(?:\*\*)?1(?:[.)．](?!\d)|[、）])(?=[ \t]*\S)/.test(text)
+    && items[0].index > text.indexOf('\n')
+    && /^[ \t]*(?:\*\*)?2(?:[.)．]|[、）])/.test(items[0][0]);
+  if (items.length + Number(inlineFirst) < 2) return [];
+  const starts = [0, ...items.slice(inlineFirst ? 0 : 1).map(item => item.index)];
+  const count = Math.min(starts.length, 8);
+  const bubbles = [];
+  let from = 0;
+  for (let remaining = count; remaining > 0; remaining--) {
+    const to = from + Math.ceil((starts.length - from) / remaining);
+    bubbles.push(restore(text.slice(starts[from], starts[to]), parts).trim());
+    from = to;
+  }
+  return bubbles;
 }
 
 /** 把一条消息拆成待打包的片段。含代码/链接/颜文字的段落整段保留。 */
@@ -58,7 +81,7 @@ function chunksOf(message, charLimit) {
 /**
  * @param {string|string[]} messages 模型给的文本或数组
  * @param {{maxBubbles?: number, maxChars?: number, preserveCode?: boolean}} options
- * @returns {string[]} 1–maxBubbles 条气泡
+ * @returns {string[]} 普通回复最多 maxBubbles 条，单段编号回复最多 8 条
  */
 export function shapeBubbles(messages, { maxBubbles = 3, maxChars = 60 } = {}) {
   const list = (Array.isArray(messages) ? messages : [messages])
@@ -67,6 +90,10 @@ export function shapeBubbles(messages, { maxBubbles = 3, maxChars = 60 } = {}) {
   if (!list.length) return [];
   const bubbleLimit = Math.max(1, Math.min(8, Math.round(Number(maxBubbles) || 3)));
   const charLimit = Math.max(10, Math.min(2000, Math.round(Number(maxChars) || 60)));
+  if (list.length === 1) {
+    const numbered = numberedBubbles(list[0]);
+    if (numbered.length) return numbered;
+  }
   // 模型已经主动分好条、且每条都不超长时，尊重它的分条，不再按短句重新打包。
   if (list.length > 1 && list.every((item) => item.length <= charLimit)) {
     if (list.length <= bubbleLimit) return list.slice(0, bubbleLimit);
