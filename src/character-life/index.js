@@ -126,7 +126,8 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
       if (entry.self || !entry.senderId || !(entry.id || entry.messageId || entry.ts)) continue;
       const actor = String(entry.senderId);
       const id = interactionId(role, chatKey, entry);
-      const kind = interactionKind(entry.text);
+      const text = interactionText(entry.text, entry.reply);
+      const kind = interactionKind(text);
       const at = Number(entry.ts) || now;
       if (at < now - 7 * day) continue;
       const inserted = db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)').run(id,role,chatKey,actor,Math.min(at,now),kind);
@@ -134,7 +135,7 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
       for (const item of recalled || []) {
         if (item.id) db.prepare('INSERT OR IGNORE INTO links VALUES(?,?)').run(id,String(item.id));
       }
-      saveRecognizedMotive(db, { id, at: Math.min(at, now) }, entry.text);
+      saveRecognizedMotive(db, { id, at: Math.min(at, now) }, text);
     }
 
     const reminder = reminderForTurn(db, activeGoals(db, role, now, chatKey), triggerEntries,
@@ -296,16 +297,20 @@ function recoverKnownInteractions(role, chat, messages, now) {
     const find = db.prepare(`SELECT e.id,e.at,e.kind,p.event AS verified,m.closed FROM events e
       LEFT JOIN motive_evidence p ON p.event=e.id LEFT JOIN motives m ON m.event=e.id
       WHERE e.id=? AND e.at BETWEEN ? AND ?`);
-    const reclassify = db.prepare("UPDATE events SET kind=? WHERE id=? AND kind='互动'");
+    const reclassify = db.prepare('UPDATE events SET kind=? WHERE id=?');
+    const invalidateAnalysis = hasTable(db, 'event_analysis') ? db.prepare('DELETE FROM event_analysis WHERE event=?') : null;
     for (const entry of messages) {
       if (entry.self || !entry.senderId) continue;
-      const kind = interactionKind(entry.text);
-      if (kind === '互动') continue;
+      const text = interactionText(entry.text, entry.reply);
+      const kind = interactionKind(text);
       const event = find.get(interactionId(role, chat, entry), now - 3 * day, now);
       if (!event) continue;
-      if (event.kind === '互动') reclassify.run(kind, event.id);
-      if (!event.verified && !event.closed && commitmentEvidence(entry.text, event.at)?.topic) {
-        saveRecognizedMotive(db, event, entry.text);
+      if (event.kind !== kind) {
+        reclassify.run(kind, event.id);
+        if (event.kind !== '互动') invalidateAnalysis?.run(event.id);
+      }
+      if (!event.verified && !event.closed && commitmentEvidence(text, event.at)?.topic) {
+        saveRecognizedMotive(db, event, text);
       }
     }
     db.exec('COMMIT');
@@ -322,7 +327,9 @@ export async function analyzeLife({ persona, chat, messages, complete, allowed, 
     if (!hasTable(read, 'event_analysis')) return 0;
     const unprocessed = read.prepare(`SELECT e.id FROM events e LEFT JOIN event_analysis a ON a.event=e.id
       WHERE e.id=? AND a.event IS NULL AND e.at>=?`);
-    batch = messages.filter(entry => !entry.self && entry.senderId && interactionText(entry.text) && !privateText.test(entry.text)
+    batch = messages.filter(entry => !entry.self && entry.senderId).map(entry => ({
+      entry, text: interactionText(entry.text, entry.reply)
+    })).filter(({ entry, text }) => text && !privateText.test(text)
       && unprocessed.get(interactionId(role, chat, entry), now - 3 * day)).slice(-12);
     if (!batch.length) return 0;
     prior = activeGoals(read, role, now, chat).filter(goal => goal.condition).slice(0, 12);
@@ -335,7 +342,7 @@ export async function analyzeLife({ persona, chat, messages, complete, allowed, 
     return people.get(key);
   };
   const input = {
-    messages: batch.map((entry, i) => ({ index: i, person: alias(entry.senderId), text: shortText(entry.text, 450) })),
+    messages: batch.map(({ entry, text }, i) => ({ index: i, person: alias(entry.senderId), text: shortText(text, 450) })),
     goals: prior.map((goal, i) => ({ index: i, person: alias(goal.actor), title: goal.title, condition: goal.condition }))
   };
   const result = await complete([
@@ -354,7 +361,7 @@ export async function analyzeLife({ persona, chat, messages, complete, allowed, 
     let changed = 0;
     const created = new Map();
     const byIndex = new Map(result.events.slice(0, 12).map(item => [item?.index, item]));
-    for (const [index, entry] of batch.entries()) {
+    for (const [index, { entry }] of batch.entries()) {
       const id = interactionId(role, chat, entry);
       const event = findEvent.get(id);
       if (!event || event.at > now) continue;

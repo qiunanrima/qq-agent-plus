@@ -1,3 +1,5 @@
+import { formatQuoteRef } from '../core/util.js';
+
 export const emotionDimensions = ['愉悦', '悲伤', '愤怒', '精力', '安全感', '孤独感'];
 const interactionRules = [
   ['冲突', /你真烦|讨厌你|滚开|你别怼|你怎么老怼|说话太冲|你太过分|你这样让我不舒服/],
@@ -19,14 +21,29 @@ const ruleDeltas = {
 };
 const hour = 3600000;
 
-export function interactionText(value) {
-  return typeof value === 'string'
-    ? value.replace(/\[(?:CQ:[^\]]+|图片|表情包?|视频|语音|文件)\]/gi, '').trim() : '';
+export function interactionText(value, reply) {
+  if (typeof value !== 'string') return '';
+  let text = value.trim();
+  const prefix = formatQuoteRef(reply);
+  if (prefix && text.startsWith(prefix)) text = text.slice(prefix.length).trimStart();
+  // Archive rows may have only the rendered prefix. Bracketed media can occur inside it.
+  while (/^\[引用(?:#-?\d+(?:·[^：\]]*)?|[^：\]\[]*)：/.test(text)) {
+    let depth = 1;
+    let end = 1;
+    for (; end < text.length && depth; end++) {
+      if (text[end] === '[') depth++;
+      else if (text[end] === ']') depth--;
+    }
+    if (depth) break;
+    text = text.slice(end).trimStart();
+  }
+  const body = text.replace(/\[(?:CQ:[^\]]+|图片|QQ表情\d*[^\]\r\n]*|表情包?|视频|语音|文件)\]/gi, '').trim();
+  return /[\p{L}\p{N}]/u.test(body) ? body : '';
 }
 
-export function interactionKind(value) {
-  const text = interactionText(value);
-  if (!/[\p{L}\p{N}]/u.test(text)) return '互动';
+export function interactionKind(value, reply) {
+  const text = interactionText(value, reply);
+  if (!text) return '互动';
   return interactionRules.find(([, rule]) => rule.test(text))?.[0] || '文字互动';
 }
 
@@ -45,8 +62,8 @@ export function interactionAdjustments(rows, now) {
     const age = Math.max(0, now - row.at);
     const weight = Math.exp(-age / (4 * hour));
     const semantic = row.delta ? verifiedEmotionDelta(JSON.parse(row.delta)) : [];
-    const delta = semantic.some(Boolean) ? semantic : ruleDeltas[row.kind];
-    if (delta) {
+    const delta = semantic.length ? semantic : ruleDeltas[row.kind];
+    if (delta?.some(Boolean)) {
       const key = JSON.stringify([row.chat, row.actor, row.kind, Math.floor(row.at / (15 * 60000))]);
       const times = matchedPerSlot.get(key) || 0;
       if (times < 2) delta.forEach((value, index) => { adjustment[index] += value * weight; });

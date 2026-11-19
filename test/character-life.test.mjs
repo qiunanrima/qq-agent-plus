@@ -8,6 +8,7 @@ process.env.QQ_AGENT_DATA_DIR = dir;
 const { updateConfig } = await import('../src/core/config.js');
 const { buildUserPrompt } = await import('../src/llm/prompt.js');
 const { openDatabase } = await import('../src/core/sqlite.js');
+const { interactionAdjustments, interactionKind } = await import('../src/character-life/emotion.js');
 const { lifeStatus, observeLife, linkedMemories, claimInitiative, analyzeLife, lifeWillingness, reviewGraphAliases, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 test('启停、去重、会话隔离、动机完成和可视化数据', async () => {
@@ -251,4 +252,41 @@ test('后台补正旧事件，可用完整短句作证，拒绝从长句截取�
   assert.ok(profile.events.some(event => event.kind === '称赞'));
   assert.ok(profile.dimensions.愉悦 >= 60);
   assert.equal(profile.dimensions.愤怒, 5);
+});
+
+test('已验证的全零情绪覆盖关键词，缺失分析仍使用关键词', () => {
+  const conflict = { kind: '冲突', chat: 'group:1', actor: '10', at: now };
+  const baseline = interactionAdjustments([{ ...conflict, kind: '文字互动' }], now);
+  assert.deepEqual(interactionAdjustments([{ ...conflict, delta: '[0,0,0,0,0,0]' }], now), baseline);
+  assert.equal(interactionAdjustments([{ ...conflict, delta: '[]' }], now)[2], 9);
+});
+
+test('QQ 引用和系统表情不会作为发言者的正文进入情绪分析', async () => {
+  updateConfig({ characterLife: { enabled: true, adaptive: false }, humanize: { enabled: false } });
+  assert.equal(interactionKind('[引用#123·甲：滚开]好'), '文字互动');
+  assert.equal(interactionKind('[引用#-123·甲：滚开[图片]]谢谢'), '称赞');
+  assert.equal(interactionKind('[QQ表情14 微笑]'), '互动');
+  assert.equal(interactionKind('[QQ表情14微笑]'), '互动');
+  assert.equal(interactionKind('[QQ表情14]谢谢'), '称赞');
+  const chat = 'group:1';
+  const face = { id: 1, senderId: '10', text: '[QQ表情14 微笑]', ts: now };
+  const reply = { id: 2, senderId: '10', text: '[引用#123·甲：滚开]好', ts: now + 1 };
+  const baseline = lifeStatus(now, persona).profiles[0].dimensions;
+  observe(chat, [face]);
+  assert.deepEqual(lifeStatus(now).profiles[0].dimensions, baseline);
+  observe(chat, [reply], now + 1);
+  const db = openDatabase(path.join(dir, 'character-life.sqlite'));
+  try {
+    db.prepare('UPDATE events SET kind=? WHERE at=?').run('冲突', reply.ts);
+    db.prepare('UPDATE events SET kind=? WHERE at=?').run('文字互动', face.ts);
+  } finally { db.close(); }
+  const analyzed = await analyzeLife({ persona, chat, messages: [face, reply], now: now + 1, allowed: () => true,
+    complete: async messages => {
+      assert.deepEqual(JSON.parse(messages[1].content).messages.map(row => row.text), ['好']);
+      return { events: [] };
+    } });
+  assert.equal(analyzed, 1);
+  const profile = lifeStatus(now + 1).profiles[0];
+  assert.deepEqual(profile.events.map(event => event.kind), ['文字互动', '互动']);
+  assert.equal(profile.dimensions.愤怒, baseline.愤怒);
 });

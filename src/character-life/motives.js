@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { shanghaiDayStart, sanitizeUserText } from '../core/util.js';
+import { interactionText } from './emotion.js';
 
 const hour = 3600000;
 const day = 24 * hour;
@@ -98,7 +99,7 @@ export function reminderForTurn(db, goals, entries, goalId, now) {
   const candidates = [];
   for (const entry of entries) {
     if (entry.self || !entry.senderId || typeof entry.text !== 'string' || !entry.text.trim()) continue;
-    const text = clean(entry.text).replace(/\[(?:CQ:[^\]]+|图片|表情|视频|语音|文件)\]/gi, '').trim();
+    const text = clean(interactionText(entry.text, entry.reply));
     const normalized = normalize(text);
     if (!normalized || sensitive.test(text) || commitmentEvidence(text, now)) continue;
     const owned = goals.filter(goal => goal.actor === String(entry.senderId) && goal.id !== goalId(entry)
