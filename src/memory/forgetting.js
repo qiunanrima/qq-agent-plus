@@ -49,21 +49,27 @@ export class ForgettingStore {
     return { recallId: id, recallCount: count, strength: memoryStrength(count),
       lastReinforcedAt: last, retention: this.enabled() ? retention(last, count, this.now()) : 1 };
   }
+  readRecallRows(keys) {
+    return this.withDb(false, db => {
+      const found = new Map();
+      if (!db) return found;
+      for (let offset = 0; offset < keys.length; offset += 128) {
+        const batch = keys.slice(offset, offset + 128);
+        for (const row of db.prepare(`SELECT * FROM recalls WHERE id IN (${batch.map(() => '?').join(',')})`).all(...batch)) found.set(row.id, row);
+      }
+      return found;
+    });
+  }
+  usedMemoryIds(scope, rows) {
+    const ids = rows.map(row => [recallKey(scope, row), row.id]);
+    const recall = this.readRecallRows(ids.map(([key]) => key));
+    return new Set(ids.filter(([key]) => (recall.get(key)?.recall_count || 0) > 0).map(([,id]) => id));
+  }
   rank(scope, rows, { automatic = false } = {}) {
     if (!this.enabled()) return rows;
     let snapshot = new Map();
     const keys = [...new Set(rows.map(row => recallKey(typeof scope === 'function' ? scope(row) : scope, row)))];
-    try {
-      snapshot = this.withDb(false, db => {
-        const found = new Map();
-        if (!db) return found;
-        for (let offset = 0; offset < keys.length; offset += 128) {
-          const batch = keys.slice(offset, offset + 128);
-          for (const row of db.prepare(`SELECT * FROM recalls WHERE id IN (${batch.map(() => '?').join(',')})`).all(...batch)) found.set(row.id, row);
-        }
-        return found;
-      });
-    }
+    try { snapshot = this.readRecallRows(keys); }
     catch { /* Fall back to the original observation time if metadata is unavailable. */ }
     return rows.map(row => ({ row, memory: this.describe(typeof scope === 'function' ? scope(row) : scope, row, snapshot) }))
       .filter(({ memory }) => !automatic || memory.retention >= 0.05)

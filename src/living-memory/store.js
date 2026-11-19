@@ -562,14 +562,17 @@ export class LivingMemoryStore {
     }
   }
 
-  graph({ scopeKeys, memoryId = '', limit = 160 } = {}) {
+  graph({ scopeKeys, memoryId = '', limit = 160, curate = null } = {}) {
     const scopes = scopeList(scopeKeys);
     if (!scopes.length) return { nodes: [], edges: [] };
     const filters = [`scope_key IN (${scopes.map(() => '?').join(', ')})`, "status = 'active'", '(expires_at=0 OR expires_at>?)'];
     const values = [...scopes, now()];
     if (memoryId) { filters.push('id = ?'); values.push(asText(memoryId, 100)); }
-    const rows = this.db.prepare(`SELECT * FROM memories WHERE ${filters.join(' AND ')} ORDER BY importance DESC, updated_at DESC LIMIT ?`)
-      .all(...values, clampInt(limit, 1, 500, 160)).map(rowToMemory);
+    const max = clampInt(limit, 1, 500, 160);
+    const candidates = this.db.prepare(`SELECT ${MEMORY_TEXT_COLUMNS} FROM memories
+      WHERE ${filters.join(' AND ')} ORDER BY importance DESC, updated_at DESC, id LIMIT ?`)
+      .all(...values, curate && !memoryId ? Math.min(500, max * 3) : max).map(rowToMemory);
+    const { rows, cleanup } = curate && !memoryId ? curate(candidates, max) : { rows: candidates };
     const nodes = new Map();
     const edges = [];
     for (const memory of rows) {
@@ -577,7 +580,7 @@ export class LivingMemoryStore {
       for (const entity of memory.entities) {
         const entityId = `entity:${entity}`;
         if (!nodes.has(entityId)) nodes.set(entityId, { id: entityId, type: 'entity', label: entity });
-        edges.push({ id: `${memory.id}:entity:${entity}`, source: `memory:${memory.id}`, target: entityId, type: 'mentions' });
+        edges.push({ id: `${memory.id}:entity:${entity}`, source: `memory:${memory.id}`, target: entityId, type: 'mentions', memoryId: memory.id });
       }
       for (const relation of memory.relations) {
         const source = asText(relation?.source, 80);
@@ -590,7 +593,7 @@ export class LivingMemoryStore {
         edges.push({ id: `${memory.id}:relation:${source}:${target}`, source: sourceId, target: targetId, type: asText(relation?.predicate, 48) || 'related', memoryId: memory.id, evidence: relation?.evidence || null });
       }
     }
-    return { nodes: [...nodes.values()], edges };
+    return { nodes: [...nodes.values()], edges, ...(cleanup ? { cleanup } : {}) };
   }
 
   stats() {

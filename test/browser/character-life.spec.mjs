@@ -51,9 +51,11 @@ test('窄屏真实页面渲染六维读数、动机强度与关联记录',async 
   }}));
   await page.route('**/api/living-memory/graph?*', route => route.fulfill({ json: {
     nodes: [{id:'rain',type:'entity',label:'打雷'}, {id:'thunder',type:'entity',label:'雷鸣'},
-      {id:'person',type:'entity',label:'QQ:42'}, {id:'memory:episode',type:'memory',label:'一起等到雨停'}],
+      {id:'person',type:'entity',label:'QQ:42'}, {id:'memory:episode',type:'memory',label:'一起等到雨停'},
+      {id:'memory:episode2',type:'memory',label:'聊到深夜'}],
     edges: [{source:'rain',target:'person',type:'陪伴',memoryId:'episode'},
-      {source:'thunder',target:'person',type:'陪伴',memoryId:'episode'}]
+      {source:'thunder',target:'person',type:'陪伴',memoryId:'episode2'}],
+    ...(new URL(route.request().url()).searchParams.has('compact') ? {cleanup:{stale:3,duplicate:0}} : {})
   } }));
   await page.goto('/');
   await switchTo(page,'character-life');
@@ -73,9 +75,15 @@ test('窄屏真实页面渲染六维读数、动机强度与关联记录',async 
   await expect(page.locator('#character-life-page')).toContainText('sample-memory-id');
   await page.selectOption('#life-graph-scope','private:1');
   await expect(page.locator('.life-graph-diagram svg line')).toHaveCount(1);
+  await expect(page.locator('#life-graph-cleanup')).toContainText('已收起 3 条旧来源');
   await page.locator('[data-life-neighbor]').click();
+  await expect(page.locator('.life-graph-detail li')).toHaveCount(1);
+  await page.locator('.life-graph-detail summary').click();
   await expect(page.locator('.life-graph-detail')).toContainText('一起等到雨停');
+  await expect(page.locator('.life-graph-detail')).toContainText('聊到深夜');
   await page.locator('[data-life-explore]').click();
   await expect(page.locator('.life-graph-center')).toHaveText('QQ:42');
+  await page.locator('#life-full-graph').check();
+  await expect(page.locator('#life-graph-cleanup')).toHaveText('');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

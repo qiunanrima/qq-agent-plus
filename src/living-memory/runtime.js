@@ -6,6 +6,7 @@ import { safeSlice } from '../core/util.js';
 import { readLivingMemoryEmbeddingConfig } from './embedding.js';
 import { livingMemoryScopeAllowed, normalizeLivingMemoryConfig } from './config.js';
 import { LivingMemoryService } from './service.js';
+import { curateGraphRows } from './graph-curation.js';
 import { explainRecall } from './explain.js';
 import { ForgettingStore, recallKey } from '../memory/forgetting.js';
 
@@ -461,9 +462,16 @@ export class LivingMemoryRuntime {
     return { memory };
   }
 
-  graph(options) {
+  graph({ compact = false, ...options } = {}) {
     const service = this.#service({ create: false });
-    return service ? service.store.graph(options) : { nodes: [], edges: [] };
+    if (!service) return { nodes: [], edges: [] };
+    const curate = compact ? (rows, limit) => {
+      let used = null;
+      try { used = this.forgetting.usedMemoryIds('semantic', rows); }
+      catch (error) { this.log(`[living-memory] 使用记录不可读，暂保留旧图谱来源：${error.message}`); }
+      return curateGraphRows(rows, { used, now: Date.now(), limit });
+    } : null;
+    return service.store.graph({ ...options, curate });
   }
 
   async recallTest({ chatKey, query, limit } = {}) {

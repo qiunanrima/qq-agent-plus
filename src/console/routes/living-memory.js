@@ -122,6 +122,7 @@ export function registerLivingMemoryRoutes(router, deps = {}) {
       const result = await livingMemory.graph({
         scopeKeys: scopes,
         memoryId: String(url.searchParams.get('memoryId') || ''),
+        compact: url.searchParams.get('compact') === '1',
         limit: Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 160))
       });
       return json(res, 200, result);

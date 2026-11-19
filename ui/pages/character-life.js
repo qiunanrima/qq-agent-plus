@@ -99,8 +99,9 @@ function renderLifeGraph(container, { nodes, edges }) {
       ${alternateNames.length ? `<p>同义名称 · ${esc(alternateNames.join('、'))}</p>` : ''}
       <ul>${relationships.map(edge => `<li>
         <strong>${esc(label(edge.source))}</strong> → ${esc(nameOf(edge))} → <strong>${esc(label(edge.target))}</strong>
-        ${edge.memoryId ? `<div>来源 · ${esc(label('memory:' + edge.memoryId))}</div>` : ''}
-        ${edge.evidence?.quote ? `<blockquote>${esc(edge.evidence.quote)}</blockquote>` : ''}
+        ${edge.sources.length ? `<details${edge.sources.length === 1 ? ' open' : ''}><summary>来源（${edge.sources.length}）</summary>
+          ${edge.sources.map(source => `<div>${esc(label('memory:' + source.memoryId))}
+            ${source.quote ? `<blockquote>${esc(source.quote)}</blockquote>` : ''}</div>`).join('')}</details>` : ''}
       </li>`).join('')}</ul>
       ${neighbor !== focus ? '<button type="button" class="btn btn-small" data-life-explore>以此节点为中心</button>' : ''}`;
     detail.querySelector('[data-life-explore]')?.addEventListener('click', () => setFocus(neighbor));
@@ -197,8 +198,14 @@ function normalizeLifeGraph({ nodes, edges }, aliases) {
     const source = remap.get(edge.source), target = remap.get(edge.target);
     if (!source || !target || source === target) continue;
     const type = edge.type === '提及' ? 'mentions' : edge.type;
-    const id = JSON.stringify([source, target, type, edge.memoryId || '', edge.evidence?.quote || '']);
-    dedup.set(id, { ...edge, source, target, type });
+    const id = JSON.stringify([source, target, type]);
+    if (!dedup.has(id)) dedup.set(id, { source, target, type, sources: [] });
+    if (!edge.memoryId) continue;
+    const sources = dedup.get(id).sources;
+    const quote = edge.evidence?.quote || '';
+    if (!sources.some(item => item.memoryId === edge.memoryId && item.quote === quote)) {
+      sources.push({ memoryId: edge.memoryId, quote });
+    }
   }
   return { nodes: [...merged.values()], edges: [...dedup.values()] };
 }
@@ -255,6 +262,8 @@ async function loadCharacterLife() {
       <label for="life-graph-scope">会话</label>
       <select id="life-graph-scope"><option value="">选择会话</option></select>
       <small id="life-scope-status"></small>
+      <label id="life-full-graph-label" hidden><input type="checkbox" id="life-full-graph"> 显示全部现存来源</label>
+      <p id="life-graph-cleanup" role="status"></p>
       <details id="life-alias-settings" hidden><summary>管理本会话的同义名称</summary>
         <label for="life-aliases">每行一组，例如「该角色 = 茉雪儿」。两边填同一个名称可取消自动归并。</label>
         <textarea id="life-aliases" rows="4"></textarea>
@@ -273,6 +282,8 @@ async function loadCharacterLife() {
   const status = box.querySelector('#life-live-status');
   const select = box.querySelector('#life-graph-scope');
   const graph = box.querySelector('#life-graph');
+  const fullGraph = box.querySelector('#life-full-graph');
+  const graphCleanup = box.querySelector('#life-graph-cleanup');
   const aliasSettings = box.querySelector('#life-alias-settings');
   const aliases = box.querySelector('#life-aliases');
   const scheduleForm = box.querySelector('#life-schedule');
@@ -330,17 +341,24 @@ async function loadCharacterLife() {
     const request = ++graphRequest;
     const pairs = snapshot?.aliases?.[scope] || [];
     aliasSettings.hidden = !scope;
+    box.querySelector('#life-full-graph-label').hidden = !scope;
+    graphCleanup.textContent = '';
     if (resetAliases) {
+      fullGraph.checked = false;
       aliases.value = pairs.map(([from, to]) => `${from} = ${to}`).join('\n');
       box.querySelector('#life-alias-status').textContent = '';
     }
     graph.textContent = scope ? '载入关系…' : '';
     if (!scope) return;
     try {
-      const data = await api(`/api/living-memory/graph?scopeKey=${encodeURIComponent(scope)}&limit=80`);
+      const compact = fullGraph.checked ? '' : '&compact=1';
+      const data = await api(`/api/living-memory/graph?scopeKey=${encodeURIComponent(scope)}&limit=80${compact}`);
       if (visible() && request === graphRequest) {
         const learned = snapshot?.learnedAliases?.[scope] || [];
         renderLifeGraph(graph, normalizeLifeGraph(data, [...learned, ...pairs]));
+        if (data.cleanup?.stale || data.cleanup?.duplicate) {
+          graphCleanup.textContent = `已收起 ${data.cleanup.stale} 条旧来源、${data.cleanup.duplicate} 条重复来源`;
+        }
       }
     } catch (error) {
       if (visible() && request === graphRequest) graph.textContent = '关系读取失败：' + error.message;
@@ -348,6 +366,7 @@ async function loadCharacterLife() {
   }
 
   select.addEventListener('change', () => void updateGraph(true));
+  fullGraph.addEventListener('change', () => void updateGraph(false));
   box.querySelector('#life-refresh').addEventListener('click', refresh);
   box.querySelector('#life-save-aliases').addEventListener('click', async event => {
     const button = event.currentTarget;

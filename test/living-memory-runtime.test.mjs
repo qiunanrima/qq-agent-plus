@@ -187,3 +187,30 @@ test('语义等价审核归档改写副本，保留不同事件且已审核候�
     assert.equal(calls, 2);
   } finally { runtime.stop(); }
 });
+
+test('compact graph hides old unused episodes and duplicate cards without mutating the store', () => {
+  const graphDir = fs.mkdtempSync(path.join(root, 'graph-'));
+  const store = new LivingMemoryStore({ file: path.join(graphDir, 'memory.sqlite') });
+  const runtime = new LivingMemoryRuntime({ dataDir: graphDir, service: { store, close: () => store.close() },
+    getConfig: () => ({ livingMemory: { enabled: true } }) });
+  try {
+    const scopeKey = 'group:100';
+    const remember = (summary, type = 'episode') => store.upsertMemory({ scopeKey, type, summary, content: summary,
+      importance: 3, entities: ['星期五'] });
+    const stale = remember('旧闲聊');
+    const used = remember('被用到的经历');
+    const promise = remember('约定的时间', 'commitment');
+    remember('最近的经历');
+    remember('最近的经历');
+    const old = Date.now() - 16 * 86400000;
+    for (const id of [stale.id, used.id, promise.id]) store.db.prepare('UPDATE memories SET updated_at=? WHERE id=?').run(old, id);
+    runtime.forgetting.reinforce([runtime.forgetting.describe('semantic', used).recallId]);
+    const graph = runtime.graph({ scopeKeys: [scopeKey], compact: true });
+    const cards = graph.nodes.filter(node => node.type === 'memory').map(node => node.label);
+    assert.deepEqual(new Set(cards), new Set(['被用到的经历','约定的时间','最近的经历']));
+    assert.equal(cards.length, 3);
+    assert.deepEqual(graph.cleanup, { stale:1, duplicate:1, examined:5, visible:3 });
+    assert.equal(runtime.graph({ scopeKeys: [scopeKey] }).nodes.filter(node => node.type === 'memory').length, 5);
+    assert.equal(store.getMemory(stale.id).status, 'active');
+  } finally { runtime.stop(); }
+});
