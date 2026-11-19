@@ -202,3 +202,53 @@ test('到约定时间最多提醒一次，不因后续无关消息重复注入',
   assert.match(observe(chat,[{id:3,senderId:'10',ts:due,text:'我回来了'}],due),/历史约定/);
   assert.doesNotMatch(observe(chat,[{id:4,senderId:'10',ts:due+1000,text:'下面聊上课'}],due+1000),/历史约定/);
 });
+
+test('明确反馈即时改变情绪，普通文字互动只小幅影响孤独感', () => {
+  updateConfig({ characterLife: { enabled: true, adaptive: false }, humanize: { enabled: false } });
+  const at = seconds => now + seconds * 1000;
+  const mood = seconds => lifeStatus(at(seconds), persona).profiles[0].dimensions;
+  const send = (id, text) => observe('private:10', [{ id, senderId: '10', text, ts: at(id) }], at(id));
+  const baseline = mood(0);
+  send(1, '[图片]');
+  assert.deepEqual(mood(1), baseline);
+  send(2, '额度没了');
+  assert.equal(mood(2).愉悦, baseline.愉悦);
+  assert.equal(mood(2).愤怒, baseline.愤怒);
+  assert.ok(mood(2).孤独感 < baseline.孤独感);
+  send(3, '谢谢');
+  const thanked = mood(3);
+  assert.ok(thanked.愉悦 > baseline.愉悦);
+  assert.ok(thanked.安全感 > baseline.安全感);
+  send(3, '谢谢');
+  assert.deepEqual(mood(3), thanked);
+  send(4, '你说话太冲');
+  assert.ok(mood(4).愤怒 > thanked.愤怒);
+  send(5, '对不起');
+  assert.ok(mood(5).愤怒 < mood(4).愤怒);
+  assert.ok(mood(12 * 3600).愤怒 < mood(4).愤怒);
+});
+
+test('后台补正旧事件，可用完整短句作证，拒绝从长句截取短词作证', async () => {
+  updateConfig({ characterLife: { enabled: true, adaptive: false } });
+  const chat = 'private:10';
+  const messages = [
+    { id: 1, senderId: '10', text: '谢谢', ts: now },
+    { id: 2, senderId: '10', text: '暖气坏了，我得联系物业', ts: now + 10 },
+    { id: 3, senderId: '10', text: '好暖', ts: now + 20 }
+  ];
+  observe(chat, messages, now + 20);
+  const db = openDatabase(path.join(dir, 'character-life.sqlite'));
+  try { db.prepare("UPDATE events SET kind='互动' WHERE kind='称赞'").run(); }
+  finally { db.close(); }
+  assert.equal(await analyzeLife({
+    persona, chat, messages, now: now + 20, allowed: () => true,
+    complete: async () => ({ events: [
+      { index: 1, quote: '暖气', delta: [-15, 15, 15, 0, 0, 0] },
+      { index: 2, quote: '好暖', delta: { 愉悦: 6, 悲伤: 0, 愤怒: 0, 精力: 0, 安全感: 5, 孤独感: 0 } }
+    ] })
+  }), 3);
+  const profile = lifeStatus(now + 20).profiles[0];
+  assert.ok(profile.events.some(event => event.kind === '称赞'));
+  assert.ok(profile.dimensions.愉悦 >= 60);
+  assert.equal(profile.dimensions.愤怒, 5);
+});
