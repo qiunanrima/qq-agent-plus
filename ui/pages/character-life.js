@@ -59,6 +59,92 @@ function bindLifeExperiment() {
   });
 }
 
+function renderLifeGraph(container, { nodes, edges }) {
+  const graphNodes = new Map(nodes.map(node => [node.id, node]));
+  const links = new Map();
+  for (const edge of edges) {
+    if (!graphNodes.has(edge.source) || !graphNodes.has(edge.target)) continue;
+    for (const id of new Set([edge.source, edge.target])) {
+      if (!links.has(id)) links.set(id, []);
+      links.get(id).push(edge);
+    }
+  }
+  if (!links.size) {
+    container.textContent = '该会话暂无有效的长期记忆关联';
+    return;
+  }
+
+  const label = id => graphNodes.get(id)?.label || id;
+  const nameOf = edge => edge.type === 'mentions' ? '提到' : edge.type;
+  const ordered = [...links.keys()].sort((a, b) => links.get(b).length - links.get(a).length);
+  let focus = ordered.find(id => graphNodes.get(id).type === 'entity') || ordered[0];
+  let page = 0;
+  const pageSize = 8;
+  container.innerHTML = `<div class="life-graph-controls">
+    <label>中心节点 <select data-life-focus>${ordered.map(id => `<option value="${esc(id)}">${esc(label(id))}</option>`).join('')}</select></label>
+    <button type="button" class="btn btn-small" data-life-prev>上一组</button>
+    <button type="button" class="btn btn-small" data-life-next>下一组</button>
+    <span data-life-count></span></div>
+    <div class="life-graph-scroll"><div class="life-graph-diagram"></div></div>
+    <div class="life-graph-detail" aria-live="polite"></div>`;
+  const select = container.querySelector('[data-life-focus]');
+  const previous = container.querySelector('[data-life-prev]');
+  const next = container.querySelector('[data-life-next]');
+  const diagram = container.querySelector('.life-graph-diagram');
+  const detail = container.querySelector('.life-graph-detail');
+
+  function showDetails(neighbor, relationships) {
+    detail.innerHTML = `<h4>${esc(label(neighbor))}</h4>
+      <ul>${relationships.map(edge => `<li>
+        <strong>${esc(label(edge.source))}</strong> → ${esc(nameOf(edge))} → <strong>${esc(label(edge.target))}</strong>
+        ${edge.memoryId ? `<div>来源 · ${esc(label('memory:' + edge.memoryId))}</div>` : ''}
+        ${edge.evidence?.quote ? `<blockquote>${esc(edge.evidence.quote)}</blockquote>` : ''}
+      </li>`).join('')}</ul>
+      ${neighbor !== focus ? '<button type="button" class="btn btn-small" data-life-explore>以此节点为中心</button>' : ''}`;
+    detail.querySelector('[data-life-explore]')?.addEventListener('click', () => setFocus(neighbor));
+  }
+
+  function draw() {
+    const neighbors = new Map();
+    for (const edge of links.get(focus)) {
+      const neighbor = edge.source === focus ? edge.target : edge.source;
+      if (!neighbors.has(neighbor)) neighbors.set(neighbor, []);
+      neighbors.get(neighbor).push(edge);
+    }
+    const total = Math.ceil(neighbors.size / pageSize);
+    const points = [...neighbors].slice(page * pageSize, (page + 1) * pageSize).map(([id, relationships], index, group) => {
+      const angle = -Math.PI / 2 + index * Math.PI * 2 / group.length;
+      return { id, relationships, x: 50 + 35 * Math.cos(angle), y: 50 + 34 * Math.sin(angle) };
+    });
+    select.value = focus;
+    previous.disabled = page === 0;
+    next.disabled = page + 1 >= total;
+    container.querySelector('[data-life-count]').textContent = `${neighbors.size} 个相连节点${total > 1 ? ` · ${page + 1}/${total}` : ''}`;
+    diagram.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      ${points.map(({x,y}) => `<line x1="50" y1="50" x2="${x}" y2="${y}" vector-effect="non-scaling-stroke"/>`).join('')}
+      </svg><div class="life-graph-node life-graph-center" title="${esc(label(focus))}">${esc(label(focus))}</div>
+      ${points.map(({id,x,y}, index) => `<button type="button" class="life-graph-node" data-life-neighbor="${index}"
+        style="left:${x}%;top:${y}%" title="${esc(label(id))}" aria-pressed="false">${esc(label(id))}</button>`).join('')}`;
+    detail.textContent = '点选相连节点查看关系和来源';
+    const buttons = [...diagram.querySelectorAll('[data-life-neighbor]')];
+    buttons.forEach((button, index) => button.addEventListener('click', () => {
+      for (const node of buttons) node.setAttribute('aria-pressed', String(node === button));
+      const { id, relationships } = points[index];
+      showDetails(id, relationships);
+    }));
+  }
+
+  function setFocus(id) {
+    focus = id;
+    page = 0;
+    draw();
+  }
+  select.addEventListener('change', () => setFocus(select.value));
+  previous.addEventListener('click', () => { page--; draw(); });
+  next.addEventListener('click', () => { page++; draw(); });
+  draw();
+}
+
 async function loadCharacterLife() {
   const box = $('#character-life-page');
   if (!box) return;
@@ -90,13 +176,7 @@ async function loadCharacterLife() {
       try {
         const { nodes, edges } = await api(`/api/living-memory/graph?scopeKey=${encodeURIComponent(scope)}&limit=80`);
         if (scope !== select.value) return;
-        const labels = new Map(nodes.map(node => [node.id, node.label]));
-        graph.innerHTML = edges.length
-          ? `<ul class="life-graph-edges">${edges.map(edge => `<li><b>${esc(labels.get(edge.source) || '')}</b>
-            <span>${esc(edge.type === 'mentions' ? '提到' : edge.type)}</span>
-            <b>${esc(labels.get(edge.target) || '')}</b>
-            ${edge.memoryId ? `<small>来源 · ${esc(labels.get('memory:' + edge.memoryId) || edge.memoryId)}${edge.evidence?.quote ? ` · 「${esc(edge.evidence.quote)}」` : ''}</small>` : ''}</li>`).join('')}</ul>`
-          : '<p>该会话暂无有效的长期记忆关联</p>';
+        renderLifeGraph(graph, { nodes, edges });
       } catch (error) {
         if (scope === select.value) graph.textContent = '关系读取失败：' + error.message;
       }

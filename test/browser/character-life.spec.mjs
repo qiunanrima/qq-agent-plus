@@ -42,6 +42,10 @@ test('窄屏真实页面渲染六维读数、动机强度与关联记录',async 
   await expect(page.locator('.life-meter meter').first()).toHaveAttribute('value','72');
   await expect(page.locator('#character-life-page')).toContainText('sample-memory-id');
   await page.selectOption('#life-graph-scope','private:1');
-  await expect(page.locator('#life-graph')).toContainText('一起等到雨停');
+  await expect(page.locator('.life-graph-diagram svg line')).toHaveCount(1);
+  await page.locator('[data-life-neighbor]').click();
+  await expect(page.locator('.life-graph-detail')).toContainText('一起等到雨停');
+  await page.locator('[data-life-explore]').click();
+  await expect(page.locator('.life-graph-center')).toHaveText('QQ:42');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
