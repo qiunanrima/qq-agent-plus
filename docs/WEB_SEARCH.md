@@ -22,12 +22,39 @@
 场景规则只在词语含义不明且影响理解时引导查梗，先查本群梗库，再按需搜索；
 普通单词不强制搜索，不要求汇报搜索次数。图片直链交给看图工具，不当网页正文抓取。
 
-## 实验功能：Obscura 网页渲染
+## 实验功能：网页渲染
 
-常规 `fetch_url({"url":"https://…"})` 继续做 HTTP 抓取。只有在 **设置 → 实验功能 → 网页抓取 · Obscura** 启用后，
+常规 `fetch_url({"url":"https://…"})` 继续做 HTTP 抓取。只有在 **设置 → 实验功能 → 网页抓取 · 浏览器渲染** 启用后，
 模型才会看到可选参数 `render`。遇到依赖 JavaScript 的正文，可调用 `fetch_url({"url":"https://…","render":true})`。
 请求了渲染时，结果用 `rendered` 标记实际是否读到渲染后的正文。渲染忙、引擎不可用或渲染失败时返回 HTTP 内容。
 联网搜索总开关仍然生效。停用实验会结束进行中的渲染，普通 HTTP 抓取可以继续。
+
+Chromium 后端通过 `QQ_AGENT_CHROMIUM_SOCKET` 连接独立的 systemd 用户服务。配置 socket 后，渲染请求交给 Chromium，失败时返回 HTTP 内容。Chromium 以新会话按需启动，退出后释放内存。Unix socket 只允许服务账号访问，浏览器代理在连接前校验并固定公网 IP，原站的 HTTPS 与跨源规则由浏览器处理。
+
+如在 Debian 上部署，先安装 `chromium-headless-shell`。在 `~/.config/systemd/user/` 写入同名的 `qq-agent-chromium.socket` 和 `qq-agent-chromium.service`，并把路径改为实际安装目录。下面的内存参数适合用作 2 GiB 实例的初始测试值。
+
+```ini
+# qq-agent-chromium.socket
+[Socket]
+ListenStream=%t/qq-agent-chromium.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
+```
+
+```ini
+# qq-agent-chromium.service
+[Service]
+WorkingDirectory=/mnt/data/qq-agent/app
+ExecStart=/bin/bash /mnt/data/qq-agent/app/scripts/chromium-worker.sh
+MemoryHigh=320M
+MemoryMax=384M
+MemorySwapMax=0
+OOMPolicy=kill
+```
+
+为 QQA 服务设置 `Environment=QQ_AGENT_CHROMIUM_SOCKET=%t/qq-agent-chromium.sock`，重载 systemd 后启用 socket 并重启 QQA。另机部署时可通过 SSH 转发 Unix socket。未配置 socket 时，仍可使用 Obscura 后端。
 
 Obscura 是独立的 Rust + V8 浏览器引擎。上游 [98 个公开网页测试](https://github.com/h4ckf0r0day/obscura-benchmark#real-world-corpus-vs-headless-chrome)
 报告 Obscura 的峰值 RSS 中位数约 64 MB，Chromium 约 201 MB。本站点、系统和并发结果需单独测量。

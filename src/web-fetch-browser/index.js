@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { safeFetchRequest } from '../llm/safe-fetch.js';
 import { withObscura } from './obscura.js';
+import { renderChromiumDocument } from './chromium-client.js';
 
 const DOCUMENT_LIMIT = 512 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -28,7 +29,7 @@ export async function renderObscuraDocument(url, { binary, signal }) {
   });
 }
 
-export async function fetchBrowserPage(url, { signal, renderSignal, binary }) {
+export async function fetchBrowserPage(url, { signal, renderSignal, binary, socketPath }) {
   const document = await safeFetchRequest(url, {
     signal, maxBytes: DOCUMENT_LIMIT, decompress: true, allowFakeIpDns: false
   });
@@ -46,7 +47,9 @@ export async function fetchBrowserPage(url, { signal, renderSignal, binary }) {
   // Let the browser preserve the page origin and enforce its normal CORS policy.
   const combined = AbortSignal.any([signal, renderSignal, AbortSignal.timeout(15_000)]);
   try {
-    const text = await renderObscuraDocument(document.url, { binary, signal: combined });
+    const text = socketPath
+      ? await renderChromiumDocument(document.url, { socketPath, signal: combined })
+      : await renderObscuraDocument(document.url, { binary, signal: combined });
     if (text) return { ...fallback, body: text.slice(0, TEXT_LIMIT), truncated: text.length > TEXT_LIMIT, rendered: true };
   } catch {
     signal.throwIfAborted();

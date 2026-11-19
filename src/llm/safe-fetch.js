@@ -164,7 +164,7 @@ async function resolveSafeHost(hostname, { allowPrivate = false, allowFakeIpDns 
   if (!allowPrivate) {
     // fake-ip 代理会把任意域名解析到配置的 fake-ip 网段；只放行"DNS 结果"，
     // 直接在 URL 里写这些 IP 仍会被上面的 net.isIP 分支拦住。
-    const security = getConfig().security || {};
+    const security = allowFakeIpDns ? getConfig().security || {} : {};
     const useFakeIpDns = allowFakeIpDns && security.allowFakeIpDns !== false;
     const fakeCidrs = security.fakeIpCidrs;
     for (const { address } of addresses) {

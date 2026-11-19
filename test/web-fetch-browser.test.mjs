@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { buildToolDefs } from '../src/tools/tools-core.js';
 import { getConfig, setRuntimeConfig } from '../src/core/config.js';
 import { webFetch } from '../src/llm/web-search.js';
 import { renderObscuraDocument } from '../src/web-fetch-browser/index.js';
+import { openChromiumProxy } from '../src/web-fetch-browser/chromium-proxy.js';
 import {
   normalizeWebFetchBrowserConfig, syncWebFetchBrowser, tryStartWebFetchBrowser
 } from '../src/web-fetch-browser/config.js';
@@ -73,4 +74,26 @@ test('Obscura rejects a cancelled render', {
   const signal = AbortSignal.timeout(200);
   await assert.rejects(renderObscuraDocument('about:blank', { binary, signal }));
   assert.equal(signal.aborted, true);
+});
+
+test('Chromium proxy rejects both an HTTP request and a CONNECT to loopback', async (t) => {
+  let requests = 0;
+  const target = createServer((_request, response) => { requests += 1; response.end(); });
+  target.listen(0, '127.0.0.1');
+  await once(target, 'listening');
+  t.after(() => new Promise(resolve => target.close(resolve)));
+  const proxy = await openChromiumProxy(AbortSignal.timeout(3_000));
+  t.after(() => proxy.close());
+  const address = '127.0.0.1:' + target.address().port;
+  for (const [method, path] of [['GET', 'http://' + address + '/'], ['CONNECT', address]]) {
+    const status = await new Promise((resolve, reject) => {
+      const outgoing = httpRequest(proxy.url, { method, path });
+      outgoing.on('response', response => { response.resume(); resolve(response.statusCode); });
+      outgoing.on('connect', (response, socket) => { socket.destroy(); resolve(response.statusCode); });
+      outgoing.on('error', reject);
+      outgoing.end();
+    });
+    assert.equal(status, 403);
+  }
+  assert.equal(requests, 0);
 });

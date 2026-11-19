@@ -10,8 +10,8 @@ function browserFetchState(config) {
 function renderWebFetchBrowserExperiment(c) {
   const config = c.webFetchBrowser || {};
   return `<div class="experiment-card" id="experiment-web-fetch-browser">
-    <div class="experiment-card-main"><strong>网页抓取 · Obscura</strong>
-      <p>按需渲染依赖 JavaScript 的网页正文。每次最多运行一个浏览器进程。</p>
+    <div class="experiment-card-main"><strong>网页抓取 · 浏览器渲染</strong>
+      <p>按需渲染依赖 JavaScript 的网页正文。同一时间只处理一个渲染请求。</p>
       <small id="web-fetch-browser-state">${browserFetchState(config)}</small></div>
     <div class="experiment-card-side"><label class="checkbox-row">
       <input type="checkbox" id="web-fetch-browser-enabled" ${config.enabled === true ? 'checked' : ''}>启用

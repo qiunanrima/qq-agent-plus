@@ -717,14 +717,15 @@ export async function webFetch(url, { signal, maxBytes, headers, render = false 
   const total = AbortSignal.timeout(20_000);
   const combined = signal ? AbortSignal.any([signal, total]) : total;
   const binary = process.env.QQ_AGENT_OBSCURA_BIN;
-  const slot = render === true && binary && maxBytes === undefined && headers === undefined
+  const socketPath = process.env.QQ_AGENT_CHROMIUM_SOCKET;
+  const slot = render === true && (socketPath || binary) && maxBytes === undefined && headers === undefined
     ? tryStartWebFetchBrowser(getConfig()) : null;
   if (!slot) {
     const result = await safeFetch(url, { signal: combined, maxBytes, headers });
     return render === true ? { ...result, rendered: false } : result;
   }
   try {
-    return await fetchBrowserPage(url, { signal: combined, renderSignal: slot.signal, binary });
+    return await fetchBrowserPage(url, { signal: combined, renderSignal: slot.signal, binary, socketPath });
   } finally {
     slot.release();
   }
