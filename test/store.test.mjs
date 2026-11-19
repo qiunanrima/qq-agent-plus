@@ -19,8 +19,14 @@ describe('ChatStore', () => {
 
   it('keeps decision history bounded, per chat, and persistent until the archive is cleared', (t) => {
     const { store, dir } = fixture(t);
+    store.recordChatDecision('group:1', { at: 0, outcome: 'skipped' });
     store.recordChatDecision('group:2', { at: 0, outcome: 'skipped' });
-    for (let i = 1; i <= 21; i += 1) store.recordChatDecision('group:1', { at: i, outcome: 'replied' });
+    assert.deepEqual(store.latestSkippedChatDecisions(), new Map([
+      ['group:1', { at: 0, outcome: 'skipped' }], ['group:2', { at: 0, outcome: 'skipped' }]
+    ]));
+    store.recordChatDecision('group:1', { at: 1, outcome: 'replied' });
+    assert.deepEqual(store.latestSkippedChatDecisions(), new Map([['group:2', { at: 0, outcome: 'skipped' }]]));
+    for (let i = 2; i <= 21; i += 1) store.recordChatDecision('group:1', { at: i, outcome: 'replied' });
     assert.deepEqual(store.recentChatDecisions('group:1', 21).map((item) => item.at),
       Array.from({ length: 20 }, (_, i) => 21 - i));
     for (let i = 3; i <= 482; i += 1) store.recordChatDecision(`group:${i}`, { at: i, outcome: 'noreply' });

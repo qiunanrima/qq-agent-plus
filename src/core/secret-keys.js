@@ -122,6 +122,7 @@ export function sanitizeConfigSecrets(cfg) {
       // Ocp-Apim-Subscription-Key: …。键名前后可能是 =、-、空白，不能只认 "key="。
       const inlineSecret = /(?:^|[-_=:;,\s])(?:authorization|auth|api[-_]?key|subscription[-_]?key|access[-_]?token|auth[-_]?token|token|key|secret|pass(?:word|wd)?|cookie|session[-_]?key)\s*[:=]/i;
       const looksSecretArg = (arg) => inlineSecret.test(arg)
+        || /(?:token|key|secret|password)=/i.test(arg)
         || /\bBearer\s+\S+/i.test(arg)
         || /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i.test(arg);
       const args = [];

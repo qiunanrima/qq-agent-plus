@@ -46,12 +46,13 @@ export function registerSessionRoutes(router, deps = {}) {
   router.add('GET', '/api/chats', async (req, res) => {
     const cfgNow = getConfig();
     const incidentPilot = getIncidentPilot();
+    const latestSkipped = store.latestSkippedChatDecisions();
     const chats = store.listChats().map((key) => {
       const meta = store.getChatMeta(key);
       return {
         key,
         ...meta,
-        lastDecision: orchestrator.decisionFor(key),
+        lastDecision: latestSkipped.get(key) ?? null,
         incidentControl: incidentPilot?.getChatControl(key) || null,
         incidentDecision: incidentPilot?.chatDecision(key, meta) || null,
         ...(cfgNow.timeControl?.enabled

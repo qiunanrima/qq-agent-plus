@@ -159,6 +159,7 @@ test('sanitizeConfigSecrets：MCP args 的 header 内联/分参数写法与 URL 
           '--header=Authorization: Bearer ghp_header_secret',
           '-H', 'X-Api-Key: sk-header-secret',
           '--header', 'Ocp-Apim-Subscription-Key: azure-secret',
+          '--clientSecret=demo-client-secret', '--refreshToken=demo-refresh-token',
           'https://user:pass@example.test/mcp'
         ],
         env: {}
@@ -170,8 +171,8 @@ test('sanitizeConfigSecrets：MCP args 的 header 内联/分参数写法与 URL 
   assert.equal(args[1], 'server.js');
   assert.equal(args.at(-1), '******', 'URL 内嵌凭据不能明文下发');
   const text = JSON.stringify(out);
-  for (const secret of ['ghp_header_secret', 'sk-header-secret', 'azure-secret', 'pass@example']) {
+  for (const secret of ['ghp_header_secret', 'sk-header-secret', 'azure-secret', 'pass@example', 'demo-client-secret', 'demo-refresh-token']) {
     assert.ok(!text.includes(secret), `${secret} 不能出现在下发的 args 里`);
   }
-  assert.equal(args.filter((arg) => arg === '******').length, 4, '三条头 + 一条 URL 凭据');
+  assert.equal(args.filter((arg) => arg === '******').length, 6);
 });

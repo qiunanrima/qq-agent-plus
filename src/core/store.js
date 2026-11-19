@@ -1255,6 +1255,17 @@ export class ChatStore {
       ORDER BY id DESC LIMIT ?`).all(chatKey, count).map((row) => JSON.parse(row.decision_json));
   }
 
+  latestSkippedChatDecisions() {
+    const rows = this.db.prepare(`SELECT chat_key, decision_json FROM chat_decisions
+      WHERE id IN (SELECT MAX(id) FROM chat_decisions GROUP BY chat_key)`).all();
+    const decisions = new Map();
+    for (const row of rows) {
+      const decision = JSON.parse(row.decision_json);
+      if (decision.outcome === 'skipped') decisions.set(row.chat_key, decision);
+    }
+    return decisions;
+  }
+
   appendThreadTurns(chatKey, threadId, runId, messages = []) {
     if (!Array.isArray(messages) || !messages.length) return { added: 0, chars: 0 };
     return this.#transaction(() => {
