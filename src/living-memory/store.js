@@ -495,7 +495,8 @@ export class LivingMemoryStore {
     try {
       const rows = this.db.prepare(`WITH ranked AS (
         SELECT id AS duplicate, FIRST_VALUE(id) OVER (
-          PARTITION BY type, summary, content, tags_json, entities_json, relations_json, expires_at
+          PARTITION BY type, summary, content, tags_json, entities_json, expires_at,
+            (SELECT json_group_array(json_remove(value,'$.evidence')) FROM json_each(relations_json) AS relation WHERE relation.type='object')
           ORDER BY importance DESC, confidence DESC, created_at, id
         ) AS canonical
         FROM memories WHERE scope_key=? AND status='active' AND (expires_at=0 OR expires_at>?)
@@ -553,7 +554,7 @@ export class LivingMemoryStore {
         const targetId = `entity:${target}`;
         if (!nodes.has(sourceId)) nodes.set(sourceId, { id: sourceId, type: 'entity', label: source });
         if (!nodes.has(targetId)) nodes.set(targetId, { id: targetId, type: 'entity', label: target });
-        edges.push({ id: `${memory.id}:relation:${source}:${target}`, source: sourceId, target: targetId, type: asText(relation?.predicate, 48) || 'related', memoryId: memory.id });
+        edges.push({ id: `${memory.id}:relation:${source}:${target}`, source: sourceId, target: targetId, type: asText(relation?.predicate, 48) || 'related', memoryId: memory.id, evidence: relation?.evidence || null });
       }
     }
     return { nodes: [...nodes.values()], edges };

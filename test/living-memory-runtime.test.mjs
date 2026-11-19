@@ -111,3 +111,53 @@ test('active relation expansion enforces prompt scope and preserves direct recal
     assert.match(fallback.text, /本地 SQLite 向量记忆/);
   } finally { runtime.stop(); }
 });
+
+test('new extracted relations need a stored turn and a verbatim quote from an observed participant', async () => {
+  const service = serviceFixture();
+  const runtime = new LivingMemoryRuntime({
+    dataDir: root, service,
+    getConfig: () => ({ characterLife: { enabled: true }, livingMemory: { enabled: true, captureIdleMs: 600000 } }),
+    complete: async () => ({ message: { content: JSON.stringify([{
+      summary: '打雷时有人陪伴', entities: ['打雷', 'QQ:42', 'QQ:99'],
+      relations: [
+        { source: '打雷', target: 'QQ:42', predicate: '陪伴', quote: '我陪你等到雨停' },
+        { source: '打雷', target: 'QQ:42', predicate: '编造', quote: '对话中没有的话' },
+        { source: '打雷', target: 'QQ:99', predicate: '冒认', quote: '我陪你等到雨停' }
+      ]
+    }]) } })
+  });
+  try {
+    runtime.captureTurn({ chatKey: 'group:100', triggerEntries: [{ senderId: '42', text: '我陪你等到雨停' }] });
+    assert.equal((await runtime.flush('group:100')).created, 1);
+    assert.deepEqual(service.created.entities, ['打雷','QQ:42']);
+    assert.deepEqual(service.created.relations, [{
+      source: '打雷', target: 'QQ:42', predicate: '陪伴', evidence: { turnId: 'turn_1', quote: '我陪你等到雨停' }
+    }]);
+  } finally { runtime.stop(); }
+});
+
+test('aging drops detail before the normal forgetting threshold removes a card', async () => {
+  const service = serviceFixture();
+  const runtime = new LivingMemoryRuntime({
+    dataDir: root, service,
+    getConfig: () => ({ livingMemory: { enabled: true, mode: 'active', maxRecallItems: 1 } })
+  });
+  try {
+    const start = Date.now();
+    runtime.forgetting.now = () => start;
+    const recall = service.recall.bind(service);
+    service.recall = async input => {
+      const result = await recall(input);
+      result.entries[0].createdAt = start;
+      return result;
+    };
+    const input = { chatKey: 'group:100', triggerEntries: [{ text: 'SQLite' }], expandRelations: true };
+    assert.match((await runtime.recall(input)).text, /保存在 Agent 数据目录/);
+    runtime.forgetting.now = () => start + 3 * 86400000;
+    const aged = await runtime.recall(input);
+    assert.match(aged.text, /本地 SQLite 向量记忆/);
+    assert.doesNotMatch(aged.text, /保存在 Agent 数据目录/);
+    runtime.forgetting.now = () => start + 7 * 86400000;
+    assert.equal((await runtime.recall(input)).text, '');
+  } finally { runtime.stop(); }
+});

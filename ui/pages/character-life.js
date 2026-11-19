@@ -95,7 +95,7 @@ async function loadCharacterLife() {
           ? `<ul class="life-graph-edges">${edges.map(edge => `<li><b>${esc(labels.get(edge.source) || '')}</b>
             <span>${esc(edge.type === 'mentions' ? '提到' : edge.type)}</span>
             <b>${esc(labels.get(edge.target) || '')}</b>
-            ${edge.memoryId ? `<small>来源 · ${esc(labels.get('memory:' + edge.memoryId) || edge.memoryId)}</small>` : ''}</li>`).join('')}</ul>`
+            ${edge.memoryId ? `<small>来源 · ${esc(labels.get('memory:' + edge.memoryId) || edge.memoryId)}${edge.evidence?.quote ? ` · 「${esc(edge.evidence.quote)}」` : ''}</small>` : ''}</li>`).join('')}</ul>`
           : '<p>该会话暂无有效的长期记忆关联</p>';
       } catch (error) {
         if (scope === select.value) graph.textContent = '关系读取失败：' + error.message;
