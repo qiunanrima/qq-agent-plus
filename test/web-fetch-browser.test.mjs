@@ -44,7 +44,7 @@ test('fetch_url advertises render only while enabled and rejects private targets
 });
 
 const binary = process.env.QQ_AGENT_OBSCURA_BIN;
-test('Obscura reads dynamically inserted text and only forwards allowed same-origin GETs', {
+test('Obscura renders JavaScript while the browser blocks loopback requests', {
   skip: !binary && '需要 QQ_AGENT_OBSCURA_BIN 指向官方 Obscura 二进制'
 }, async (t) => {
   let loopbackRequests = 0;
@@ -55,57 +55,22 @@ test('Obscura reads dynamically inserted text and only forwards allowed same-ori
   fixture.listen(0, '127.0.0.1');
   t.after(() => new Promise(resolve => fixture.close(resolve)));
   await once(fixture, 'listening');
+
   const localUrl = 'http://127.0.0.1:' + fixture.address().port + '/fixture';
-  const origin = 'https://qqa-render-fixture.invalid';
-  const requested = [];
-  const rendered = await renderObscuraDocument({
-    url: origin + '/index', statusCode: 200, contentType: 'text/html',
-    body: `<!doctype html><main>加载中</main><script src="/app.js"></script>`
-  }, {
-    binary, signal: AbortSignal.timeout(8_000),
-    async fetchResource(url, options) {
-      assert.equal(options.redirect, 'manual');
-      assert.equal(options.allowFakeIpDns, false);
-      requested.push(url);
-      if (url === origin + '/app.js') return {
-        statusCode: 200, contentType: 'text/javascript',
-        body: `const show = text => { document.querySelector('main').textContent = text; };
-          Promise.allSettled([
-            fetch('/api').then(response => response.text()).then(show),
-            fetch('/save', { method: 'POST', body: 'fixture' }),
-            fetch('https://other-fixture.invalid/api'),
-            fetch(${JSON.stringify(localUrl)})
-          ]);`
-      };
-      if (url === origin + '/api') return {
-        statusCode: 200, contentType: 'text/plain', body: 'Obscura 动态正文'
-      };
-      throw new Error('unexpected fixture request');
-    }
-  });
-  assert.deepEqual(requested, [origin + '/app.js', origin + '/api']);
+  const html = `<!doctype html><main>加载中</main><script>
+    const show = text => { document.querySelector('main').textContent = text; };
+    fetch(${JSON.stringify(localUrl)}).then(() => show('unexpected'), () => show('Obscura 动态正文'));
+  </script>`;
+  const url = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+  const rendered = await renderObscuraDocument(url, { binary, signal: AbortSignal.timeout(8_000) });
   assert.equal(rendered, 'Obscura 动态正文');
   assert.equal(loopbackRequests, 0);
 });
 
-test('cancelling Obscura stops an in-flight same-origin resource', {
+test('Obscura rejects a cancelled render', {
   skip: !binary && '需要 QQ_AGENT_OBSCURA_BIN 指向官方 Obscura 二进制'
 }, async () => {
-  const cancel = new AbortController();
-  const signal = AbortSignal.any([cancel.signal, AbortSignal.timeout(6_000)]);
-  const reason = new Error('fixture cancelled');
-  let resourceSignal;
-  await assert.rejects(renderObscuraDocument({
-    url: 'https://qqa-render-fixture.invalid/cancel', statusCode: 200, contentType: 'text/html',
-    body: '<!doctype html><script src="/waiting.js"></script>'
-  }, {
-    binary, signal,
-    fetchResource(_url, options) {
-      resourceSignal = options.signal;
-      cancel.abort(reason);
-      options.signal.throwIfAborted();
-    }
-  }));
-  assert.equal(signal.reason, reason);
-  assert.equal(resourceSignal?.aborted, true);
+  const signal = AbortSignal.timeout(200);
+  await assert.rejects(renderObscuraDocument('about:blank', { binary, signal }));
+  assert.equal(signal.aborted, true);
 });

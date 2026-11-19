@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, readdir, rm, rmdir } from 'node:fs/promises';
-import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -30,19 +29,11 @@ async function readEndpoint(readyFile, child, stopped, signal) {
   }
 }
 
-export async function withObscura(binary, signal, handleRequest, run) {
+export async function withObscura(binary, signal, run) {
   if (!binary || !isAbsolute(binary)) throw new Error('需要配置 Obscura 二进制的绝对路径');
   signal.throwIfAborted();
   const dir = await mkdtemp(join(tmpdir(), 'qqa-obscura-'));
   const readyFile = join(dir, 'ready.json');
-  const proxy = createServer((request, response) => {
-    void handleRequest(request, response).catch(() => {
-      if (!response.headersSent) response.writeHead(502);
-      response.end();
-    });
-  });
-  proxy.on('connect', (_request, socket) => socket.destroy());
-  proxy.on('upgrade', (_request, socket) => socket.destroy());
   let child;
   let childClosed;
   let socket;
@@ -52,16 +43,14 @@ export async function withObscura(binary, signal, handleRequest, run) {
   };
   signal.addEventListener('abort', stop, { once: true });
   try {
-    proxy.listen(0, '127.0.0.1');
-    await once(proxy, 'listening');
     signal.throwIfAborted();
     const token = randomBytes(32).toString('hex');
     const env = {
       OBSCURA_CDP_TOKEN: token,
       OBSCURA_NAV_CHAIN_LIMIT: '1',
-      OBSCURA_NAV_TIMEOUT_MS: '5000',
-      OBSCURA_SCRIPT_DEADLINE_MS: '3000',
-      OBSCURA_FETCH_TIMEOUT_MS: '4000',
+      OBSCURA_NAV_TIMEOUT_MS: '12000',
+      OBSCURA_SCRIPT_DEADLINE_MS: '7000',
+      OBSCURA_FETCH_TIMEOUT_MS: '6500',
       OBSCURA_FETCH_MAX_BODY_BYTES: '524288',
       OBSCURA_MAX_LIVE_FRAMES: '1'
     };
@@ -69,7 +58,7 @@ export async function withObscura(binary, signal, handleRequest, run) {
     child = spawn(binary, [
       '--v8-flags=--max-old-space-size=64',
       'serve', '--host', '127.0.0.1', '--port', '0', '--max-connections', '1',
-      '--ready-file', readyFile, '--proxy', 'http://127.0.0.1:' + proxy.address().port
+      '--ready-file', readyFile
     ], { cwd: dir, env, stdio: 'ignore', windowsHide: true });
     let stopped = false;
     child.on('error', () => { stopped = true; });
@@ -117,9 +106,6 @@ export async function withObscura(binary, signal, handleRequest, run) {
     signal.removeEventListener('abort', stop);
     stop();
     await childClosed;
-    const proxyClosed = new Promise(resolve => proxy.close(resolve));
-    proxy.closeAllConnections();
-    await proxyClosed;
     // Only this process and its single child used this unique temp directory.
     const files = await readdir(dir).catch(() => []);
     for (const file of files) {
