@@ -187,8 +187,9 @@ export function lifeStatus(now = Date.now(), defaultPersona = null) {
       const reflections = db?.prepare('SELECT date,kind,count FROM reflections WHERE role=? ORDER BY date DESC,count DESC LIMIT 16').all(role) || [];
       const shift = rhythmShift(rows, now, schedule);
       const mood = summarize(rows, now, legacy, schedule, shift);
+      const { energy, willingness: currentWillingness, activity } = dailyState(minuteOfDayInZone(now), mood, schedule, shift);
       return { role, name: persona.botName || role, reflections, dimensions: mood,
-        ...dailyState(minuteOfDayInZone(now), mood, schedule, shift), rhythmShift: shift, ...rhythmSeries(schedule, shift),
+        energy, currentWillingness, activity, rhythmShift: shift, ...rhythmSeries(schedule, shift),
         goals: db ? activeGoals(db, role, now) : [], associations, events: rows.slice(0, 24) };
     });
     const reflectionRuns = db && db.prepare("SELECT 1 FROM sqlite_master WHERE name='reflection_runs'").get()

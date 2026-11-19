@@ -212,7 +212,8 @@ function renderLiveProfiles(container, data) {
   container.innerHTML = data.profiles.map(profile => `<article class="life-profile">
     <h4>${esc(profile.name || profile.role)}</h4>
     <div class="life-emotion-grid">${Object.entries(profile.dimensions).map(([name, value]) => meter(name, value)).join('')}</div>
-    ${profile.activity ? `<p>虚拟日常 · ${esc(profile.activity)} · 当前聊天意愿 ${Number(profile.willingness)}/100</p>` : ''}
+    ${profile.activity ? `<p>虚拟日常 · ${esc(profile.activity)}${Number.isFinite(profile.currentWillingness)
+      ? ` · 当前聊天意愿 ${profile.currentWillingness}/100` : ''}</p>` : ''}
     <h5>内在动机</h5>
     ${profile.goals.map(goal => `<div>${meter(goal.title + ' · ' + goal.chat, goal.strength)}
       ${goal.reason ? `<p>${esc(goal.reason)} · 完成条件 ${esc(goal.condition)} · ${esc(new Date(goal.expires).toLocaleString())} 到期</p>` : ''}</div>`).join('') || '<p>暂无进行中的动机</p>'}
