@@ -360,7 +360,7 @@ test('后天习惯跨日积累，原有偏好仍独立保留', async (t) => {
   assert.deepEqual(memory.list().find(row => row.id === old.id), before);
 });
 
-test('共同经历按记忆入口查询，两种召回模式均只在经历分区展示正文', async (t) => {
+test('共同经历按记忆入口查询，海马模式下仅按需读取，旧模式继续展示经历', async (t) => {
   const { memory, cfg, capture, say } = fixture(t);
   const chatKey = 'group:1';
   const content = '一起聊过钢琴曲';
@@ -372,10 +372,14 @@ test('共同经历按记忆入口查询，两种召回模式均只在经历分�
   assert.equal(read('shared_experience_lookup').content, content);
   assert.ok(read('personality_lookup').error);
   assert.equal(memory.list({ kind: 'experience' })[0].id, id);
-  for (const enabled of [true, false]) {
-    cfg.memory.hippocampusEnabled = enabled;
-    const [traits, experiences] = memory.prompt({ chatKey, persona }).split('【记忆 · 共同经历】');
-    assert.ok(!traits.includes(content));
-    assert.ok(experiences.includes(content));
-  }
+  const recalled = [];
+  const prompt = memory.prompt({ chatKey, persona, onRecall: key => recalled.push(key) });
+  assert.ok(!prompt.includes(content));
+  assert.ok(!prompt.includes('音乐'));
+  assert.deepEqual(recalled, []);
+  assert.match(prompt, /shared_experience_lookup/);
+  cfg.memory.hippocampusEnabled = false;
+  const [traits, experiences] = memory.prompt({ chatKey, persona }).split('【记忆 · 共同经历】');
+  assert.ok(!traits.includes(content));
+  assert.ok(experiences.includes(content));
 });
