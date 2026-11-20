@@ -82,14 +82,14 @@ export class AgentWechatChannel {
     this.nameCache.set(scope, { rows: rows.length ? rows : cached?.rows || [], expires: Date.now() + (rows.length ? 300000 : 30000) });
     return this.nameCache.get(scope).rows;
   }
-  memoryFor(key, memory) {
+  memoryFor(key, memory, { episodesInSnapshot = false } = {}) {
     const qq = this.linkedQq(key);
     // Only the bound identity's impressions are shared. Handoff/history stays local.
     const target = qq || this.peer(key);
     const source = qq ? `private:${qq}` : key;
     return new Proxy(memory, { get: (object, name) => {
       if (name === 'formatForPrompt' || name === 'formatIndexForPrompt') return () => {
-        const episodes = object.hippocampus?.prompt?.({ persona: resolvePersona(this.getConfig(), key), chatKey: key }) || '';
+        const episodes = episodesInSnapshot ? '' : object.hippocampus?.prompt?.({ persona: resolvePersona(this.getConfig(), key), chatKey: key }) || '';
         if (qq && typeof object.query === 'function') {
           const rows = (object.query(source, 'memberImpression').memberImpression || []).filter(row => String(row.userId) === qq).slice(0, 30);
           if (this.getConfig().memory?.hippocampusEnabled === true) {

@@ -205,6 +205,20 @@ test('到约定时间最多提醒一次，不因后续无关消息重复注入',
   assert.doesNotMatch(observe(chat,[{id:4,senderId:'10',ts:due+1000,text:'下面聊上课'}],due+1000),/历史约定/);
 });
 
+test('已展示的同日同人约定只引用摘要，保留到时信号', () => {
+  updateConfig({ characterLife: { enabled: true } });
+  const start = Date.parse('2026-11-19T13:55:00+08:00');
+  const due = start + 5 * 60000;
+  const chatKey = 'private:10', quote = '你下午2点把那首歌发我';
+  observe(chatKey, [{ id: 1, senderId: '10', ts: start, text: quote }], start);
+  const input = { persona, chatKey, now: due, triggerEntries: [{ id: 2, senderId: '10', ts: due, text: '回来了' }],
+    summaries: [{ people: [{ id: '10' }], day: '2026-11-19', reference: '本轮摘要2', summary: quote }] };
+  const hint = observeLife(input);
+  assert.match(hint, /本轮摘要2中的约定已到时间/);
+  assert.ok(!hint.includes(quote));
+  assert.doesNotMatch(observeLife(input), /已到时间/);
+});
+
 test('明确反馈即时改变情绪，普通文字互动只小幅影响孤独感', () => {
   updateConfig({ characterLife: { enabled: true, adaptive: false }, humanize: { enabled: false } });
   const at = seconds => now + seconds * 1000;

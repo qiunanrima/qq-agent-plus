@@ -2000,7 +2000,6 @@ export class Orchestrator {
   }) {
     const cfg = getConfig();
     const channel = channelForChat(chatKey);
-    const channelMemory = channel ? channel.memoryFor(chatKey, this.memory) : this.memory;
     // 本轮生效的人设：全局 persona + 这个群的覆盖（见 personas.resolvePersona）。
     // 一次解析、多处共用 —— 提示词、群内显示名、运行记录必须是同一份，
     // 否则会出现"提示词是猫娘、落款还是小鲸鱼"。
@@ -2239,10 +2238,18 @@ export class Orchestrator {
     } catch (error) {
       log.warn(`[living-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error);
     }
+    const summaries = [];
+    let hippocampusRecall = '';
+    if (!channel || (useCharacterLife && isWechatChat(chatKey))) {
+      try {
+        hippocampusRecall = this.memory.hippocampus?.prompt({ chatKey, persona,
+          onLocalSummary: useCharacterLife ? row => summaries.push(row) : undefined }) || '';
+      } catch (error) { log.warn('[hippocampus] 读取记忆失败，已跳过：', error?.message ?? error); }
+    }
     if (useCharacterLife) {
       try {
-        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey)
-          : observeLife({ persona, chatKey, triggerEntries, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
+        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey, Date.now(), summaries)
+          : observeLife({ persona, chatKey, triggerEntries, summaries, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
         personaStateLine = [personaStateLine, hint].filter(Boolean).join('\n');
       } catch (error) { log.warn('[character-life] 状态更新失败', error.message); }
     }
@@ -2253,9 +2260,6 @@ export class Orchestrator {
         onRecall: id => { if (session.memoryRecallIds.length < 200) session.memoryRecallIds.push(id); },
         participantIds: (triggerEntries || []).map((entry) => entry.senderId) }) || '';
     } catch (error) { log.warn(`[personality-memory] ${chatKey} 召回异常，已跳过：`, error?.message ?? error); }
-    let hippocampusRecall = '';
-    try { hippocampusRecall = channel ? '' : this.memory.hippocampus?.prompt({ chatKey, persona }) || ''; }
-    catch (error) { log.warn('[hippocampus] 读取记忆失败，已跳过：', error?.message ?? error); }
     const humanLines = [
       '【记忆检索策略】近期聊天有限；需要过去的具体事实时先用 search_history 或记忆查询工具，按需 get_recent_messages / get_message_detail 展开。复杂的跨时段调查可在 delegate_research 存在时委派；简单问题直接查。低 retention 只表示久未使用，不表示事实不可信；明确历史查询仍可找到冷记忆。只有实际采用的长期记忆才在 finish.usedMemoryIds 填 recallId，搜索出现或仅看索引不算使用。查不到不可编造。',
       personaStateLine,
@@ -2330,7 +2334,7 @@ export class Orchestrator {
       chatKey, kind, chatId, chatName,
       triggerEntries,
       store: this.store,
-      memory: channelMemory,
+      memory: channel ? channel.memoryFor(chatKey, this.memory, { episodesInSnapshot: Boolean(hippocampusRecall) }) : this.memory,
       stickerEntries,
       gameContext: this.getGames?.()?.summaryFor(chatKey) || '',
       slangContext,
@@ -3460,10 +3464,15 @@ export class Orchestrator {
     try { analyzed = await analyzeLife({ persona: resolvePersona(cfg, chatKey), chat: chatKey, messages, complete, allowed }); }
     catch (error) { if (allowed()) log.warn('[character-life] 语境分析跳过', error.message); }
     if (!allowed() || isExternalChat(chatKey)) return { merged: 0, reinforced: 0, analyzed };
-    const result = await this.livingMemory.consolidateForLife(chatKey, { complete, allowed });
-    if (allowed() && this.livingMemory.applies(chatKey)) {
+    // With hippocampus active the semantic store is historical and explicitly queried.
+    const maintainSemantic = () => allowed() && getConfig().memory?.hippocampusEnabled !== true && this.livingMemory.applies(chatKey);
+    const result = maintainSemantic()
+      ? await this.livingMemory.consolidateForLife(chatKey, { complete, allowed: maintainSemantic })
+      : { merged: 0, reinforced: 0 };
+    const reviewAliases = () => allowed() && this.livingMemory.applies(chatKey);
+    if (reviewAliases()) {
       try {
-        await reviewGraphAliases({ chat: chatKey, graph: this.livingMemory.graph({ scopeKeys: [chatKey], limit: 24 }), complete, allowed });
+        await reviewGraphAliases({ chat: chatKey, graph: this.livingMemory.graph({ scopeKeys: [chatKey], limit: 24 }), complete, allowed: reviewAliases });
       } catch (error) { if (allowed()) log.warn('[character-life] 节点同一性审核跳过', error.message); }
     }
     return { ...result, analyzed };

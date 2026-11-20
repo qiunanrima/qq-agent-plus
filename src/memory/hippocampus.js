@@ -134,7 +134,7 @@ export class Hippocampus {
         .all(current.id, limit);
     });
   }
-  prompt({ persona, chatKey }) {
+  prompt({ persona, chatKey, onLocalSummary }) {
     if (!this.enabled()) return '';
     const today = memoryDay(this.now()), yesterday = previousDay(today), key = personaKey(persona);
     const rows = this.episodes().filter((r) => r.persona === key && r.day >= yesterday && r.day <= today && this.visible(r, chatKey));
@@ -148,11 +148,13 @@ export class Hippocampus {
       for (const bucket of buckets) {
         const r = bucket[i];
         if (!r) continue;
-        const line = JSON.stringify({ day: r.day === today ? '今日' : '昨日',
+        const reference = onLocalSummary && r.chat === chatKey ? `本轮摘要${shown + 1}` : undefined;
+        const line = JSON.stringify({ reference, day: r.day === today ? '今日' : '昨日',
           time: new Date(r.updated + 8 * 3600000).toISOString().slice(11, 16),
           place: r.chat === chatKey ? '当前会话' : r.chat.startsWith('private:') ? '其他私聊' : '其他群聊',
           people: JSON.parse(r.participants), summary: sanitizeUserText(r.summary) });
         if (used + line.length > 6000) continue;
+        if (reference) onLocalSummary({ people: JSON.parse(r.participants), summary: sanitizeUserText(r.summary), day: r.day, reference });
         lines.push(line); used += line.length; shown++;
       }
     }

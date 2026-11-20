@@ -1,3 +1,4 @@
+import { memoryDay } from '../memory/hippocampus.js';
 import { createHash } from 'node:crypto';
 import { shanghaiDayStart, sanitizeUserText } from '../core/util.js';
 
@@ -103,7 +104,15 @@ export function confirmsMotive(goal, text) {
   return completion.test(text) && mentionsTopic(goal, text);
 }
 
-export function reminderForTurn(db, goals, entries, goalId, now) {
+export function summaryForGoal(goal, summaries) {
+  const quote = normalize(goal.reason || '');
+  if (!quote) return '';
+  const matches = summaries.filter(row => row.day === memoryDay(goal.at) && row.people.some(person => String(person.id) === goal.actor)
+    && normalize(row.summary).includes(quote));
+  return matches.length === 1 ? matches[0].reference : '';
+}
+
+export function reminderForTurn(db, goals, entries, goalId, now, summaries = []) {
   if (!goals.length) return '';
   const get = db.prepare('SELECT 1 FROM motive_reminders WHERE event=? AND signal=?');
   const note = db.prepare('INSERT OR IGNORE INTO motive_reminders VALUES(?,?)');
@@ -127,6 +136,8 @@ export function reminderForTurn(db, goals, entries, goalId, now) {
   const match = candidates.find(item => item.direct) || candidates[0];
   if (!match || !note.run(match.goal.id, match.signal).changes) return '';
   if (match.direct && match.due) note.run(match.goal.id, 'due');
+  const reference = summaryForGoal(match.goal, summaries);
+  if (reference) return `当前会话海马的${reference}中的约定${match.due ? '已到时间' : '被对方再次提起'}，可接续该话题。`;
   const quote = match.goal.reason.replace(/[<>「」]/g, '');
   return `相关的历史约定（仅供参考）：${match.goal.title}。对方原话「${quote}」。`;
 }

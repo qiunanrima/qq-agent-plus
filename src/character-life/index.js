@@ -6,7 +6,7 @@ import { personaKeyOf, personaStateSnapshot } from '../core/persona-state.js';
 import { minuteOfDayInZone, shanghaiDayStart, sanitizeUserText } from '../core/util.js';
 import { openDatabase } from '../core/sqlite.js';
 import { emotionDimensions, readInteraction, verifiedEmotionDelta, interactionAdjustments } from './emotion.js';
-import { commitmentEvidence, initMotiveEvidence, saveRecognizedMotive, saveMotive, reminderForTurn, confirmsMotive, quoteOnlyMotive } from './motives.js';
+import { commitmentEvidence, initMotiveEvidence, saveRecognizedMotive, saveMotive, summaryForGoal, reminderForTurn, confirmsMotive, quoteOnlyMotive } from './motives.js';
 
 const file = path.join(DATA_DIR, 'character-life.sqlite');
 const hour = 3600000;
@@ -107,7 +107,7 @@ function recent(db, role, now) {
   return db.prepare(`SELECT events.*${annotation} FROM events WHERE role=? AND at BETWEEN ? AND ?
     ORDER BY at DESC,rowid DESC LIMIT 512`).all(role, now - 7 * day, now);
 }
-export function observeLife({ persona, chatKey, triggerEntries = [], recalled = [], now = Date.now() }) {
+export function observeLife({ persona, chatKey, triggerEntries = [], recalled = [], summaries = [], now = Date.now() }) {
   if (!getConfig().characterLife?.enabled || !triggerEntries?.length) return '';
   const role = personaKeyOf(persona);
   const db = openDatabase(file);
@@ -141,7 +141,7 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
     }
 
     const reminder = reminderForTurn(db, activeGoals(db, role, now, chatKey), interactions,
-      entry => interactionId(role, chatKey, entry), now);
+      entry => interactionId(role, chatKey, entry), now, summaries);
     db.exec('COMMIT');
     const rows = recent(db,role,now);
     const schedule = rhythmSchedule();
@@ -193,7 +193,7 @@ export function linkedMemories(persona, chat, ids) {
   } finally { db.close(); }
 }
 
-export function claimInitiative(persona, chat, now = Date.now()) {
+export function claimInitiative(persona, chat, now = Date.now(), summaries = []) {
   if (!getConfig().characterLife?.enabled || !fs.existsSync(file) || lifeWillingness(persona, now) < 30) return '';
   const db = openDatabase(file);
   try {
@@ -206,6 +206,8 @@ export function claimInitiative(persona, chat, now = Date.now()) {
     if (inserted && goal.due !== null) db.prepare('INSERT OR IGNORE INTO motive_reminders VALUES(?,?)').run(goal.id, 'due');
     db.exec('COMMIT');
     if (!inserted) return '';
+    const reference = summaryForGoal(goal, summaries);
+    if (reference) return `本次主动聊天可以接续当前会话海马的${reference}中的约定。`;
     return '本次主动聊天可以接续此前想聊的话题：'+goal.title+'。';
   } finally { db.close(); }
 }
