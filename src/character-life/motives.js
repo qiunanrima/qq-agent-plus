@@ -5,7 +5,7 @@ import { shanghaiDayStart, sanitizeUserText } from '../core/util.js';
 const hour = 3600000;
 const day = 24 * hour;
 const sensitive = /密码|口令|验证码|密钥|token|api[ _-]?key|access[ _-]?key|身份证|银行卡|详细地址/i;
-const future = /打算|计划|准备|改天|下次|回头|以后再|稍后|待会|明[天早晚]|后天|今[晚夜]|(?:等|待).{1,22}(?:结束|完|之后|以后|时)|(?:上午|下午|晚上)?[0-9]{1,2}[点时]/;
+const future = /(?:周|星期|礼拜)[一二三四五六日天]|打算|计划|准备|改天|下次|回头|以后再|稍后|待会|明[天早晚]|后天|今[晚夜]|(?:等|待).{1,22}(?:结束|完|之后|以后|时)|(?:上午|下午|晚上)?[0-9]{1,2}[点时]/;
 const action = /发|转|给|带|分享|追番|看|开黑|玩|游戏|听|聊|挑|选|做|写|画|整理|查|找|买|确认|回复|记得|提醒|提交|更新|修复|告诉/;
 const owner = /一起|我(?:要|来|会|想|打算|负责|给你|帮你|再|明[天早晚]|下次)|我们|你(?:来|记得|会|帮|给|把|明[天早晚]|下次)|咱(?:俩|们)|答应|约好|记得|(?:发|给|带|告诉|提醒|回复)(?:我|你)|帮我|把/;
 const topics = [
@@ -25,29 +25,51 @@ export function commitmentEvidence(text, at) {
   const taskWords = quote.replace(/(?:看看|你看|我看|看起来)(?=.{0,8}(?:变了|不一样|不同)).*/g, '');
   if (!taskWords.split(/[。；;！？!?\n]/).some(clause => future.test(clause) && owner.test(clause) && action.test(clause))) return null;
   const topic = topics.find(item => item.match.test(taskWords));
-  let due = null;
-  const tomorrow = /明[天早晚]/.test(quote);
-  const later = /后天/.test(quote);
-  const dated = tomorrow || later || /今[晚夜天]/.test(quote);
-  const time = /(?:(上午|早上|下午|晚上|中午))?\s*(\d{1,2})(?:点|时)(?:(\d{1,2})分?)?/.exec(quote);
-  if (dated || time) {
-    let hours = /(?:今晚|今夜|明晚)/.test(quote) ? 19 : 9;
-    let minutes = 0;
-    if (time && Number(time[2]) < 24 && Number(time[3] || 0) < 60) {
-      hours = Number(time[2]);
-      if (['下午','晚上','中午'].includes(time[1]) && hours < 12) hours += 12;
-      minutes = Number(time[3] || 0);
-    }
-    due = shanghaiDayStart(at) + (later ? 2 * day : tomorrow ? day : 0) + hours * hour + minutes * 60000;
-    if (!dated && due <= at) due += day;
-    if (due <= at) due = null;
-  }
+  const due = agreementTime(quote, at);
   return { quote, topic, due };
+}
+
+export function agreementTime(text, at, previous = null) {
+  const week = /(下下|下|这|本)?(?:个)?(?:周|星期|礼拜)([一二三四五六日天])/.exec(text);
+  const offset = /后天/.test(text) ? 2 : /明[天早晚]/.test(text) ? 1 : /今[天早晚夜]/.test(text) ? 0 : null;
+  const time = /(?:(上午|早上|下午|晚上|中午|晚))?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})(?:点|时|[:：](?=\d{2}))(半|\d{1,2}分?)?/.exec(text);
+  if (!week && offset === null && !time) return null;
+  const base = shanghaiDayStart(at);
+  const weekday = (new Date(base + 8 * hour).getUTCDay() + 6) % 7;
+  let days = offset ?? 0;
+  if (week) {
+    const target = '一二三四五六日'.indexOf(week[2].replace('天', '日'));
+    days = target - weekday + ({ 下: 7, 下下: 14 }[week[1]] || 0);
+    if (!week[1] && previous && previous > at) {
+      const oldDay = shanghaiDayStart(previous);
+      const oldWeekday = (new Date(oldDay + 8 * hour).getUTCDay() + 6) % 7;
+      days = Math.round((oldDay - base) / day) - oldWeekday + target;
+    }
+    if (days < 0 && !week[1]) days += 7;
+  }
+  const prev = previous && new Date(previous + 8 * hour);
+  let hours = /晚/.test(text) ? 19 : prev ? prev.getUTCHours() : 9;
+  let minutes = prev ? prev.getUTCMinutes() : 0;
+  if (time) {
+    const num = ch => '零一二三四五六七八九'.indexOf(ch.replace('两', '二'));
+    const raw = time[2];
+    hours = /^\d+$/.test(raw) ? Number(raw) : raw.includes('十')
+      ? (raw.startsWith('十') ? 1 : num(raw[0])) * 10 + (raw.endsWith('十') ? 0 : num(raw.at(-1))) : num(raw);
+    if (/下午|晚|中午/.test(time[1] || '') && hours < 12) hours += 12;
+    minutes = time[3] === '半' ? 30 : parseInt(time[3] || '0', 10);
+    if (hours < 0 || hours > 23 || minutes > 59) return null;
+  }
+  let due = base + days * day + hours * hour + minutes * 60000;
+  if (!week && offset === null && due <= at) due += day;
+  return due > at ? due : null;
 }
 
 export function initMotiveEvidence(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS motive_evidence(
     event TEXT PRIMARY KEY REFERENCES motives(event) ON DELETE CASCADE, topic TEXT NOT NULL, due INTEGER);
+    CREATE TABLE IF NOT EXISTS motive_changes(
+      event TEXT REFERENCES motives(event) ON DELETE CASCADE, source TEXT, previous_due INTEGER, due INTEGER, quote TEXT,
+      PRIMARY KEY(event,source));
     CREATE TABLE IF NOT EXISTS motive_reminders(
       event TEXT REFERENCES motives(event) ON DELETE CASCADE, signal TEXT, PRIMARY KEY(event,signal));
     CREATE TABLE IF NOT EXISTS motive_invalidations(
@@ -71,12 +93,13 @@ export function saveMotive(db, event, evidence, motive) {
       AND NOT EXISTS (SELECT 1 FROM motive_invalidations i WHERE i.event=m.event)`)
     .get(event.id, evidence.quote, evidence.due);
   if (alreadyOpen) return false;
+  const expires = Math.max(event.at + motive.duration, (evidence.due || 0) + 2 * hour);
   const found = db.prepare('INSERT OR IGNORE INTO motives(event,title,reason,condition,expires,cooldown) VALUES(?,?,?,?,?,?)')
-    .run(event.id, motive.title, motive.reason, motive.condition, event.at + motive.duration, motive.cooldown);
+    .run(event.id, motive.title, motive.reason, motive.condition, expires, motive.cooldown);
   if (!found.changes && db.prepare('SELECT 1 FROM motive_evidence WHERE event=?').get(event.id)) return false;
   if (!found.changes) {
     db.prepare('UPDATE motives SET title=?,reason=?,condition=?,expires=?,cooldown=?,closed=NULL WHERE event=?')
-      .run(motive.title, motive.reason, motive.condition, event.at + motive.duration, motive.cooldown, event.id);
+      .run(motive.title, motive.reason, motive.condition, expires, motive.cooldown, event.id);
   }
   db.prepare('INSERT INTO motive_evidence VALUES(?,?,?)').run(event.id, evidence.topic?.subject || motive.topic || '', evidence.due);
   return true;
@@ -139,5 +162,6 @@ export function reminderForTurn(db, goals, entries, goalId, now, summaries = [])
   const reference = summaryForGoal(match.goal, summaries);
   if (reference) return `当前会话海马的${reference}中的约定${match.due ? '已到时间' : '被对方再次提起'}，可接续该话题。`;
   const quote = match.goal.reason.replace(/[<>「」]/g, '');
-  return `相关的历史约定（仅供参考）：${match.goal.title}。对方原话「${quote}」。`;
+  const scheduled = match.goal.due ? new Date(match.goal.due).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '';
+  return `相关的历史约定（仅供参考）：${match.goal.title}。${scheduled ? `当前约定时间：${scheduled}。` : ''}对方原话「${quote}」。`;
 }

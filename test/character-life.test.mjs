@@ -343,3 +343,37 @@ test('回看旧消息后停用引用误建的待办，保留真实待办及历�
     assert.ok(db.prepare('SELECT 1 FROM motive_evidence WHERE event=?').get(id));
   } finally { db.close(); }
 });
+
+test('跨周约定经历七天清理、改期、取消后可查原约定', async () => {
+  const { agreementHistory, syncAgreementReminders } = await import('../src/character-life/index.js');
+  updateConfig({ characterLife: { enabled: true } });
+  const chat = 'private:20', senderId = '20';
+  const stamp = date => Date.parse(date + '+08:00');
+  const input = (id, text, ts) => observe(chat, [{ id, senderId, ts, text }], ts);
+  input(1, '我们下周五晚上八点一起开黑', stamp('2026-11-16T10:00'));
+  const friday = stamp('2026-11-27T20:00'), saturday = stamp('2026-11-28T20:00');
+  const history = () => agreementHistory(persona, chat, senderId)[0];
+  assert.equal(history().due, friday);
+  const { ReminderStore } = await import('../src/core/reminders.js');
+  const storeFile = path.join(dir, 'linked-reminder-test.json');
+  const store = new ReminderStore(storeFile);
+  const item = { id: 'explicit', chatKey: chat, text: '开黑', goalId: history().id, eventAt: friday, at: friday - 1800000,
+    originalAt: friday - 1800000, createdAt: stamp('2026-11-16T10:01'), status: 'pending' };
+  store.items.push(item);
+  input(2, '改到周六，还是提前半小时提醒我', stamp('2026-11-18T10:00'));
+  reflectLife(stamp('2026-11-26T10:00'));
+  assert.equal(history().due, saturday);
+  assert.equal(history().changes[0].previousDue, friday);
+  syncAgreementReminders(store);
+  const reopened = new ReminderStore(storeFile);
+  assert.equal(reopened.due(friday).length, 0);
+  assert.equal(reopened.list(chat)[0].at, saturday - 1800000);
+  syncAgreementReminders(reopened);
+  assert.equal(reopened.list(chat)[0].revisions.length, 1);
+  assert.doesNotMatch(input(3, '我回来了', friday), /历史约定/);
+  input(4, '取消这个约定', saturday - 3600000);
+  syncAgreementReminders(reopened);
+  assert.equal(reopened.due(saturday).length, 0);
+  assert.equal(history().status, 'closed');
+  assert.doesNotMatch(input(5, '我回来了', saturday), /历史约定/);
+});

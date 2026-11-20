@@ -335,3 +335,19 @@ test('a rejected creation is not cached and can succeed when capacity is freed',
   assert.equal(store.items.length, 11);
   assert.equal(store.list(ctx.chatKey).length, 10);
 });
+
+test('一次性跨周提醒经过正常工具入口改期、查询与取消', async () => {
+  const { ctx, store } = fixture();
+  ctx.agreementHistory = () => [{ id: 'test-goal', status: 'open' }];
+  const { id } = await call(ctx, { action: 'add', text: '开黑', agreementId: 'test-goal',
+    dateTime: '2026-11-06 19:30', eventTime: '2026-11-06 20:00' });
+  await call(ctx, { action: 'reschedule', id, dateTime: '2026-11-07 19:30', eventTime: '2026-11-07 20:00' });
+  const current = store.list(ctx.chatKey)[0];
+  assert.equal(current.goalId, 'test-goal');
+  assert.equal(current.eventAt - current.at, 1800000);
+  await call(ctx, { action: 'cancel', id });
+  const result = await call(ctx, { action: 'history' });
+  assert.equal(result.reminders[0].id, id);
+  assert.equal(result.reminders[0].status, 'canceled');
+  assert.equal(result.reminders[0].revisions.length, 1);
+});

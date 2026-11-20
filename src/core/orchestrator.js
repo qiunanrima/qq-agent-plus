@@ -77,7 +77,7 @@ import { assertTimeAllowed, isTimeActive, TimeControlError, timeUntilActive, wat
 import { vendorOfConfig, vendorOfBaseUrl } from '../pricing/model-prices.js';
 import { budgetStatus } from './budget.js';
 import { readOwnerUin } from './notify-owner.js';
-import { observeLife, claimInitiative, linkedMemories, lifeWillingness, analyzeLife, reviewGraphAliases } from '../character-life/index.js';
+import { syncAgreementReminders, agreementHistory, reminderGoalId, observeLife, claimInitiative, linkedMemories, lifeWillingness, analyzeLife, reviewGraphAliases } from '../character-life/index.js';
 import { notePersonaInteraction, personaStatePrompt } from './persona-state.js';
 import { memeDensityPrompt } from '../llm/humanize.js';
 import { memesForPrompt } from '../memes/store.js';
@@ -2248,8 +2248,10 @@ export class Orchestrator {
     }
     if (useCharacterLife) {
       try {
-        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey, Date.now(), summaries)
-          : observeLife({ persona, chatKey, triggerEntries, summaries, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
+        const reminders = this.reminders?.list?.(chatKey, { includeDone: true }) || [];
+        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey, Date.now(), summaries, reminders)
+          : observeLife({ persona, chatKey, triggerEntries, summaries, reminders, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
+        syncAgreementReminders(this.reminders);
         personaStateLine = [personaStateLine, hint].filter(Boolean).join('\n');
       } catch (error) { log.warn('[character-life] 状态更新失败', error.message); }
     }
@@ -2497,6 +2499,11 @@ export class Orchestrator {
       scheduleWake: (delayMs, note) => this.scheduleInitiativeWake(chatKey, delayMs, note),
       // 定时提醒（remind 工具）：持久化的"给别人的承诺"，到点走主动唤醒
       reminders: this.reminders,
+      agreementHistory: () => {
+        const actors = [...new Set((triggerEntries || []).filter(entry => !entry.self).map(entry => String(entry.senderId || '')))];
+        return actors.length === 1 ? agreementHistory(persona, chatKey, actors[0]) : [];
+      },
+      reminderGoalId: actor => reminderGoalId(persona, chatKey, triggerEntries || [], actor),
       // 出站副作用账本：直连协议端的写工具用它登记（只记录，不拦截正常调用）
       effects: this.effects,
       // 本轮触发消息（remind 的 from 兜底要判断"是否只有一个发送者"；只带最小字段）
@@ -3076,6 +3083,7 @@ export class Orchestrator {
     // 控制台开关（设置 → 定时提醒）：关掉后不派发，已存数据保留，重新打开继续用
     if (getConfig().reminders?.enabled === false) return;
     const now = Date.now();
+    syncAgreementReminders(this.reminders);
     // 离线太久（迟到 >12 小时）的直接作废：不补发一串"迟到的提醒"。
     // 周期项例外：作废整条会让"每天 9 点吃药"永久消失，改为跳过这一期、re-arm 到下一次
     //（2026-10-31 盲审 P2；暂停/held 超过 12 小时也会走到这里）。

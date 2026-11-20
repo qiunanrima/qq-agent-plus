@@ -13,7 +13,7 @@ import { selfWakeAllowed } from '../core/private-proactive-policy.js';
 import { getConfig, imageGenAvailable, imageGenMaxPerHour } from '../core/config.js';
 import { classifyTransportFailure } from '../onebot/sender.js';
 import { imageType } from '../core/image-type.js';
-import { MAX_REMINDER_TEXT, nextAtFromHHMM, normalizeRepeat, nextOccurrenceAt } from '../core/reminders.js';
+import { MAX_REMINDER_TEXT, parseReminderDate, nextAtFromHHMM, normalizeRepeat, nextOccurrenceAt } from '../core/reminders.js';
 import { synthesizeSpeech, ttsConfigured } from '../llm/tts.js';
 import { generateImage, MAX_PROMPT_CHARS } from '../llm/image-gen.js';
 import { resolveApiKey } from '../llm/llm.js';
@@ -2518,12 +2518,15 @@ export function buildToolDefs() {
     },
     {
       name: 'remind',
-      description: '给当前会话设一个定时提醒（到点你会被唤醒，用你的口吻把这件事说出来）；也可查询/取消。minutes 或 HH:MM 二选一，HH:MM 按北京时间、已过则算明天。这是给别人设的提醒（重启后依然有效），与给自己排开口时机的 schedule_wake 不同。要重复提醒（每天几点、每周几几点）就传 repeat 对象，到点自动续；只想要一次就别传。'
+      description: '给当前会话设一个定时提醒（到点你会被唤醒，用你的口吻把这件事说出来）；也可查询/取消。跨天一次性提醒优先用 dateTime，改期用 reschedule 保留原 ID。普通约定仅在明确要求提醒时创建通知。也可用 minutes 或 HH:MM，HH:MM 按北京时间、已过则算明天。这是给别人设的提醒（重启后依然有效），与给自己排开口时机的 schedule_wake 不同。要重复提醒（每天几点、每周几几点）就传 repeat 对象，到点自动续；只想要一次就别传。'
         + '是「A 让你提醒 B」时（如"12 点提醒他吃饭"），把 to 填成被提醒的人、from 填成提要求的人 —— 到点你才能说清是谁请你提醒谁，别让被提醒的人以为是自己设的。from 要能在最近这轮消息里对上人（填他的群名片/备注名或 QQ 号；对不上就不会记录）。',
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['add', 'list', 'cancel'], description: 'add=新增；list=查看本会话待触发；cancel=取消（不传 id 取消最近一条）' },
+          action: { type: 'string', enum: ['add', 'list', 'cancel', 'reschedule', 'history'], description: 'reschedule=按ID修改一次性提醒时间；history=本会话近期提醒及改期记录；add=新增；list=查看本会话待触发；cancel=取消（不传 id 取消最近一条）' },
+          dateTime: { type: 'string', description: '一次性通知的北京时间 YYYY-MM-DD HH:MM，可跨周。与 minutes、at 互斥。改期时也传此字段。' },
+          agreementId: { type: 'string', description: '给已存在的本人约定补设提醒时，可传 history 返回的有效约定 ID' },
+          eventTime: { type: 'string', description: '约定本身的北京时间 YYYY-MM-DD HH:MM；提前提醒时另传 dateTime 作为通知时间。' },
           minutes: { type: 'number', description: 'add 用：多少分钟后（1~43200）。与 at 二选一；传了 repeat 且两者都没传时，首次触发按 repeat 规则算' },
           at: { type: 'string', description: 'add 用：绝对时间 HH:MM（北京时间，已过则算明天）' },
           text: { type: 'string', description: 'add 用：提醒内容（必填，≤200 字）' },
@@ -2556,6 +2559,21 @@ export function buildToolDefs() {
         // 提醒的绝对时间按项目统一口径（Asia/Shanghai）格式化：服务器时区不同时，
         // "明天 09:30" 会被格式化成另一个钟点误导模型（2026-09-29 审查 P2）
         const fmt = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        if (action === 'history') {
+          return ok({ agreements: ctx.agreementHistory?.() || [], reminders: store.list(ctx.chatKey, { includeDone: true }).map(item => ({
+            id: item.id, text: item.text, status: item.status, at: fmt(item.at),
+            eventAt: item.eventAt && fmt(item.eventAt), revisions: item.revisions?.map(r => ({ at: fmt(r.at), eventAt: r.eventAt && fmt(r.eventAt) }))
+          })) });
+        }
+        const eventAt = args.eventTime == null ? null : parseReminderDate(args.eventTime);
+        if (args.eventTime != null && !eventAt) return err('eventTime 需要有效的北京时间 YYYY-MM-DD HH:MM');
+        if (action === 'reschedule') {
+          if (args.minutes != null || args.at != null || args.repeat != null) return err('改期请用 dateTime 指定新的通知时间');
+          try {
+            const item = store.reschedule({ chatKey: ctx.chatKey, id: args.id, at: parseReminderDate(args.dateTime), eventAt });
+            return ok({ rescheduled: true, id: item.id, at: fmt(item.at) });
+          } catch (error) { return err(error.message); }
+        }
         if (action === 'list') {
           const items = store.list(ctx.chatKey);
           if (!items.length) return ok({ pending: 0, hint: '本会话没有待触发的提醒' });
@@ -2573,6 +2591,7 @@ export function buildToolDefs() {
           if (!hit) return err('没找到对应的待触发提醒（可用 list 查看 id）');
           return ok({ canceled: true, text: hit.text, at: fmt(hit.at) });
         }
+        if (action !== 'add') return err('未知提醒操作');
         let at = null;
         let firstOccurrence = null;
         // repeat 可能是对象（schema 声明的形式）或字符串（"daily"/"weekly:mon"/cron）。
@@ -2582,7 +2601,11 @@ export function buildToolDefs() {
           && !(typeof repeatArg === 'string' && repeatArg === '');
         const quietCfg = getConfig().reminders?.quiet || null;
         let normalizedRepeat = null;
-        if (hasRepeat) {
+        if (args.dateTime != null) {
+          if (hasRepeat || args.minutes != null || args.at != null) return err('dateTime 仅用于一次性提醒，不能同时指定其他时间');
+          at = parseReminderDate(args.dateTime);
+          if (!at) return err('dateTime 需要有效的北京时间 YYYY-MM-DD HH:MM');
+        } else if (hasRepeat) {
           try { normalizedRepeat = normalizeRepeat(repeatArg); } catch (error) { return err(String(error?.message ?? error)); }
           // 周期提醒：at/minutes 只定首次触发点；都不传时按 repeat 规则算第一次
           if (args.at !== undefined && String(args.at).trim() !== '') {
@@ -2649,10 +2672,21 @@ export function buildToolDefs() {
           const pending = previous && store.list?.(ctx.chatKey).find((item) =>
             item.id === previous.id && item.chatKey === ctx.chatKey && item.status === 'pending'
             && reminderSnapshot(item) === previous.snapshot);
-          const { id, at: actualAt } = pending || store.add({
+          let goalId = !hasRepeat && unambiguous ? ctx.reminderGoalId?.([...requesterIds][0]) : undefined;
+          if (args.agreementId) {
+            if (hasRepeat || !ctx.agreementHistory?.().some(row => row.id === args.agreementId && row.status === 'open')) return err('此约定不可关联');
+            goalId = args.agreementId;
+          }
+          const linked = goalId && store.list?.(ctx.chatKey).find(item => item.goalId === goalId && item.at === at
+            && item.text === text && (item.targetName || '') === String(args.to ?? '').trim()
+            && (item.eventAt ?? null) === eventAt);
+          const reused = pending || linked;
+          const { id, at: actualAt } = reused || store.add({
             chatKey: ctx.chatKey, at,
             text: String(args.text ?? ''),
             createdBy,
+            ...(goalId ? { goalId } : {}),
+            ...(eventAt ? { eventAt } : {}),
             targetName: String(args.to ?? ''),
             repeat: hasRepeat ? repeatArg : null,
             quiet: quietCfg
@@ -2665,10 +2699,10 @@ export function buildToolDefs() {
             }
           }
           return ok({
-            created: !pending, ...(pending ? { reused: true } : {}), id, at: fmt(actualAt ?? at),
+            created: !reused, ...(reused ? { reused: true } : {}), id, at: fmt(actualAt ?? at),
             ...(createdBy ? { from: createdBy } : {}),
-            note: (pending
-              ? '本轮已创建相同的周期提醒，已复用原任务，没有重复创建。'
+            note: (reused
+              ? '已复用相同提醒。'
               : '到点你会被唤醒并知道该提醒什么；不需要再回复这条结果。')
               + (fromArg && !fromOk
                 ? '（from 在最近这轮消息里对不上人，这次没有记录归属；要记的话填对方的群名片/备注名或 QQ 号）'

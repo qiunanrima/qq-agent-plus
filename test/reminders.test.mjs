@@ -200,3 +200,24 @@ test('投递重试不推走作废时钟，超过 3 次停止自动重试', () =>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('跨周提醒改期保留ID、约定时间与历史，重启后仅新时间到期', async () => {
+  const { parseReminderDate } = await import('../src/core/reminders.js');
+  assert.equal(parseReminderDate('2028-02-29 20:00'), Date.parse('2028-02-29T20:00+08:00'));
+  assert.equal(parseReminderDate('2027-02-29 20:00'), null);
+  const file = path.join(dataDir, 'reschedule.json');
+  const store = new ReminderStore(file), chatKey = 'private:20', at = Date.now() + 8 * 86400000;
+  const next = at + 86400000, lead = 1800000;
+  const { id } = store.add({ chatKey, text: '开黑', at, eventAt: at + lead, goalId: 'agreement' });
+  assert.throws(() => store.reschedule({ chatKey: 'private:21', id, at: next }));
+  store.reschedule({ chatKey, id, at: next, eventAt: next + lead });
+  const loaded = new ReminderStore(file);
+  assert.equal(loaded.due(at).length, 0);
+  const [item] = loaded.due(next);
+  assert.equal(item.id, id);
+  assert.equal(item.goalId, 'agreement');
+  assert.equal(item.eventAt, next + lead);
+  assert.deepEqual(item.revisions, [{ at, eventAt: at + lead }]);
+  loaded.cancel({ id, chatKey });
+  assert.equal(loaded.due(next).length, 0);
+});

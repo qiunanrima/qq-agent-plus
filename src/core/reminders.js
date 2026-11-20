@@ -331,6 +331,15 @@ export function nextAtFromHHMM(hhmm, now = Date.now()) {
   return now + deltaMin * 60 * 1000;
 }
 
+export function parseReminderDate(value) {
+  const input = String(value ?? '').trim().replace('T', ' ');
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(input)) return null;
+  const at = Date.parse(input.replace(' ', 'T') + ':00+08:00');
+  if (!Number.isFinite(at)) return null;
+  const local = new Date(at + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
+  return local === input ? at : null;
+}
+
 export class ReminderStore {
   constructor(file = FILE) {
     this.file = file;
@@ -392,7 +401,7 @@ export class ReminderStore {
    *  createdBy = 谁提的（"a 让你提醒 b"里的 a）；targetName = 提醒谁（b）。
    *  两者都是可选的事实信息，只用于到点派发时的话术归属（2026-10-10 用户反馈：
    *  此前不记归属，派发话术又套着"你给自己留过话"的框架，模型会自己圆归属）。 */
-  add({ chatKey, at, text, createdBy = '', targetName = '', repeat = null, quiet = null }) {
+  add({ chatKey, at, text, createdBy = '', targetName = '', repeat = null, quiet = null, goalId = '', eventAt = null }) {
     const when = Number(at);
     // 提醒正文是"用户可诱导模型原样搬运"的文本，落盘前统一弱化段头（提示注入面，2026-09-28 审查 P2）
     const body = sanitizeUserText(String(text || '').trim()).slice(0, MAX_REMINDER_TEXT);
@@ -435,6 +444,8 @@ export class ReminderStore {
       chatKey,
       at: when,
       text: body,
+      ...(goalId ? { goalId } : {}),
+      ...(eventAt ? { eventAt } : {}),
       // 归属名与其他入口同口径（段头弱化 + 截断）：它们会进派发 note，也在注入面里
       createdBy: sanitizeUserText(String(createdBy || '').trim()).slice(0, 40),
       targetName: sanitizeUserText(String(targetName || '').trim()).slice(0, 40),
@@ -451,6 +462,41 @@ export class ReminderStore {
     this.items.push(item);
     this.#save();
     return { id: item.id, at: item.at };
+  }
+
+  linkedPending() {
+    return this.items.filter(item => item.goalId && item.status === 'pending' && !item.repeat && !item.occurrenceId);
+  }
+
+  applyAgreementChanges(item, changes) {
+    const index = changes.findIndex(row => row.source === item.lastAgreementChange);
+    for (const change of changes.slice(index + 1)) {
+      if (!change.source || !change.due || !change.previous_due || change.changedAt < item.createdAt) continue;
+      const previous = item.eventAt ?? change.previous_due;
+      if (previous !== change.due) {
+        item.revisions = [...(item.revisions || []), { at: item.at, eventAt: previous }];
+        item.at = item.originalAt = change.due - (previous - item.originalAt);
+        item.eventAt = change.due;
+      }
+      item.lastAgreementChange = change.source;
+      this.#save();
+    }
+  }
+
+  reschedule({ chatKey, id, at, eventAt }) {
+    const item = this.items.find(row => row.id === id && row.chatKey === chatKey && row.status === 'pending');
+    if (!item || item.repeat) throw new Error('需要本会话待触发的一次性提醒 ID');
+    if (item.occurrenceId || item.deliveryAttempts || item.at <= Date.now()) throw new Error('提醒已经进入投递，不能改期');
+    if (!Number.isFinite(at) || at <= Date.now() + 5000 || at > Date.now() + MAX_DELAY_MS) throw new Error('提醒时间须在未来30天内');
+    if (item.eventAt && eventAt == null && at !== item.at) throw new Error('请同时填写约定时间 eventTime 和新的通知时间 dateTime');
+    const previous = { at: item.at, eventAt: item.eventAt };
+    if (at !== item.at || (eventAt != null && eventAt !== item.eventAt)) {
+      item.revisions = [...(item.revisions || []), previous];
+      item.at = item.originalAt = at;
+      if (eventAt != null) item.eventAt = eventAt;
+      this.#save();
+    }
+    return item;
   }
 
   cancel({ id = '', chatKey = '' }) {

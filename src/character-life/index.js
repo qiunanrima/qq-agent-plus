@@ -6,7 +6,7 @@ import { personaKeyOf, personaStateSnapshot } from '../core/persona-state.js';
 import { minuteOfDayInZone, shanghaiDayStart, sanitizeUserText } from '../core/util.js';
 import { openDatabase } from '../core/sqlite.js';
 import { emotionDimensions, readInteraction, verifiedEmotionDelta, interactionAdjustments } from './emotion.js';
-import { commitmentEvidence, initMotiveEvidence, saveRecognizedMotive, saveMotive, summaryForGoal, reminderForTurn, confirmsMotive, quoteOnlyMotive } from './motives.js';
+import { agreementTime, commitmentEvidence, initMotiveEvidence, saveRecognizedMotive, saveMotive, summaryForGoal, reminderForTurn, confirmsMotive, quoteOnlyMotive } from './motives.js';
 
 const file = path.join(DATA_DIR, 'character-life.sqlite');
 const hour = 3600000;
@@ -91,6 +91,67 @@ function summarize(rows, now, legacy, schedule, shift) {
   const baselineValues = [50 + mood, 10, 5, energy, 65, 22];
   return Object.fromEntries(emotionDimensions.map((name, i) => [name, clampScore(baselineValues[i] + adjustment[i])]));
 }
+export function reminderGoalId(persona, chat, entries, actor) {
+  const matching = entries.filter(entry => !entry.self && String(entry.senderId) === actor && /提醒|叫我|通知我/.test(entry.text));
+  return matching.length === 1 ? interactionId(personaKeyOf(persona), chat, matching[0]) : undefined;
+}
+
+function changeAgreement(db, role, chat, entry, text, id, now) {
+  const cancel = /^(?:那就|那|还是)?(?:取消(?:这个|那个|这次)?(?:约定|邀约|计划)?|不约了)[吧了。！! ]*$/.test(text)
+    || /(?:约定|邀约)(?:就)?取消/.test(text);
+  if (!cancel && !/改到|改成|推迟到|提前到|改为/.test(text)) return false;
+  let owned = activeGoals(db, role, now, chat).filter(row => row.actor === String(entry.senderId));
+  if (owned.length > 1) owned = owned.filter(row => row.topic && text.includes(row.topic));
+  if (owned.length !== 1) return false;
+  const goal = owned[0];
+  if (!cancel && !/^(?:那就|那|我们|还是)?(?:改到|改成|推迟到|提前到|改为)/.test(text) && !text.includes(goal.topic)) return false;
+  if (/取消提醒|改.*提醒时间/.test(text)) return false;
+  const due = cancel ? null : agreementTime(text.split(/提前.{0,5}提醒/)[0], now, goal.due);
+  if (!cancel && !due) return false;
+  db.prepare('INSERT INTO motive_changes VALUES(?,?,?,?,?)').run(goal.id, id, goal.due, due, text.slice(0,180));
+  if (cancel) db.prepare('UPDATE motives SET closed=? WHERE event=?').run(id, goal.id);
+  else {
+    db.prepare('UPDATE motive_evidence SET due=? WHERE event=?').run(due, goal.id);
+    db.prepare('UPDATE motives SET expires=? WHERE event=?').run(due + 7200000, goal.id);
+    db.prepare('DELETE FROM initiatives WHERE event=?').run(goal.id);
+    db.prepare('DELETE FROM motive_reminders WHERE event=?').run(goal.id);
+  }
+  return true;
+}
+
+export function agreementHistory(persona, chat, actor) {
+  if (!getConfig().characterLife?.enabled || !actor || !fs.existsSync(file)) return [];
+  const db = openDatabase(file, { readOnly: true });
+  try {
+    if (!hasTable(db, 'motive_evidence')) return [];
+    const rows = db.prepare(`SELECT m.event AS id,m.reason AS original,m.closed,m.expires,p.due
+      FROM motives m JOIN events e ON e.id=m.event JOIN motive_evidence p ON p.event=m.event
+      WHERE e.role=? AND e.chat=? AND e.actor=? AND NOT EXISTS
+      (SELECT 1 FROM motive_invalidations i WHERE i.event=m.event) ORDER BY e.at DESC LIMIT 30`).all(personaKeyOf(persona), chat, actor);
+    const changes = hasTable(db, 'motive_changes') && db.prepare('SELECT previous_due AS previousDue,due,quote FROM motive_changes WHERE event=? ORDER BY rowid');
+    return rows.map(({ closed, ...row }) => ({ ...row, status: closed ? 'closed' : row.expires < Date.now() ? 'expired' : 'open',
+      changes: changes ? changes.all(row.id) : [] }));
+  } finally { db.close(); }
+}
+
+export function syncAgreementReminders(store) {
+  if (!store?.linkedPending || !getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  const items = store.linkedPending();
+  if (!items.length) return;
+  const db = openDatabase(file, { readOnly: true });
+  try {
+    if (!hasTable(db, 'motive_changes')) return;
+    const find = db.prepare(`SELECT m.closed, c.source, c.previous_due, c.due, amended.at AS changedAt
+      FROM motives m JOIN events e ON e.id=m.event LEFT JOIN motive_changes c ON c.event=m.event LEFT JOIN events amended ON amended.id=c.source
+      WHERE m.event=? AND e.chat=? ORDER BY c.rowid`);
+    for (const item of items) {
+      const changes = find.all(item.goalId, item.chatKey);
+      if (changes.some(row => row.closed)) store.cancel({ id: item.id, chatKey: item.chatKey });
+      else store.applyAgreementChanges(item, changes);
+    }
+  } finally { db.close(); }
+}
+
 function activeGoals(db, role, now, chat = null) {
   if (!hasTable(db, 'motive_evidence')) return [];
   const scope = chat === null ? '' : ' AND e.chat=?';
@@ -107,7 +168,7 @@ function recent(db, role, now) {
   return db.prepare(`SELECT events.*${annotation} FROM events WHERE role=? AND at BETWEEN ? AND ?
     ORDER BY at DESC,rowid DESC LIMIT 512`).all(role, now - 7 * day, now);
 }
-export function observeLife({ persona, chatKey, triggerEntries = [], recalled = [], summaries = [], now = Date.now() }) {
+export function observeLife({ persona, chatKey, triggerEntries = [], recalled = [], summaries = [], reminders = [], now = Date.now() }) {
   if (!getConfig().characterLife?.enabled || !triggerEntries?.length) return '';
   const role = personaKeyOf(persona);
   const db = openDatabase(file);
@@ -137,10 +198,11 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
       for (const item of recalled || []) {
         if (item.id) db.prepare('INSERT OR IGNORE INTO links VALUES(?,?)').run(id,String(item.id));
       }
+      if (changeAgreement(db, role, chatKey, entry, text, id, at)) continue;
       saveRecognizedMotive(db, { id, at: Math.min(at, now) }, text);
     }
 
-    const reminder = reminderForTurn(db, activeGoals(db, role, now, chatKey), interactions,
+    const reminder = reminderForTurn(db, activeGoals(db, role, now, chatKey).filter(goal => !reminders.some(item => item.goalId === goal.id)), interactions,
       entry => interactionId(role, chatKey, entry), now, summaries);
     db.exec('COMMIT');
     const rows = recent(db,role,now);
@@ -193,14 +255,14 @@ export function linkedMemories(persona, chat, ids) {
   } finally { db.close(); }
 }
 
-export function claimInitiative(persona, chat, now = Date.now(), summaries = []) {
+export function claimInitiative(persona, chat, now = Date.now(), summaries = [], reminders = []) {
   if (!getConfig().characterLife?.enabled || !fs.existsSync(file) || lifeWillingness(persona, now) < 30) return '';
   const db = openDatabase(file);
   try {
     db.exec('BEGIN IMMEDIATE');
     const claimed = db.prepare('SELECT 1 FROM initiatives WHERE event=?');
     const goal = activeGoals(db, personaKeyOf(persona), now, chat)
-      .find(row => now - row.at >= row.cooldown && (row.due === null || row.due <= now) && !claimed.get(row.id)
+      .find(row => !reminders.some(item => item.goalId === row.id) && now - row.at >= row.cooldown && (row.due === null || row.due <= now) && !claimed.get(row.id)
         && !db.prepare('SELECT 1 FROM motive_reminders WHERE event=?').get(row.id));
     const inserted = goal && db.prepare('INSERT OR IGNORE INTO initiatives VALUES(?)').run(goal.id).changes;
     if (inserted && goal.due !== null) db.prepare('INSERT OR IGNORE INTO motive_reminders VALUES(?,?)').run(goal.id, 'due');
@@ -248,7 +310,9 @@ export function reflectLife(now = Date.now()) {
     db.prepare(`INSERT OR REPLACE INTO reflections SELECT role,date(at/1000,'unixepoch','+8 hours'),kind,count(*)
       FROM events WHERE at>=? AND at<? GROUP BY role,date(at/1000,'unixepoch','+8 hours'),kind`).run(today - 6 * day, today);
     db.prepare("DELETE FROM reflections WHERE date < date(?/1000,'unixepoch','+8 hours','-30 days')").run(now);
-    db.prepare('DELETE FROM events WHERE at<?').run(now-7*day);
+    initMotiveEvidence(db);
+    db.prepare(`DELETE FROM events WHERE at<? AND NOT EXISTS (
+      SELECT 1 FROM motives WHERE (event=events.id OR closed=events.id OR EXISTS (SELECT 1 FROM motive_changes c WHERE c.event=motives.event AND c.source=events.id)) AND expires>=?)`).run(now-7*day, now-7*day);
     if (hasTable(db, 'graph_aliases')) db.prepare('DELETE FROM graph_aliases WHERE checked<?').run(now - 30 * day);
     db.exec('COMMIT');
   } finally { db.close(); }
