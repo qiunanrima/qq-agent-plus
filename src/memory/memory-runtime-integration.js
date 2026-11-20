@@ -38,7 +38,8 @@ function normalizeMemoryView(userId, maxMemories = 6, chatKey = '') {
   const scoped = chatKey ? vis : { ...vis, mode: 'global' };
   const visible = visibleImpressions(impressions, chatKey, scoped);
   const sorted = [...visible]
-    .sort((a, b) => (Number(b.lastObservedAt) || Number(b.createdAt) || 0)
+    .sort((a, b) => Number(b.origin === 'hippocampus') - Number(a.origin === 'hippocampus')
+      || (Number(b.lastObservedAt) || Number(b.createdAt) || 0)
       - (Number(a.lastObservedAt) || Number(a.createdAt) || 0));
   const limit = Math.min(20, Math.max(1, Number(maxMemories) || 6));
   const globalMemories = sorted.slice(0, limit).map((item) => ({

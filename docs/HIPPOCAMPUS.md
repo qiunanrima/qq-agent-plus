@@ -47,6 +47,7 @@
 | --- | --- |
 | `hippocampus_lookup` | 按今日/昨日、QQ、关键词分页查询事件摘要，每页20条 |
 | `memory_query(userId)` | 查询某人的长期印象，包括旧印象与新消化的人物卡 |
+| `memory_query(userId, history=true)` | 追溯升级后被替换的人物卡版本，沿用当前卡的角色和来源可见性 |
 | `memory_query(query)` | 检索旧印象与新人物卡，结果不含来源会话标识 |
 | `memory_card_list` | 按类型、人物分页查看长期卡片索引，每页30条 |
 | `memory_card_lookup(id)` | 展开人物、技能卡正文 |

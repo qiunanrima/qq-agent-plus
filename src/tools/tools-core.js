@@ -1,3 +1,4 @@
+import { resolvePersona } from '../personas.js';
 import { historySearchTool } from './history-search.js';
 import { actionGate, actionDone } from './action-policy.js';
 import { normalizeMid, stripMemorySources, sanitizeDeep } from './result-sanitize.js';
@@ -2969,6 +2970,7 @@ export function buildToolDefs() {
       parameters: {
         type: 'object',
         properties: {
+          history: { type: 'boolean', description: '配合 userId 查询已被替换的海马人物卡版本' },
           query: { type: 'string', description: '可选：按关键词/短句找记忆，例如“上次说的那家面馆”“谁提过爬山”' },
           limit: { type: 'integer', minimum: 1, maximum: 20, description: '返回条数，默认 8' },
           userId: { type: ['integer', 'string'], description: '可选：只看这个 QQ 号的印象' }
@@ -2977,6 +2979,13 @@ export function buildToolDefs() {
       async execute(ctx, args) {
         const query = String(args.query ?? '').trim();
         const userId = String(args.userId ?? '').trim();
+        if (args.history) {
+          const history = userId && ctx.memory.hippocampus?.enabled()
+            ? ctx.memory.hippocampus.personHistory({ persona: resolvePersona(getConfig(), ctx.chatKey),
+              chatKey: ctx.chatKey, subject: userId, limit: Math.max(1, Math.min(20, Number(args.limit) || 8)) })
+            : [];
+          return ok(sanitizeDeep({ history, note: '这些是已被替换的海马人物卡版本，仅供追溯。' }));
+        }
         if (query) {
           const found = ctx.memory.search(ctx.chatKey, query, {
             limit: Math.max(1, Math.min(20, Number(args.limit) || 8)),
@@ -3001,7 +3010,7 @@ export function buildToolDefs() {
         // 与 memory-global.js 的注入路径同一口径：缺 lastObservedAt 时回退 createdAt
         // （只读 lastObservedAt 会把老条目全排到末尾，与自动注入看到的顺序不一致）
         const recency = (e) => Number(e.lastObservedAt || e.createdAt || 0);
-        const byRecency = (a, b) => recency(b) - recency(a);
+        const byRecency = (a, b) => (userId ? Number(b.origin === 'hippocampus') - Number(a.origin === 'hippocampus') : 0) || recency(b) - recency(a);
         const list = userId
           ? mem.memberImpression.filter((e) => String(e.userId) === userId).sort(byRecency).slice(0, MAX_ONE)
           : [...mem.memberImpression].sort(byRecency).slice(0, MAX_ALL);
@@ -3012,8 +3021,9 @@ export function buildToolDefs() {
           : mem.memberImpression.length;
         return ok(sanitizeDeep({
           memberImpression: list.map(stripMemorySources),
+          ...(userId && list.some(row => row.origin === 'hippocampus') ? { guidance: '海马卡为已整理的稳定印象。旧记录可补充其他事实，同一偏好已明确更正时采用更正后的说法。临时例外不改变长期偏好。' } : {}),
           note: total > list.length
-            ? `共 ${total} 条，已按最近观察排序取前 ${list.length} 条；要看某人全部请传 userId`
+            ? `共 ${total} 条，已取前 ${list.length} 条；要看某人全部请传 userId`
             : `共 ${total} 条`
         }));
       }

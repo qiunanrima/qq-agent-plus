@@ -298,3 +298,24 @@ test('不同角色分批消化，短编号映射真实来源，下一批继续�
   await f.memory.maintain({ complete });
   assert.equal(f.memory.episodes().filter((r) => r.digested).length, 2);
 });
+
+test('明确更正后保留旧版本，临时例外不产生版本，清空同时清除历史', async t => {
+  const f = fixture(t);
+  const args = { persona, chatKey: 'group:1', subject: '12345', limit: 8 };
+  f.capture('甲不吃辣');
+  f.setTime('2026-11-02T04:00:00');
+  await f.memory.maintain({ complete: digest('甲不吃辣') });
+  f.capture('甲现在能吃微辣了');
+  f.setTime('2026-11-03T04:00:00');
+  await f.memory.maintain({ complete: digest('甲现在能吃微辣') });
+  f.capture('甲今天想尝一口重辣');
+  f.setTime('2026-11-04T04:00:00');
+  await f.memory.maintain({ complete: async messages => {
+    assert.match(messages[0].content, /今天的例外/);
+    return { cards: [] };
+  } });
+  assert.equal(f.memory.cards(args)[0].content, '甲现在能吃微辣');
+  assert.deepEqual(f.memory.personHistory(args).map(row => row.content), ['甲不吃辣']);
+  f.memory.clearAll();
+  assert.equal(f.memory.withDb(false, db => db.prepare('SELECT count(*) AS n FROM person_card_history').get().n), 0);
+});
