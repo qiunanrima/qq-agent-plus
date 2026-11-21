@@ -187,7 +187,10 @@ export class MemoryStore {
   }
   setHandoff(chatKey, state = {}, meta = {}) {
     if (state?.clearHandoff === true) { this.clearHandoff(chatKey); return null; }
-    const prev = this.getHandoff(chatKey) || {}; const now = Date.now();
+    const previous = this.getHandoff(chatKey) || {};
+    const topic = clean(state.topic ?? previous.topic, 200);
+    const prev = meta.replace === true || topic !== (previous.topic || '') ? {} : previous;
+    const now = Date.now();
     const ttl = Math.min(10080, Math.max(5, Number(state?.ttlMinutes) || Number(getConfig().memory?.handoffTtlMinutes) || 1440));
     const pick = (key, n, chars = 240) => Array.isArray(state?.[key]) ? list(state[key], n, chars) : list(prev[key], n, chars);
     const handoff = {

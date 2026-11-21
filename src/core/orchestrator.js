@@ -1653,9 +1653,6 @@ export class Orchestrator {
 
     let draft = session.handoffDraft;
     if (!draft && session.sent.length > 0) {
-      const previous = typeof this.memory.getHandoff === 'function'
-        ? this.memory.getHandoff(chatKey)
-        : null;
       const incoming = (triggerEntries || [])
         .slice(-4)
         .map((m) => `${m.senderName || m.senderId || '群友'}：${String(m.text || '').replace(/\s+/g, ' ').trim()}`)
@@ -1668,8 +1665,8 @@ export class Orchestrator {
         reply ? `本轮回复：${reply}` : ''
       ].filter(Boolean).join('；');
       draft = {
-        topic: previous?.topic || safeSlice(String(triggerEntries?.[0]?.text || reply), 200),
-        summary: [previous?.summary, turnSummary].filter(Boolean).join('；').slice(-1200)
+        topic: '',
+        summary: turnSummary.slice(-1200)
       };
       session.handoffFallback = true;
     }
@@ -1677,6 +1674,7 @@ export class Orchestrator {
 
     try {
       const handoff = this.memory.setHandoff(chatKey, draft, {
+        replace: session.handoffFallback === true,
         sourceSessionId: session.id,
         participantIds: handoffParticipantIds(triggerEntries),
         lastReply: lastSentText(session)
