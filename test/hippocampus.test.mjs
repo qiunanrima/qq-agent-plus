@@ -319,3 +319,14 @@ test('明确更正后保留旧版本，临时例外不产生版本，清空同�
   f.memory.clearAll();
   assert.equal(f.memory.withDb(false, db => db.prepare('SELECT count(*) AS n FROM person_card_history').get().n), 0);
 });
+
+test('同群三分钟内换参与人或话题时各存独立摘要', t => {
+  const f = fixture(t);
+  const capture = (id, senderId, topic) => f.memory.capture({ persona, chatKey: 'group:1',
+    triggerEntries: [{ eventKind: 'message', senderId, text: topic }],
+    session: { id, episodeSummary: topic, handoffDraft: { topic } } });
+  capture('turn1', '12345', '服务器');
+  capture('turn2', '12345', '追番');
+  capture('turn3', '99999', '追番');
+  assert.equal(f.memory.episodes().length, 3);
+});

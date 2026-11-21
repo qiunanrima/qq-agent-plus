@@ -582,3 +582,22 @@ test('list_stickers：关掉「查看表情库里的图」后只返回有备注�
     updateConfig({ messageTypes: { stickers: true } });
   }
 });
+
+test('发送前有更新的私聊未读时不发送过时草稿', async () => {
+  const f = context({ kind: 'private', chatKey: 'private:42', latestTriggerId: 9,
+    store: { peekUnread: (chat, limit, from) => {
+      assert.deepEqual([chat, limit, from], ['private:42', 1, 10]);
+      return [{ id: 10, text: '我改主意了' }];
+    } } });
+  const result = await tool('send_message').execute(f.ctx, { messages: '旧回复' });
+  assert.ok(!result.isError);
+  assert.equal(f.ctx.session.deferredForNewInput, true);
+  assert.equal(f.sends.length, 0);
+});
+
+test('群聊普通消息可记录真实回应对象，无需公开引用', async () => {
+  const f = context({ triggerEntries: [{ mid: 21, senderId: '42' }, { mid: 22, senderId: '43' }],
+    sender: { sendTextBatch: async () => ({ sent: [{ text: '选钢琴', messageId: 33 }], failed: [] }) } });
+  await tool('send_message').execute(f.ctx, { messages: '选钢琴', respondingToMessageId: 21 });
+  assert.equal(f.ctx.session.respondedToUserId, '42');
+});

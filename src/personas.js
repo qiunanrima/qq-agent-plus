@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 export function normalizeBehaviorProfile(value) {
@@ -143,6 +144,13 @@ export function builtinPersonaTemplate(id) {
  *
  * 纯函数：不读写磁盘，调用方（编排器）每轮按 chatKey 取一次即可。
  */
+export function memoryKeyForPersona(persona = {}) {
+  if (/^[0-9a-f]{24}$/.test(persona.memoryKey || '')) return persona.memoryKey;
+  return createHash('sha256').update(JSON.stringify([
+    persona.templateId || '', persona.botName || '', persona.roleText || ''
+  ])).digest('hex').slice(0, 24);
+}
+
 export function resolvePersona(cfg, chatKey) {
   const base = cfg?.persona && typeof cfg.persona === 'object' ? cfg.persona : {};
   const key = String(chatKey || '');
@@ -151,6 +159,7 @@ export function resolvePersona(cfg, chatKey) {
     : null;
   if (!overlay || typeof overlay !== 'object') return base;
   const merged = { ...base, ...overlay };
+  if (!overlay.memoryKey && (overlay.templateId || overlay.roleText || overlay.botName)) delete merged.memoryKey;
   const templateId = String(overlay.templateId || '').trim();
   if (templateId) {
     const template = builtinPersonaTemplate(templateId);
@@ -197,6 +206,7 @@ export function applyPersonaTemplate(cfg) {
   }
   const nextText = String(template.text).trim();
   if (String(persona.roleText || '').trim() === nextText) return null;
+  if (persona.roleText) persona.memoryKey = memoryKeyForPersona(persona);
   persona.roleText = nextText;
   return { id: rawId, name: template.name };
 }

@@ -650,6 +650,10 @@ function renderUsagePage(stats, st, prices) {
           指定价格后本页会自动重算：<b>设置 → 模型价格</b>（开关关掉后可按模型/渠道手填，或配远程价格表）。</div>
       </div>
 
+      ${stats.cacheGroups?.length ? `<section><h3 class="usage-h3">聊天调用缓存</h3>
+        <table class="usage-table"><thead><tr><th>后端 / 模型 / 会话模式</th><th>已报告 / 调用</th><th>命中率</th><th>未缓存输入 Token（已报告）</th></tr></thead>
+        <tbody>${stats.cacheGroups.map(g => `<tr><td>${esc([g.backend, g.model, g.mode].join(' / '))}</td><td>${fmtTok(g.reported)} / ${fmtTok(g.calls)}</td><td>${g.input ? (100 * g.cached / g.input).toFixed(1) + '%' : '—'}</td><td>${g.reported ? fmtTok(g.input - g.cached) : '未报告'}</td></tr>`).join('')}</tbody></table>
+      </section>` : ''}
       <div data-block="days">
         <h3 class="usage-h3">按天</h3>
         <table class="usage-table clickable" data-table="days">

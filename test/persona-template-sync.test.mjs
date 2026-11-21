@@ -136,3 +136,13 @@ test('人设字段传了非对象（null / 字符串）时当没改，不会打�
 });
 
 process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+
+test('同一个自定义角色编辑后仍读取原来的成长和海马记录', async () => {
+  const { memoryKeyForPersona } = await import('../src/personas.js');
+  updateConfig({ persona: { botName: '回归用角色', roleText: '最初角色卡', templateId: '' } });
+  const original = memoryKeyForPersona(getConfig().persona);
+  updateConfig({ persona: { roleText: '改得温柔一点' } });
+  assert.equal(memoryKeyForPersona(reloadConfig().persona), original);
+  updateConfig({ persona: { botName: '另一个角色' } });
+  assert.notEqual(memoryKeyForPersona(getConfig().persona), original);
+});

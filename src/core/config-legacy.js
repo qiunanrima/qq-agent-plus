@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { sanitizeBlacklistKeywordRulesWithReport } from './keyword-rules.js';
 import { fileURLToPath } from 'node:url';
-import { PERSONAS, normalizeBehaviorProfile, applyPersonaTemplate, applyPersonaPerChatTemplates } from '../personas.js';
+import { memoryKeyForPersona, resolvePersona, PERSONAS, normalizeBehaviorProfile, applyPersonaTemplate, applyPersonaPerChatTemplates } from '../personas.js';
 import { idList } from './list.js';
 import {
   clampProbability,
@@ -1373,6 +1373,7 @@ export function normalizePersonaPerChat(raw) {
   for (const [key, value] of Object.entries(raw)) {
     if (!PERSONA_CHAT_KEY_RE.test(key) || !isPlainObject(value)) continue;
     const entry = {};
+    if (/^[0-9a-f]{24}$/.test(value.memoryKey || '')) entry.memoryKey = value.memoryKey;
     const card = text(value.templateId, PERSONA_OVERRIDE_CARD_CAP);
     if (card) entry.templateId = card;
     const roleText = text(value.roleText, PERSONA_OVERRIDE_TEXT_CAP);
@@ -2214,6 +2215,18 @@ export function updateConfig(patch, { force = false } = {}) {
   }
   if (patchPersona.customRules !== undefined && typeof next.persona.customRules === 'string') {
     next.persona.customRules = next.persona.customRules.slice(0, PERSONA_CUSTOM_RULES_MAX);
+  }
+  // Keep the historical key on an edit, so existing SQLite rows need no rewrite.
+  const retainMemoryKey = (target, before, after) => {
+    delete target.memoryKey;
+    if (!before || before.botName !== after.botName || (after.templateId && before.templateId !== after.templateId)) return;
+    if (before.memoryKey || before.roleText !== after.roleText) target.memoryKey = memoryKeyForPersona(before);
+  };
+  retainMemoryKey(next.persona, getConfig().persona, next.persona);
+  for (const [key, overlay] of Object.entries(next.personaPerChat || {})) {
+    const before = getConfig().personaPerChat?.[key] ? resolvePersona(getConfig(), key) : null;
+    if (overlay.roleText || overlay.botName || overlay.templateId) retainMemoryKey(overlay, before, resolvePersona(next, key));
+    else delete overlay.memoryKey;
   }
   if ('memberNotes' in safePatch) next.memberNotes = clampMemberNotes(next.memberNotes);
   // 表情判定标准（2026-10-10 补上控制台输入后同口径）：只在本次 patch 带了该字段时夹到 2000 字

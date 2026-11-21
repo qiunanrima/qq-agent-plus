@@ -112,7 +112,7 @@ export function saveRecognizedMotive(db, event, text) {
   const isSongDelivery = topic.subject === '歌曲' && /发|给|分享/.test(evidence.quote);
   const title = topic.subject === '歌曲' && !isSongDelivery ? '接续一起听歌的约定' : topic.title;
   saveMotive(db, event, evidence, {
-    title, reason: evidence.quote, condition: isSongDelivery ? '确认歌曲已发给约定对象' : '双方确认这项约定已经完成',
+    title: event.self ? '接续自己说的约定：' + evidence.quote : isSongDelivery ? '接续对方说的约定：' + evidence.quote : title, reason: evidence.quote, condition: isSongDelivery ? '确认歌曲已发给约定对象' : '双方确认这项约定已经完成',
     duration: 3 * day, cooldown: 8 * hour
   });
 }
@@ -163,5 +163,5 @@ export function reminderForTurn(db, goals, entries, goalId, now, summaries = [])
   if (reference) return `当前会话海马的${reference}中的约定${match.due ? '已到时间' : '被对方再次提起'}，可接续该话题。`;
   const quote = match.goal.reason.replace(/[<>「」]/g, '');
   const scheduled = match.goal.due ? new Date(match.goal.due).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '';
-  return `相关的历史约定（仅供参考）：${match.goal.title}。${scheduled ? `当前约定时间：${scheduled}。` : ''}对方原话「${quote}」。`;
+  return `相关的历史约定（仅供参考）：${match.goal.title}。${scheduled ? `当前约定时间：${scheduled}。` : ''}${match.goal.kind === '自身约定' ? '你当时的原话' : '对方原话'}「${quote}」。`;
 }

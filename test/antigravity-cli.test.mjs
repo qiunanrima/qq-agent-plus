@@ -134,3 +134,9 @@ test('one CLI per conversation, independent chats and lock release after cancell
   await antigravityCompletion(scoped, double());
   assert.equal(antigravityStatus().active, 0);
 });
+
+test('缓存计数缺失与真实零命中分开记录', () => {
+  const parse = usage => parseAntigravityResult({ status: 'SUCCESS', structured_output: { content: 'ok', tool_calls: [] }, usage }).usage;
+  assert.equal(parse({ input_tokens: 30 }).prompt_tokens_details, undefined);
+  assert.equal(parse({ input_tokens: 30, cache_read_tokens: 0 }).prompt_tokens_details.cached_tokens, 0);
+});

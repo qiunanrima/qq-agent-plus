@@ -66,7 +66,7 @@ export function parseAntigravityResult(result, tools = [], toolChoice = 'auto') 
   return {
     message: { role: 'assistant', content: output.content, ...(calls.length ? { tool_calls: calls } : {}) },
     finishReason: calls.length ? 'tool_calls' : 'stop',
-    usage: { prompt_tokens: count('input_tokens'), completion_tokens: count('output_tokens'), total_tokens: count('total_tokens'), prompt_tokens_details: { cached_tokens: count('cache_read_tokens') } },
+    usage: { prompt_tokens: count('input_tokens'), completion_tokens: count('output_tokens'), total_tokens: count('total_tokens'), ...(result.usage?.cache_read_tokens != null ? { prompt_tokens_details: { cached_tokens: count('cache_read_tokens') } } : {}) },
     raw: result, originBaseUrl: 'antigravity-cli://local'
   };
 }
@@ -222,7 +222,7 @@ export async function antigravityCompletion({ config, messages, tools, toolChoic
       return { message: { role: 'assistant', content: String(result.response || '') }, finishReason: 'stop',
         toolsExecutedViaMcp: true, model: cfg.model || 'antigravity-default', originBaseUrl: 'antigravity-cli://local',
         usage: result.usage_unavailable ? undefined : { prompt_tokens: count('input_tokens'), completion_tokens: count('output_tokens'), total_tokens: count('total_tokens'),
-          prompt_tokens_details: { cached_tokens: count('cache_read_tokens') } },
+          ...(result.usage?.cache_read_tokens != null ? { prompt_tokens_details: { cached_tokens: count('cache_read_tokens') } } : {}) },
         raw: { status: result.status, conversation_id: result.conversation_id, mcpCalls: invocation.calls(),
           ...(result.usage_unavailable ? { usageUnavailable: true } : {}) } };
     }

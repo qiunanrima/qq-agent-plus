@@ -85,5 +85,5 @@ test('窄屏真实页面渲染六维读数、动机强度与关联记录',async 
   await expect(page.locator('.life-graph-center')).toHaveText('QQ:42');
   await page.locator('#life-full-graph').check();
   await expect(page.locator('#life-graph-cleanup')).toHaveText('');
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(await page.locator('html').evaluate(root => root.scrollWidth)).toBeLessThanOrEqual(390);
 });

@@ -422,6 +422,23 @@ function renderSessionContextInspector(s) {
   const tools = Array.isArray(s.inputTools) ? s.inputTools : [];
   const calls = Array.isArray(s.callUsage) ? s.callUsage : [];
   const metrics = sessionMetricsOf(s);
+  const cacheGroups = new Map();
+  for (const call of calls) {
+    const label = [call.backend, call.model, call.conversationMode].filter(Boolean).join(' / ') || '历史记录';
+    const group = cacheGroups.get(label) || { input: 0, cached: 0, known: 0, count: 0 };
+    group.count++;
+    if (call.cacheReported === true || (call.cacheReported == null && call.cachedTokens > 0)) {
+      group.known++;
+      group.input += Number(call.promptTokens) || 0;
+      group.cached += Number(call.cachedTokens) || 0;
+    }
+    cacheGroups.set(label, group);
+  }
+  const groups = [...cacheGroups.values()];
+  const knownInput = groups.reduce((sum, g) => sum + g.input, 0);
+  const knownCached = groups.reduce((sum, g) => sum + g.cached, 0);
+  const hasReport = groups.some(g => g.known);
+  const firstReported = calls[0]?.cacheReported === true || calls[0]?.cachedTokens > 0;
   const payloadChars = Number(s.inputPayloadChars)
     || JSON.stringify({ messages: request.messages, tools }).length;
   const reasoning = (s.messages || [])
@@ -512,11 +529,11 @@ function renderSessionContextInspector(s) {
         <span class="context-layout">${esc(s.promptLayout || 'stable-prefix-v2')}</span>
       </div>
       <div class="context-metrics">
-        <div><span>首轮缓存命中率</span><strong>${fmtRate(metrics.firstCallCacheHitRate, metrics.modelCalls > 0)}</strong><small>首轮输入</small></div>
-        <div><span>总缓存命中率</span><strong>${fmtRate(metrics.cacheHitRate, metrics.promptTokens > 0)}</strong><small>全部模型调用</small></div>
+        <div><span>首轮缓存命中率</span><strong>${firstReported ? fmtRate(metrics.firstCallCacheHitRate, true) : '未报告'}</strong><small>首轮输入</small></div>
+        <div><span>总缓存命中率</span><strong>${hasReport ? fmtRate(knownCached / (knownInput || 1), knownInput > 0) : '未报告'}</strong><small>按已报告的输入 Token 加权</small></div>
         <div><span>总输出 Token</span><strong>${fmtTok(metrics.completionTokens)}</strong><small>token</small></div>
         <div><span>总输入 Token</span><strong>${fmtTok(metrics.promptTokens)}</strong><small>token</small></div>
-        <div><span>总缓存 Token</span><strong>${fmtTok(metrics.cachedTokens)}</strong><small>token</small></div>
+        <div><span>总缓存 Token</span><strong>${hasReport ? fmtTok(knownCached) : '未报告'}</strong><small>token</small></div>
         <div><span>总工具次数</span><strong>${fmtTok(metrics.toolCalls)}</strong><small>次</small></div>
         <div><span>总联网次数</span><strong>${fmtTok(metrics.webSearchCount)}</strong><small>次</small></div>
         <div><span>预估成本</span><strong>${fmtYuan(metrics.estimatedCost)}</strong><small>${(() => {
@@ -529,6 +546,7 @@ function renderSessionContextInspector(s) {
           return notes.length ? notes.join('；') : '与用量页同口径';
         })()}</small></div>
       </div>
+      ${[...cacheGroups].map(([label, g]) => `<div class="context-request-summary">${esc(label)} · ${g.known}/${g.count} 次报告缓存 · 未缓存输入 ${g.known ? fmtTok(g.input - g.cached) : '未知'}</div>`).join('')}
       <div class="context-request-summary">
         当前展示第 ${Number(s.inputRound) || Math.max(1, calls.length)} 轮请求快照
         · 请求体 ${fmtTok(payloadChars)} 字符
@@ -542,7 +560,8 @@ function renderSessionContextInspector(s) {
             <tbody>${calls.map((call) => {
               const input = Number(call.promptTokens) || 0;
               const cached = Math.min(input, Number(call.cachedTokens) || 0);
-              return `<tr><td>第 ${Number(call.round) || '-'} 轮</td><td>${fmtTok(input)}</td><td>${fmtTok(cached)}</td><td>${fmtRate(input ? cached / input : 0, input > 0)}</td><td>${fmtTok(Math.max(0, input - cached))}</td><td>${fmtTok(call.completionTokens)}</td><td>${fmtTok(call.totalTokens)}</td></tr>`;
+              const reported = call.cacheReported === true || cached > 0;
+              return `<tr><td>第 ${Number(call.round) || '-'} 轮</td><td>${fmtTok(input)}</td><td>${reported ? fmtTok(cached) : '未报告'}</td><td>${reported ? fmtRate(input ? cached / input : 0, input > 0) : '—'}</td><td>${reported ? fmtTok(Math.max(0, input - cached)) : '—'}</td><td>${fmtTok(call.completionTokens)}</td><td>${fmtTok(call.totalTokens)}</td></tr>`;
             }).join('')}</tbody>
           </table>
         </div>` : ''}

@@ -76,7 +76,7 @@ function memoryRules(identityPilotAvailable = false, friendProposalAvailable = f
       ? '- 今日/昨日事件见【海马】，finish.episodeSummary 保存周期简记；memory_append 已停用。长期记忆先查索引，再用 memory_query / memory_card_lookup 读正文；人格成长用 personality_lookup / remember_personality，均以本轮工具表为准。'
       : '- memory_append 只记有依据的长期人物事实；过时印象可用 memory_remove 删除。',
     '- 记事实，不把猜测、一次拌嘴或临时话题写成稳定性格；记忆可能过时，冲突时以最新消息和可验证事实为准。不得透露其他群或私聊的原话、来源和隐私。',
-    '- 交接只约束同一个话题：finish 保存简洁结论、事实、未决事项与下一步，不保存逐步推理；话题结束用 clearHandoff 清除，换话题不沿用旧立场。',
+    '- 交接只约束同一个话题：finish 保存简洁结论、事实、未决事项与下一步，不保存逐步推理；话题结束用 clearHandoff 清除，对方自然转向新话题时直接接新话题，旧问题可以暂时搁置。续聊沿用原 topic，换题填写新 topic，只带新话题的待办。对方的动机、笑点和图片含义不明确时，留白或只问一个具体问题，等对方回应。价格、版本和额度只引用有依据的信息；无法确认就说不确定。对方纠正你的理解后以纠正为准，拿不准的细节不要猜成事实。',
     ...(identityPilotAvailable ? ['- person_memory_lookup 可查询当前对象的跨会话身份线索；未读取的记忆正文不能假装知道。'] : []),
     ...(friendProposalAvailable ? ['- friend_request_propose 仅提交好友候选，管理员决定；不能声称已加好友。'] : [])
   ].join('\n');
@@ -502,7 +502,7 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null }
   const selected = [];
   const lines = [];
   for (const m of [...messages].reverse()) {
-    let line = formatEntry({ ...m, text: safeSlice(m.text, 2000) }, { withId: true });
+    let line = formatEntry({ ...m, text: m.self && m.chatKey === chatKey && String(chatKey).startsWith('private:') ? m.text : safeSlice(m.text, 2000) }, { withId: true });
     const separator = lines.length ? 1 : 0;
     if (line.length + separator > remaining) {
       // 至少保留最新一条的可用正文；更早的历史仍按完整消息裁剪。
@@ -511,7 +511,9 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null }
       const prefix = formatEntry({ ...m, text: '', reply: null }, { withId: true });
       const budget = remaining - prefix.length - marker.length;
       if (budget <= 0) break;
-      line = prefix + safeSlice(String(m.text || ''), budget) + marker;
+      const body = String(m.text || '');
+      const tail = m.self && chatKey.startsWith('private:') ? Math.floor(budget / 2) : 0;
+      line = prefix + safeSlice(body, budget - tail) + marker + (tail ? body.slice(-tail) : '');
     }
     remaining -= line.length + separator;
     lines.unshift(line);
@@ -682,7 +684,8 @@ export function buildUserPrompt(ctx) {
   } else {
     stateLines.push('你最近没有发过言');
   }
-  parts.push(`【此刻状态】\n${stateLines.join('\n')}`);
+  const stateBlock = `【此刻状态】\n${stateLines.join('\n')}`;
+  if (!ctx.historyFirst) parts.push(stateBlock);
 
   // 【角色设定】刚换过的那段时间，历史/交接里留着上一张卡的口癖与自称：
   // 不加说明的话模型会照着自己上一条的口气继续说（实测换卡 26 小时后仍在用旧卡的口癖）。
@@ -696,6 +699,9 @@ export function buildUserPrompt(ctx) {
     // 生命周期模式是最直接的锚点（旧轮次原样在上文里）——换卡后更要提醒别沿用旧口癖
     parts.push('【生命周期续接】' + (staleNote ? staleNote + String.fromCharCode(10) : '')
       + '此前轮次已按原顺序放在上文；这里只处理本次新增消息，不要重复回复旧消息。');
+  } else if (past.text && ctx.historyFirst) {
+    parts.push(`【过去状态】当前会话的已读记录，从旧到新排列。“我”是你已发送的发言，# 后是消息 id。需要更早的记录可用 get_recent_messages。\n${past.text}`);
+    if (staleNote) parts.push(staleNote);
   } else if (past.text) {
     parts.push(`【过去状态】${staleNote ? staleNote + String.fromCharCode(10) : ''}以下是这个会话最近的聊天记录（按时间排序，越往下越新；你的发言标为"我"；这些都已经看过；每行的 #消息id 用来定位具体某条 —— 引用、看图、收藏表情、翻页工具都要用它，个别行如拍一拍没有 id）。这里只带了最近 ${past.count} 条；同一个会话里 #消息id 通常随时间递增，可以用它核对先后（遇到被补课的旧消息、或 id 跳号时，以行序为准）。要看更早的记录用 get_recent_messages 往前翻：\n${past.text}`);
   } else {
@@ -709,6 +715,8 @@ export function buildUserPrompt(ctx) {
       ? '【过去状态】（这次没有附带历史记录，只有下面的【本次唤醒】；需要更早的上下文就用 get_recent_messages 往前翻）'
       : '【过去状态】（暂无历史记录，这是你第一次参与这个会话）');
   }
+
+  if (ctx.historyFirst) parts.push(stateBlock);
 
   // 记忆：只注入与本次对话相关群友的印象（触发者 + 最近活跃成员），控制 token
   const relevantUserIds = new Set();
@@ -791,6 +799,7 @@ export function buildUserPrompt(ctx) {
   else if (handoffText) snapshotParts.push(stalePrefix + handoffText);
   else if (checkpointText) snapshotParts.push(stalePrefix + checkpointText);
 
+  if (ctx.historyFirst && ctx.snapshotParts) parts.push(...ctx.snapshotParts);
   parts.push(`【当前时间】${formatFullTime(now)}`);
 
   // 最新消息始终位于动态输入末端，兼顾注意力与前缀缓存。

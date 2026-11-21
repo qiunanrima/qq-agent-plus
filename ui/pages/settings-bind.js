@@ -1794,9 +1794,7 @@ function bindSettingsPersonaAndVision() {
   syncPersonaButtons();
 
   // ── 白名单区块事件 ──
-  const pickGroupsBtn = $('#pick-groups-btn');
-  if (pickGroupsBtn) pickGroupsBtn.addEventListener('click', () => openWhitelistPicker('groups'));
-  const pickFriendsBtn = $('#pick-friends-btn');
-  if (pickFriendsBtn) pickFriendsBtn.addEventListener('click', () => openWhitelistPicker('friends'));
+  $('#pick-groups-btn')?.addEventListener('click', () => openWhitelistPicker('groups'));
+  $('#pick-friends-btn')?.addEventListener('click', () => openWhitelistPicker('friends'));
 }
 export { bindCrossSectionControls, bindSettingsEvents, captureTimeControlRule, isSplitThinking };
