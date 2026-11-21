@@ -143,3 +143,28 @@ test('私聊长回复下轮仍看得到结尾选项', () => {
     assert.match(buildPastState(store, 'private:1').text, /第二项是小提琴/);
   } finally { store.close(); }
 });
+
+test('私聊快照变化并追加历史时，已有的历史仍是共同前缀', async () => {
+  const { buildUserPrompt } = await import('../src/llm/prompt.js');
+  configWith(false);
+  const store = seed();
+  const sample = (historyFirst, snapshot, text) => {
+    const snapshotParts = [snapshot];
+    const prompt = buildUserPrompt({ historyFirst, snapshotParts, store, kind: 'private', chatKey: 'private:1',
+      memory: { formatForPrompt: () => '' }, triggerEntries: [{ id: 999, text, senderId: '1' }] });
+    return historyFirst ? prompt : snapshotParts.join('\n\n') + '\n\n' + prompt;
+  };
+  const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+  try {
+    const oldFirst = sample(false, '交接：周末听歌', '想听哪首');
+    const newFirst = sample(true, '交接：周末听歌', '想听哪首');
+    store.appendSelf('private:1', { mid: 200, text: '那首钢琴曲', ts: 6000 });
+    const oldNext = sample(false, '交接：换个话题', '今天去哪里');
+    const newNext = sample(true, '交接：换个话题', '今天去哪里');
+    assert.ok(newNext.indexOf('A 又说了一句') < newNext.indexOf('交接：换个话题'));
+    assert.ok(newNext.indexOf('交接：换个话题') < newNext.indexOf('今天去哪里'));
+    assert.equal(newNext.split('交接：换个话题').length, 2);
+    assert.ok(prefix(newFirst, newNext) > prefix(oldFirst, oldNext));
+    console.log('私聊动态输入共同前缀字符', prefix(oldFirst, oldNext), '→', prefix(newFirst, newNext));
+  } finally { store.close(); }
+});

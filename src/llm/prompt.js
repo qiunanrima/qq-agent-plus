@@ -684,7 +684,8 @@ export function buildUserPrompt(ctx) {
   } else {
     stateLines.push('你最近没有发过言');
   }
-  parts.push(`【此刻状态】\n${stateLines.join('\n')}`);
+  const stateBlock = `【此刻状态】\n${stateLines.join('\n')}`;
+  if (!ctx.historyFirst) parts.push(stateBlock);
 
   // 【角色设定】刚换过的那段时间，历史/交接里留着上一张卡的口癖与自称：
   // 不加说明的话模型会照着自己上一条的口气继续说（实测换卡 26 小时后仍在用旧卡的口癖）。
@@ -698,6 +699,9 @@ export function buildUserPrompt(ctx) {
     // 生命周期模式是最直接的锚点（旧轮次原样在上文里）——换卡后更要提醒别沿用旧口癖
     parts.push('【生命周期续接】' + (staleNote ? staleNote + String.fromCharCode(10) : '')
       + '此前轮次已按原顺序放在上文；这里只处理本次新增消息，不要重复回复旧消息。');
+  } else if (past.text && ctx.historyFirst) {
+    parts.push(`【过去状态】当前会话的已读记录，从旧到新排列。“我”是你已发送的发言，# 后是消息 id。需要更早的记录可用 get_recent_messages。\n${past.text}`);
+    if (staleNote) parts.push(staleNote);
   } else if (past.text) {
     parts.push(`【过去状态】${staleNote ? staleNote + String.fromCharCode(10) : ''}以下是这个会话最近的聊天记录（按时间排序，越往下越新；你的发言标为"我"；这些都已经看过；每行的 #消息id 用来定位具体某条 —— 引用、看图、收藏表情、翻页工具都要用它，个别行如拍一拍没有 id）。这里只带了最近 ${past.count} 条；同一个会话里 #消息id 通常随时间递增，可以用它核对先后（遇到被补课的旧消息、或 id 跳号时，以行序为准）。要看更早的记录用 get_recent_messages 往前翻：\n${past.text}`);
   } else {
@@ -711,6 +715,8 @@ export function buildUserPrompt(ctx) {
       ? '【过去状态】（这次没有附带历史记录，只有下面的【本次唤醒】；需要更早的上下文就用 get_recent_messages 往前翻）'
       : '【过去状态】（暂无历史记录，这是你第一次参与这个会话）');
   }
+
+  if (ctx.historyFirst) parts.push(stateBlock);
 
   // 记忆：只注入与本次对话相关群友的印象（触发者 + 最近活跃成员），控制 token
   const relevantUserIds = new Set();
@@ -793,6 +799,7 @@ export function buildUserPrompt(ctx) {
   else if (handoffText) snapshotParts.push(stalePrefix + handoffText);
   else if (checkpointText) snapshotParts.push(stalePrefix + checkpointText);
 
+  if (ctx.historyFirst && ctx.snapshotParts) parts.push(...ctx.snapshotParts);
   parts.push(`【当前时间】${formatFullTime(now)}`);
 
   // 最新消息始终位于动态输入末端，兼顾注意力与前缀缓存。

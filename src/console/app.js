@@ -4098,6 +4098,7 @@ function collectUsageRows({ range }) {
   if (hit && (Date.now() - hit.at) < USAGE_CACHE_TTL_MS) {
     return {
       rows: hit.rows.slice(),
+      cacheGroups: hit.cacheGroups,
       // 返回缓存对应的窗口：rows 是按它筛的，返回当前 win 会让标签和行列不同步。
       win: hit.win || win,
       searchCount: hit.searchCount || 0,
@@ -4125,6 +4126,7 @@ function collectUsageRows({ range }) {
   // startedAt，留 6 小时余量后按 mtime 跳过窗口外文件是安全的。
   const mtimeFloor = Number(win.start) > 0 ? Number(win.start) - 6 * 60 * 60 * 1000 : 0;
 
+  const cacheStats = new Map();
   const rows = readExternalUsage(DATA_DIR, win).map((row) => ({ ...row, modelKey: modelLabel(row.vendor, row.model) }));
   // 会话级计数：搜索次数、各工具的调用次数。
   // 与 rows 在同一个循环里统计 —— 不额外多读一次文件。
@@ -4145,6 +4147,20 @@ function collectUsageRows({ range }) {
 
     // 这个会话是否落在时间窗口内（工具/搜索计数按会话归属，没有独立时间戳）
     if (started >= win.start && started <= win.end) {
+      for (const call of s.callUsage || []) {
+        const backend = call.backend || '历史未记录';
+        const model = call.model || '历史未记录';
+        const mode = call.conversationMode || s.conversationMode || '历史未记录';
+        const key = JSON.stringify([backend, model, mode]);
+        const group = cacheStats.get(key) || { backend, model, mode, calls: 0, reported: 0, input: 0, cached: 0 };
+        group.calls++;
+        if (call.cacheReported === true || (call.cacheReported == null && call.cachedTokens > 0)) {
+          group.reported++;
+          group.input += Number(call.promptTokens) || 0;
+          group.cached += Number(call.cachedTokens) || 0;
+        }
+        cacheStats.set(key, group);
+      }
       searchCount += Number(s.webSearchCount) || 0;
       for (const m of (s.messages || [])) {
         const name = m && m.toolCall && m.toolCall.name;
@@ -4158,7 +4174,9 @@ function collectUsageRows({ range }) {
     }
   }
   // 写缓存：存的是"清洗完的 rows"，取用时给副本避免调用方污染
+  const cacheGroups = [...cacheStats.values()];
   usageRowsCache.set(sig, {
+    cacheGroups,
     rows: rows.slice(),
     win,
     searchCount,
@@ -4173,7 +4191,7 @@ function collectUsageRows({ range }) {
     }
     if (oldestKey !== null) usageRowsCache.delete(oldestKey);
   }
-  return { rows, win, searchCount, toolCounts };
+  return { rows, win, searchCount, toolCounts, cacheGroups };
 }
 
 /** 用配置解析价格（成本只与实际调用的模型有关，与当前选中模型无关）。 */
@@ -4289,7 +4307,7 @@ function groupBy(rows, field, limit = 0) {
 
 /** 主统计：按天 / 按会话 / 按模型三个维度。 */
 function buildUsageStats({ range = '7' } = {}) {
-  const { rows, win, searchCount, toolCounts } = collectUsageRows({ range });
+  const { rows, win, searchCount, toolCounts, cacheGroups } = collectUsageRows({ range });
   const totals = costOfRows(rows);
   // 按天分桶需要 dayKey 字段
   for (const r of rows) r.dayKey = dayKeyOf(r.at);
@@ -4323,6 +4341,7 @@ function buildUsageStats({ range = '7' } = {}) {
   return {
     range: String(range),
     rangeLabel: win.label,
+    cacheGroups,
     mode: win.mode,
     totals,
     // 次数类统计：只看数量，不参与成本计算
