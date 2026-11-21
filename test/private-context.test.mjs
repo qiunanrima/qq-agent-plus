@@ -134,3 +134,12 @@ test('跨会话共享时屏蔽名单按消息自己的群过滤（提示词与�
   assert.ok(!payload.messages.some((m) => m.text.includes('群里说的话')), '翻页不能绕过屏蔽名单');
   store.close();
 });
+
+test('私聊长回复下轮仍看得到结尾选项', () => {
+  configWith(false);
+  const store = seed();
+  try {
+    store.appendSelf('private:1', { text: '甲'.repeat(9200) + '第二项是小提琴', mid: 999, ts: 5000 });
+    assert.match(buildPastState(store, 'private:1').text, /第二项是小提琴/);
+  } finally { store.close(); }
+});

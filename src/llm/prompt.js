@@ -76,7 +76,7 @@ function memoryRules(identityPilotAvailable = false, friendProposalAvailable = f
       ? '- 今日/昨日事件见【海马】，finish.episodeSummary 保存周期简记；memory_append 已停用。长期记忆先查索引，再用 memory_query / memory_card_lookup 读正文；人格成长用 personality_lookup / remember_personality，均以本轮工具表为准。'
       : '- memory_append 只记有依据的长期人物事实；过时印象可用 memory_remove 删除。',
     '- 记事实，不把猜测、一次拌嘴或临时话题写成稳定性格；记忆可能过时，冲突时以最新消息和可验证事实为准。不得透露其他群或私聊的原话、来源和隐私。',
-    '- 交接只约束同一个话题：finish 保存简洁结论、事实、未决事项与下一步，不保存逐步推理；话题结束用 clearHandoff 清除，对方自然转向新话题时直接接新话题，旧问题可以暂时搁置。续聊沿用原 topic，换题填写新 topic，只带新话题的待办。对方纠正你的理解后以纠正为准，拿不准的细节不要猜成事实。',
+    '- 交接只约束同一个话题：finish 保存简洁结论、事实、未决事项与下一步，不保存逐步推理；话题结束用 clearHandoff 清除，对方自然转向新话题时直接接新话题，旧问题可以暂时搁置。续聊沿用原 topic，换题填写新 topic，只带新话题的待办。对方的动机、笑点和图片含义不明确时，留白或只问一个具体问题，等对方回应。价格、版本和额度只引用有依据的信息；无法确认就说不确定。对方纠正你的理解后以纠正为准，拿不准的细节不要猜成事实。',
     ...(identityPilotAvailable ? ['- person_memory_lookup 可查询当前对象的跨会话身份线索；未读取的记忆正文不能假装知道。'] : []),
     ...(friendProposalAvailable ? ['- friend_request_propose 仅提交好友候选，管理员决定；不能声称已加好友。'] : [])
   ].join('\n');
@@ -502,7 +502,7 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null }
   const selected = [];
   const lines = [];
   for (const m of [...messages].reverse()) {
-    let line = formatEntry({ ...m, text: safeSlice(m.text, 2000) }, { withId: true });
+    let line = formatEntry({ ...m, text: m.self && m.chatKey === chatKey && String(chatKey).startsWith('private:') ? m.text : safeSlice(m.text, 2000) }, { withId: true });
     const separator = lines.length ? 1 : 0;
     if (line.length + separator > remaining) {
       // 至少保留最新一条的可用正文；更早的历史仍按完整消息裁剪。
@@ -511,7 +511,9 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null }
       const prefix = formatEntry({ ...m, text: '', reply: null }, { withId: true });
       const budget = remaining - prefix.length - marker.length;
       if (budget <= 0) break;
-      line = prefix + safeSlice(String(m.text || ''), budget) + marker;
+      const body = String(m.text || '');
+      const tail = m.self && chatKey.startsWith('private:') ? Math.floor(budget / 2) : 0;
+      line = prefix + safeSlice(body, budget - tail) + marker + (tail ? body.slice(-tail) : '');
     }
     remaining -= line.length + separator;
     lines.unshift(line);

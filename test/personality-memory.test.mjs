@@ -383,3 +383,15 @@ test('共同经历按记忆入口查询，海马模式下仅按需读取，旧�
   assert.ok(!traits.includes(content));
   assert.ok(experiences.includes(content));
 });
+
+test('明确改变偏好并有三天独立证据可以取代旧偏好', async t => {
+  const f = fixture(t);
+  const old = await f.capture(f.preference('我喜欢绿茶'));
+  f.memory.edit(old.id, { content: '我喜欢绿茶', status: 'active' });
+  const quote = '以前最爱绿茶，现在更喜欢咖啡';
+  const args = f.preference(quote);
+  args.evidence = [0, 1, 2].map(days => f.say('group:1', quote, { ts: Date.now() - days * 86400000 }));
+  const next = await f.capture(args, 'group:1', async () => ({ supported: true, topic: '饮品', matchId: '', conflictIds: [old.id] }));
+  assert.equal(next.status, 'active');
+  assert.equal(f.memory.list().find(row => row.id === old.id).status, 'tentative');
+});

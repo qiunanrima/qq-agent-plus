@@ -10,7 +10,7 @@ const { buildUserPrompt } = await import('../src/llm/prompt.js');
 const { openDatabase } = await import('../src/core/sqlite.js');
 const { formatQuoteRef } = await import('../src/core/util.js');
 const { interactionAdjustments, interactionKind } = await import('../src/character-life/emotion.js');
-const { lifeStatus, observeLife, linkedMemories, claimInitiative, analyzeLife, lifeWillingness, reviewGraphAliases, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
+const { lifeStatus, observeLife, linkedMemories, claimInitiative, confirmInitiative, analyzeLife, lifeWillingness, reviewGraphAliases, reflectLife, backupLife, clearLife } = await import('../src/character-life/index.js');
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 test('启停、去重、会话隔离、动机完成和可视化数据', async () => {
   const now=Date.now();
@@ -77,8 +77,12 @@ test('同群不同参与者的邀约可依次领取且各只领取一次', () =>
     { id: 1, senderId: '10', text: '明天一起追番', ts: now - day },
     { id: 2, senderId: '11', text: '明天一起听歌', ts: now - day + 1 }
   ]);
-  assert.match(claimInitiative(persona, 'group:1', now), /一起听歌/);
-  assert.match(claimInitiative(persona, 'group:1', now), /约好的剧集/);
+  const pending = {};
+  assert.match(claimInitiative(persona, 'group:1', now, [], [], pending), /一起听歌/);
+  assert.match(claimInitiative(persona, 'group:1', now, [], [], pending), /一起听歌/);
+  confirmInitiative(pending.id);
+  assert.match(claimInitiative(persona, 'group:1', now, [], [], pending), /约好的剧集/);
+  confirmInitiative(pending.id);
   assert.equal(claimInitiative(persona, 'group:1', now), '');
 });
 
@@ -335,10 +339,10 @@ test('回看旧消息后停用引用误建的待办，保留真实待办及历�
       allowed: () => true, complete: async () => ({ events: [] }) });
     const profile = lifeStatus(now + 2).profiles.find(profile => profile.events.some(event => event.chat === chat));
     assert.ok(profile);
-    assert.deepEqual(profile.goals.map(goal => goal.title), ['把约好的歌发给对方']);
+    assert.deepEqual(profile.goals.map(goal => goal.title), ['接续对方说的约定：我明天发歌给你']);
     assert.match(observeLife({ persona: role, chatKey: chat, now: now + 3, triggerEntries: [
       { id: 123, senderId: '12', ts: now + 3, text: '歌单呢' }
-    ] }), /把约好的歌发给对方/);
+    ] }), /接续对方说的约定：我明天发歌给你/);
     assert.equal(db.prepare('SELECT reason FROM motives WHERE event=?').get(id).reason, mistaken.text);
     assert.ok(db.prepare('SELECT 1 FROM motive_evidence WHERE event=?').get(id));
   } finally { db.close(); }
@@ -376,4 +380,19 @@ test('跨周约定经历七天清理、改期、取消后可查原约定', async
   assert.equal(reopened.due(saturday).length, 0);
   assert.equal(history().status, 'closed');
   assert.doesNotMatch(input(5, '我回来了', saturday), /历史约定/);
+});
+
+test('群里引用第三人不影响角色；私聊双方的发歌约定保留原发言方向', async () => {
+  const { recordSentAgreements } = await import('../src/character-life/index.js');
+  const role = { botName: '收发归属回归' };
+  updateConfig({ characterLife: { enabled: true } });
+  const entry = { id: 701, ts: now, text: '我明天给你发首歌', senderId: '12345' };
+  observeLife({ persona: role, chatKey: 'group:709', selfId: '777', triggerEntries: [{ ...entry, reply: { senderId: '999' } }], now });
+  observeLife({ persona: role, chatKey: 'private:12345', selfId: '777', triggerEntries: [entry], now });
+  recordSentAgreements(role, 'private:12345', { id: 'turn', sent: [{ type: 'text', text: '我后天给你发首歌' }] }, now);
+  const profile = lifeStatus(now).profiles.find(p => p.events.some(e => e.chat === 'private:12345' && e.at === now && e.actor === '12345'));
+  assert.ok(profile);
+  assert.ok(profile.events.every(e => e.chat !== 'group:709'));
+  assert.ok(profile.goals.some(g => g.title === '接续自己说的约定：我后天给你发首歌'));
+  assert.ok(profile.goals.some(g => g.title === '接续对方说的约定：我明天给你发首歌'));
 });

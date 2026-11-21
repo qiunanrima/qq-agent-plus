@@ -77,7 +77,7 @@ import { assertTimeAllowed, isTimeActive, TimeControlError, timeUntilActive, wat
 import { vendorOfConfig, vendorOfBaseUrl } from '../pricing/model-prices.js';
 import { budgetStatus } from './budget.js';
 import { readOwnerUin } from './notify-owner.js';
-import { syncAgreementReminders, agreementHistory, reminderGoalId, observeLife, claimInitiative, linkedMemories, lifeWillingness, analyzeLife, reviewGraphAliases } from '../character-life/index.js';
+import { syncAgreementReminders, agreementHistory, reminderGoalId, observeLife, recordSentAgreements, confirmInitiative, claimInitiative, linkedMemories, lifeWillingness, analyzeLife, reviewGraphAliases } from '../character-life/index.js';
 import { notePersonaInteraction, personaStatePrompt } from './persona-state.js';
 import { memeDensityPrompt } from '../llm/humanize.js';
 import { memesForPrompt } from '../memes/store.js';
@@ -116,7 +116,7 @@ function continuationParticipantIds(session, triggerEntries, store, chatKey) {
   const ids = [];
   for (const item of session?.messages || []) {
     const call = item?.toolCall;
-    if (!call || !['send_message', 'send_sticker', 'send_poke'].includes(call.name)) continue;
+    if (!call || call.isError || !['send_message', 'send_sticker', 'send_poke'].includes(call.name)) continue;
     // 与 tools 层的校验/发送同口径归一化：模型会把 '#42' 这种形态传进来，
     // 直接存进 participantIds 的话后续 `participants.has(senderId)` 永远不命中
     // （该人再发言就不会触发确定性续接；2026-09-29 审查）。
@@ -128,10 +128,10 @@ function continuationParticipantIds(session, triggerEntries, store, chatKey) {
       if (replied?.senderId && !replied.self) ids.push(String(replied.senderId));
     }
   }
+  if (!ids.length && session?.respondedToUserId) ids.push(session.respondedToUserId);
   if (!ids.length) {
-    const last = [...(triggerEntries || [])].reverse()
-      .find((m) => !m?.self && String(m?.senderId || '').trim());
-    if (last) ids.push(String(last.senderId));
+    const speakers = new Set((triggerEntries || []).filter(m => !m.self && m.senderId).map(m => String(m.senderId)));
+    if (speakers.size === 1) ids.push(...speakers);
   }
   return [...new Set(ids)].slice(0, 8);
 }
@@ -1527,6 +1527,10 @@ export class Orchestrator {
           chatKey, triggerEntries, handoff, conversation, runResult
         });
       }
+      try {
+        if (session.usedInitiative) confirmInitiative(session.pendingInitiative?.id);
+        if (session.sent.length) recordSentAgreements(session.memoryPersona || resolvePersona(getConfig(), chatKey), chatKey, session);
+      } catch (error) { log.warn('[character-life] 保存发送结果失败', error.message); }
       if (session.perception) this.perception.consume(session.perception, session.episodeSummary || session.handoffDraft?.summary || lastSentText(session));
       // 已读回执（platform.readReceipts，默认关）：这批处理完就在 QQ 里标已读，
       // 各端未读数不再堆积；默认关是因为它会改变"你自己打开机器人 QQ 时的未读观感"。
@@ -1832,7 +1836,7 @@ export class Orchestrator {
     if (session.sent.length > 0 || session.visibleReply === true) return;
     // A confirmed MCP finish is an intentional host-level close. Internal CLI
     // commentary is not an unsent reply and must never trigger a fallback send.
-    if (hostFinished) {
+    if (hostFinished || session.intentionalSilence || session.deferredForNewInput) {
       session.replyCorrection = 'skipped';
       return;
     }
@@ -2247,8 +2251,8 @@ export class Orchestrator {
     if (useCharacterLife) {
       try {
         const reminders = this.reminders?.list?.(chatKey, { includeDone: true }) || [];
-        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey, Date.now(), summaries, reminders)
-          : observeLife({ persona, chatKey, triggerEntries, summaries, reminders, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
+        const hint = !channel && proactive && !triggerEntries?.length ? claimInitiative(persona, chatKey, Date.now(), summaries, reminders, session.pendingInitiative = {})
+          : observeLife({ selfId: this.onebot.selfId, persona, chatKey, triggerEntries, summaries, reminders, recalled: livingRecall.mode === 'active' ? livingRecall.directEntries : [] });
         syncAgreementReminders(this.reminders);
         personaStateLine = [personaStateLine, hint].filter(Boolean).join('\n');
       } catch (error) { log.warn('[character-life] 状态更新失败', error.message); }
@@ -2471,6 +2475,7 @@ export class Orchestrator {
 
     const ctx = {
       chatKey, kind, chatId,
+      latestTriggerId: Math.max(0, ...(triggerEntries || []).map(row => Number(row.id) || 0)),
       selfId: this.onebot.selfId,
       selfNickname,
       botName: persona.botName,
@@ -2506,7 +2511,7 @@ export class Orchestrator {
       effects: this.effects,
       // 本轮触发消息（remind 的 from 兜底要判断"是否只有一个发送者"；只带最小字段）
       triggerEntries: (triggerEntries || []).map((m) => ({
-        senderId: m?.senderId || '', senderName: m?.senderName || '', self: Boolean(m?.self),
+        mid: m?.mid ?? null, senderId: m?.senderId || '', senderName: m?.senderName || '', self: Boolean(m?.self),
         // 群管理授权要核对管理员这句到底说了什么；只留文本片段，不带媒体/原始段。
         text: safeSlice(String(m?.text || ''), 300)
       })),
@@ -2891,7 +2896,7 @@ export class Orchestrator {
     providerTranscriptDelta.push({
       role: 'assistant',
       content: session.sent.length
-        ? lastSentText(session)
+        ? session.sent.map(item => item.text).filter(Boolean).join('\n')
         : '（本轮未向 QQ 发送消息）',
       ...(terminalReasoning ? { reasoning_content: terminalReasoning } : {})
     });
@@ -3467,7 +3472,7 @@ export class Orchestrator {
     const messages = this.store.recent(chatKey, { limit: 100, readOnly: true, scope: 'chat' })
       .filter(row => row.eventKind === 'message' && !blocked.has(String(row.senderId)));
     let analyzed = 0;
-    try { analyzed = await analyzeLife({ persona: resolvePersona(cfg, chatKey), chat: chatKey, messages, complete, allowed }); }
+    try { analyzed = await analyzeLife({ selfId: this.onebot.selfId, persona: resolvePersona(cfg, chatKey), chat: chatKey, messages, complete, allowed }); }
     catch (error) { if (allowed()) log.warn('[character-life] 语境分析跳过', error.message); }
     if (!allowed() || isExternalChat(chatKey)) return { merged: 0, reinforced: 0, analyzed };
     // With hippocampus active the semantic store is historical and explicitly queried.

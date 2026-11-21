@@ -609,6 +609,7 @@ export function buildToolDefs() {
         type: 'object',
         properties: {
           messages: { description: '要发送的内容：字符串=一条；数组=分多条', oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+          respondingToMessageId: { type: ['integer', 'string'], description: '群聊多人插话时标明正在回应的消息 id。只用于内部续聊，不在 QQ 显示引用。' },
           replyToMessageId: { type: ['integer', 'string'], description: '要引用/回复的消息 id（聊天记录里每条消息前的 #数字，可选）' },
           atUserId: { type: ['integer', 'string'], description: '要 @ 的群成员 QQ 号（可选；和引用同时给时保留引用、忽略 @；不要滥用）' }
         },
@@ -616,6 +617,11 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         try {
+          if (ctx.kind === 'private' && ctx.latestTriggerId > 0 && !ctx.session.sent.length
+            && ctx.store.peekUnread(ctx.chatKey, 1, ctx.latestTriggerId + 1).length) {
+            ctx.session.deferredForNewInput = true;
+            return ok({ deferred: true, message: '收到更新的私聊消息，本轮正文未发送。请 finish，由下一轮结合补充作答。' });
+          }
           const messages = normalizeMessageList(args.messages);
           if (!messages.length) return err('消息内容为空');
           // 正文优先：非法引用/@ 只降级目标，不让整条回复消失。
@@ -652,6 +658,9 @@ export function buildToolDefs() {
             atUserId: normalizeMid(target.atUserId) || null
           });
           afterSent(() => {
+            const responseId = normalizeMid(args.respondingToMessageId);
+            const recipient = responseId && ctx.triggerEntries?.find(row => normalizeMid(row.mid) === responseId);
+            if (result.sent.length && recipient?.senderId) ctx.session.respondedToUserId = String(recipient.senderId);
             ctx.session.sent.push(...result.sent.map((s) => ({
               type: 'text', text: s.text, at: s.at, messageId: s.messageId
             })));
@@ -3362,6 +3371,8 @@ export function buildToolDefs() {
         type: 'object',
         properties: {
           summary: { type: 'string', description: '本轮结论或不回复的原因（不会发送到 QQ）' },
+          intentionalSilence: { type: 'boolean', description: '本轮有意不发言，例如对方要求停、自然道别。' },
+          usedInitiative: { type: 'boolean', description: '仅当本轮已发消息实际提到主动提示的约定时为真。' },
           topic: { type: 'string', description: '仍在继续的当前话题；没有持续话题可省略' },
           hypotheses: {
             type: 'array',
@@ -3431,6 +3442,8 @@ export function buildToolDefs() {
         ]) {
           if (Object.hasOwn(args, key)) draft[key] = args[key];
         }
+        ctx.session.intentionalSilence = args.intentionalSilence === true && !ctx.session.sent?.length;
+        ctx.session.usedInitiative = args.usedInitiative === true && Boolean(ctx.session.sent?.length);
         ctx.session.finishReason = summary;
         ctx.session.episodeSummary = safeSlice(String(args.episodeSummary ?? '').replace(/\s+/g, ' ').trim(), 100);
         // 交接总开关关闭时不再生成工作状态（否则 lifecycle 检查点仍会把它带上，

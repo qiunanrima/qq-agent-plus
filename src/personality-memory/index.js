@@ -12,11 +12,8 @@ const kinds = new Set(['preference', 'habit', 'experience', 'relationship']);
 const kindGuidance = 'preference是角色自己的后天喜好；habit是角色自己形成的表达或处事习惯；experience只作共同经历；relationship只描述与指定群友的相处方式。群友自身的特性属于人物档案。';
 const fail = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
-export function personalityKey(persona = {}) {
-  return crypto.createHash('sha256').update(JSON.stringify([
-    persona.templateId || '', persona.botName || '', persona.roleText || ''
-  ])).digest('hex').slice(0, 24);
-}
+import { memoryKeyForPersona as personalityKey } from '../personas.js';
+export { personalityKey };
 
 // 采集先由记忆总结模型独立核验；模型等待期间不持有数据库连接。
 export class PersonalityMemory {
@@ -160,9 +157,16 @@ export class PersonalityMemory {
           ...fresh.filter((item) => (kind === 'experience' || item.self)
             && (kind !== 'relationship' || humanDays.has(dayOf(item)))).map(dayOf)])].slice(-30);
         const conflictIds = [...new Set([...(old ? JSON.parse(old.conflicts_json || '[]') : []), ...verdict.conflictIds])];
-        const conflict = candidates.some((r) => r.verified && r.status === 'active' && r.id !== old?.id
+        const conflicting = candidates.filter((r) => r.verified && r.status === 'active' && r.id !== old?.id
           && (conflictIds.includes(r.id) || r.conflictIds.includes(old?.id)));
-        const status = !conflict && ((old?.verified && old.status === 'active') || kind === 'experience' || days.length >= 2)
+        const changingPreference = kind === 'preference' && conflicting.length > 0 && days.length >= 3
+          && fresh.some(item => item.self && /以前|改口|现在更|最近更|改成|不再/.test(item.quote));
+        if (changingPreference) {
+          for (const row of conflicting) {
+            db.prepare("UPDATE entries SET status='tentative' WHERE id=?").run(row.id);
+          }
+        }
+        const status = (!conflicting.length || changingPreference) && ((old?.verified && old.status === 'active') || kind === 'experience' || days.length >= 2)
           ? 'active' : 'tentative';
         const id = old?.id || crypto.randomUUID();
         if (!old) {

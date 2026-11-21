@@ -8,6 +8,7 @@ export function isAcknowledgedClose(session, entries) {
   return entries.every(entry => {
     if (entry.media?.length) return false;
     const text = String(entry.text || '').trim().replace(/[。！!，,～~\s]+$/u, '');
+    if (/^(?:不用回(?:了|复)?|不必回复|我先睡(?:啦|了)|我先下(?:啦|了))(?:[，, ]*(?:晚安|我先睡(?:了|啦)))?$/u.test(text)) return true;
     return /^(?:ok|okay|好的?|好[呀哒嘞哦喔]|欧克|收到|嗯[嗯呢]?|行|可以|谢谢(?:啦|你)?|晚安|拜拜)$/iu.test(text)
       // A replayed approval command may legitimately finish silently after its
       // direct handler already replied. This never grants or repeats approval.

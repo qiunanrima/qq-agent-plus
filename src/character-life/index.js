@@ -157,7 +157,7 @@ function activeGoals(db, role, now, chat = null) {
   const scope = chat === null ? '' : ' AND e.chat=?';
   const valid = hasTable(db, 'motive_invalidations')
     ? ' AND NOT EXISTS (SELECT 1 FROM motive_invalidations i WHERE i.event=m.event)' : '';
-  const rows = db.prepare(`SELECT e.id,e.chat,e.actor,e.at,m.title,m.reason,m.condition,m.expires,m.cooldown,p.topic,p.due
+  const rows = db.prepare(`SELECT e.id,e.chat,e.actor,e.at,e.kind,m.title,m.reason,m.condition,m.expires,m.cooldown,p.topic,p.due
     FROM motives m JOIN events e ON e.id=m.event JOIN motive_evidence p ON p.event=m.event
     WHERE e.role=? AND e.at<=? AND m.expires>=? AND m.closed IS NULL${scope}${valid}
     ORDER BY e.at DESC,e.rowid DESC`).all(role, now, now, ...(chat === null ? [] : [chat]));
@@ -168,7 +168,12 @@ function recent(db, role, now) {
   return db.prepare(`SELECT events.*${annotation} FROM events WHERE role=? AND at BETWEEN ? AND ?
     ORDER BY at DESC,rowid DESC LIMIT 512`).all(role, now - 7 * day, now);
 }
-export function observeLife({ persona, chatKey, triggerEntries = [], recalled = [], summaries = [], reminders = [], now = Date.now() }) {
+function isPersonalInteraction(chat, entry, selfId) {
+  if (!chat.startsWith('group:') || !selfId) return true;
+  return entry.mentionsSelf === true || String(entry.reply?.senderId || '') === String(selfId);
+}
+
+export function observeLife({ selfId, persona, chatKey, triggerEntries = [], recalled = [], summaries = [], reminders = [], now = Date.now() }) {
   if (!getConfig().characterLife?.enabled || !triggerEntries?.length) return '';
   const role = personaKeyOf(persona);
   const db = openDatabase(file);
@@ -185,7 +190,7 @@ export function observeLife({ persona, chatKey, triggerEntries = [], recalled = 
       CREATE TABLE IF NOT EXISTS links(event TEXT REFERENCES events(id) ON DELETE CASCADE,memory TEXT,PRIMARY KEY(event,memory));`);
     initMotiveEvidence(db);
     db.exec('BEGIN IMMEDIATE');
-    const interactions = triggerEntries.filter(entry => !entry.self && entry.senderId)
+    const interactions = triggerEntries.filter(entry => !entry.self && entry.senderId && isPersonalInteraction(chatKey, entry, selfId))
       .map(entry => ({ entry, ...readInteraction(entry.text, entry.reply) }));
     for (const { entry, text, kind } of interactions) {
       if (!(entry.id || entry.messageId || entry.ts)) continue;
@@ -255,22 +260,47 @@ export function linkedMemories(persona, chat, ids) {
   } finally { db.close(); }
 }
 
-export function claimInitiative(persona, chat, now = Date.now(), summaries = [], reminders = []) {
+export function claimInitiative(persona, chat, now = Date.now(), summaries = [], reminders = [], pending = null) {
   if (!getConfig().characterLife?.enabled || !fs.existsSync(file) || lifeWillingness(persona, now) < 30) return '';
   const db = openDatabase(file);
   try {
-    db.exec('BEGIN IMMEDIATE');
     const claimed = db.prepare('SELECT 1 FROM initiatives WHERE event=?');
     const goal = activeGoals(db, personaKeyOf(persona), now, chat)
       .find(row => !reminders.some(item => item.goalId === row.id) && now - row.at >= row.cooldown && (row.due === null || row.due <= now) && !claimed.get(row.id)
         && !db.prepare('SELECT 1 FROM motive_reminders WHERE event=?').get(row.id));
-    const inserted = goal && db.prepare('INSERT OR IGNORE INTO initiatives VALUES(?)').run(goal.id).changes;
-    if (inserted && goal.due !== null) db.prepare('INSERT OR IGNORE INTO motive_reminders VALUES(?,?)').run(goal.id, 'due');
-    db.exec('COMMIT');
-    if (!inserted) return '';
+    if (!goal) return '';
+    if (pending) pending.id = goal.id;
     const reference = summaryForGoal(goal, summaries);
     if (reference) return `本次主动聊天可以接续当前会话海马的${reference}中的约定。`;
     return '本次主动聊天可以接续此前想聊的话题：'+goal.title+'。';
+  } finally { db.close(); }
+}
+
+export function recordSentAgreements(persona, chat, session, now = Date.now()) {
+  const peer = /^private:(\d+)$/.exec(chat)?.[1];
+  if (!peer || !getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  const role = personaKeyOf(persona);
+  const db = openDatabase(file);
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    for (const [index, message] of session.sent.entries()) {
+      if (message.type !== 'text' || !commitmentEvidence(message.text, now)?.topic) continue;
+      const id = interactionId(role, chat, { senderId: peer, id: 'sent:' + (message.messageId || session.id + '/' + index) });
+      db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)').run(id, role, chat, peer, now, '自身约定');
+      saveRecognizedMotive(db, { id, at: now, self: true }, message.text);
+    }
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
+export function confirmInitiative(id) {
+  if (!id || !fs.existsSync(file)) return;
+  const db = openDatabase(file);
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare('INSERT OR IGNORE INTO initiatives SELECT id FROM events WHERE id=?').run(id);
+    db.prepare("INSERT OR IGNORE INTO motive_reminders SELECT event,'due' FROM motive_evidence WHERE event=? AND due IS NOT NULL").run(id);
+    db.exec('COMMIT');
   } finally { db.close(); }
 }
 
@@ -387,10 +417,10 @@ function recoverKnownInteractions(role, chat, messages, now) {
   } finally { db.close(); }
 }
 
-export async function analyzeLife({ persona, chat, messages, complete, allowed, now = Date.now() }) {
+export async function analyzeLife({ selfId, persona, chat, messages, complete, allowed, now = Date.now() }) {
   if (!allowed() || !fs.existsSync(file)) return 0;
   const role = personaKeyOf(persona);
-  const interactions = messages.filter(entry => !entry.self && entry.senderId)
+  const interactions = messages.filter(entry => !entry.self && entry.senderId && isPersonalInteraction(chat, entry, selfId))
     .map(entry => ({ entry, ...readInteraction(entry.text, entry.reply) }));
   recoverKnownInteractions(role, chat, interactions, now);
   let batch, prior;

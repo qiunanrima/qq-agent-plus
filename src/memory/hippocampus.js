@@ -11,9 +11,8 @@ const clean = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 // 上海时间 03:00 换日，不依赖操作系统时区。
 export const memoryDay = (now = Date.now()) => new Date(now + 5 * 3600000).toISOString().slice(0, 10);
 const previousDay = (day) => new Date(Date.parse(day) - DAY).toISOString().slice(0, 10);
-export const personaKey = (persona = {}) => crypto.createHash('sha256')
-  .update(JSON.stringify([persona.templateId || '', persona.botName || '', persona.roleText || '']))
-  .digest('hex').slice(0, 24);
+import { memoryKeyForPersona as personaKey } from '../personas.js';
+export { personaKey };
 
 /** 核心记忆模块：周期摘要与长期卡片共用一个库，消化/清洗在同一事务提交。 */
 export class Hippocampus {
@@ -39,6 +38,7 @@ export class Hippocampus {
           summary TEXT NOT NULL, participants TEXT NOT NULL, updated INTEGER NOT NULL,
           closed INTEGER NOT NULL DEFAULT 0, digested INTEGER NOT NULL DEFAULT 0
         ); CREATE INDEX IF NOT EXISTS episode_day ON episodes(day,digested);
+        CREATE TABLE IF NOT EXISTS episode_topics(episode TEXT PRIMARY KEY, topic TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY, episode TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS cards (
           id TEXT PRIMARY KEY, persona TEXT NOT NULL, kind TEXT NOT NULL,
@@ -68,8 +68,14 @@ export class Hippocampus {
       try {
         if (db.prepare('SELECT 1 FROM turns WHERE id=?').get(session.id)) { db.exec('COMMIT'); return; }
         // threadId 非必需：旧会话模式同样按三分钟无活动切分周期。
-        const old = db.prepare(`SELECT * FROM episodes WHERE persona=? AND chat=? AND day=?
+        const latest = db.prepare(`SELECT * FROM episodes WHERE persona=? AND chat=? AND day=?
           AND closed=0 AND updated>? ORDER BY updated DESC LIMIT 1`).get(key, chatKey, day, now - 180000);
+        const speakers = new Set(messages.map(m => String(m.senderId)));
+        const priorPeople = latest ? JSON.parse(latest.participants) : [];
+        const topic = clean(session.handoffDraft?.topic, 200);
+        const previousTopic = latest && db.prepare('SELECT topic FROM episode_topics WHERE episode=?').get(latest.id)?.topic;
+        const old = latest && (!topic || !previousTopic || topic === previousTopic) && (!chatKey.startsWith('group:') ||
+          (speakers.size === priorPeople.length && priorPeople.every(p => speakers.has(p.id)))) ? latest : null;
         const id = old?.id || crypto.randomUUID();
         const people = new Map((old ? JSON.parse(old.participants) : []).map((p) => [p.id, p]));
         for (const m of messages) if (/^\d{1,15}$/.test(String(m.senderId)) || chatKey.includes(':wechat_') && /^wxid_[A-Za-z0-9_-]{1,120}$/.test(String(m.senderId))) {
@@ -81,6 +87,7 @@ export class Hippocampus {
         db.prepare(`INSERT INTO episodes VALUES (?,?,?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET
           summary=excluded.summary,participants=excluded.participants,updated=excluded.updated,closed=excluded.closed`)
           .run(id, key, chatKey, day, combined, JSON.stringify([...people.values()]), now, session.threadDisposition === 'close' ? 1 : 0);
+        if (topic) db.prepare('INSERT OR REPLACE INTO episode_topics VALUES(?,?)').run(id, topic);
         db.prepare('INSERT INTO turns VALUES (?,?)').run(session.id, id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -276,6 +283,7 @@ export class Hippocampus {
     db.prepare('DELETE FROM episodes WHERE day<? AND digested=0').run(previousDay(today));
     db.prepare('DELETE FROM turns WHERE episode IN (SELECT id FROM episode_archive WHERE digested=1)').run();
     db.prepare('DELETE FROM episode_archive WHERE digested=1').run();
+    db.exec('DELETE FROM episode_topics WHERE episode NOT IN (SELECT id FROM episodes)');
   }
   createResetBackup(file) {
     return this.withDb(false, (db) => { if (!db) return false; db.prepare('VACUUM INTO ?').run(file); fs.chmodSync(file, 0o600); return true; });
@@ -285,7 +293,7 @@ export class Hippocampus {
     this.retryAfter = 0;
     return this.withDb(false, (db) => Boolean(db)) && this.withDb(true, (db) => {
       db.exec('BEGIN IMMEDIATE');
-      try { db.exec('DELETE FROM turns; DELETE FROM episodes; DELETE FROM episode_archive; DELETE FROM cards; DELETE FROM person_card_history; COMMIT'); return true; }
+      try { db.exec('DELETE FROM turns; DELETE FROM episode_topics; DELETE FROM episodes; DELETE FROM episode_archive; DELETE FROM cards; DELETE FROM person_card_history; COMMIT'); return true; }
       catch (error) { db.exec('ROLLBACK'); throw error; }
     });
   }
