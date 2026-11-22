@@ -107,3 +107,6 @@ A feature may be graduated only when all items are satisfied:
 8. Unit/integration tests and UI render tests pass.
 9. A rollback artifact or reversible deployment path exists.
 10. Production health and the feature-specific status endpoint are verified.
+
+### 私聊分块缓存
+在设置的实验功能中切换 `privateCache.enabled`，固化状态 `privateCache.graduated` 独立保存。默认关闭。普通 QQ 独立私聊填满历史条数或字符预算后，从最早四分之一内选一个可重复的消息边界，以便后续几轮追加历史。短历史、共享上下文和生命周期续接沿用原布局。会话详情和用量页的“分块缓存”分组可用于比较上游已报告的未缓存输入。关闭即恢复逐条滚动，聊天记录无需迁移。

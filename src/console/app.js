@@ -4150,7 +4150,8 @@ function collectUsageRows({ range }) {
       for (const call of s.callUsage || []) {
         const backend = call.backend || '历史未记录';
         const model = call.model || '历史未记录';
-        const mode = call.conversationMode || s.conversationMode || '历史未记录';
+        const mode = (call.conversationMode || s.conversationMode || '历史未记录')
+          + (call.cacheLayout === 'private-block-window-v1' ? ' · 分块缓存' : '');
         const key = JSON.stringify([backend, model, mode]);
         const group = cacheStats.get(key) || { backend, model, mode, calls: 0, reported: 0, input: 0, cached: 0 };
         group.calls++;

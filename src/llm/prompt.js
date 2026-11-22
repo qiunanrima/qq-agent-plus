@@ -10,6 +10,7 @@
 // 行为规则全部移植自 qq-bridge 的二代仿真 preset（qq-chat-v2），去掉了
 // 沉睡/唤醒/等待机制（由编排器的"已读/未读驱动"取代）。
 
+import { privateCacheBoundary } from '../private-cache/window.js';
 import { readFileSync } from 'node:fs';
 import { asrAvailable, getConfig, imageGenAvailable } from '../core/config.js';
 import { platformGateAllowed, privateFileMaxKiB } from '../core/platform-gates.js';
@@ -457,7 +458,7 @@ export const PAST_STATE_MAX_CHARS = 100000;
  * 组装"过去状态"文本：消息 JSON 的最近一段（带时间与已读语义）。
  * 读取条数由**上下文档位**决定（见 resolveContextTier），不再是固定值。
  */
-export function buildPastState(store, chatKey, { excludeIds = [], limit = null } = {}) {
+export function buildPastState(store, chatKey, { excludeIds = [], limit = null, blockWindow = false } = {}) {
   const cfg = getConfig().store;
   const layering = cfg.contextLayering || {};
   const layered = layering.enabled === true;
@@ -521,6 +522,11 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null }
   }
   // 一并把选中的消息返回：调用方要用它判定"记忆该带哪些群友"，
   // 避免模型看到历史里根本没出现的群友印象（那样显得莫名其妙）。
+  if (blockWindow && !crossScope && !sharedPrivate && (selected.length === maxLimit || selected.length < messages.length)) {
+    const skip = privateCacheBoundary(selected, lines);
+    lines.splice(0, skip);
+    selected.splice(0, skip);
+  }
   return { text: lines.join('\n'), count: lines.length, messages: selected };
 }
 
@@ -654,7 +660,7 @@ export function buildUserPrompt(ctx) {
     : Math.max(0, Number(ctx.contextLimit) || 0);
   const past = lifecycleContinuation
     ? { text: '', count: 0, messages: [] }
-    : buildPastState(ctx.store, ctx.chatKey, { excludeIds, limit: contextLimit });
+    : buildPastState(ctx.store, ctx.chatKey, { excludeIds, limit: contextLimit, blockWindow: ctx.blockWindow === true });
   // 把【过去状态】实际带了多少条写回 session，供 get_recent_messages 的 offset 补偿：
   // 这些消息模型已经看过，翻页时应当跳过，否则 offset=N 拿到的仍是重复内容。
   // （此前该属性从未被赋值，导致 tools.js 的补偿恒为 0，翻页工具形同失效。）
