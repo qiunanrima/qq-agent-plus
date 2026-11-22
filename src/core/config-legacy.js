@@ -21,6 +21,7 @@ import { PLATFORM_GATE_KEYS, PRIVATE_FILE_DEFAULT_MAX_KIB, privateFileMaxKiB } f
 import { LIVING_MEMORY_DEFAULTS, normalizeLivingMemoryConfig } from '../living-memory/config.js';
 import { PERSONALITY_MEMORY_DEFAULTS, normalizePersonalityMemoryConfig } from '../personality-memory/config.js';
 import { SUBAGENT_DEFAULTS, normalizeSubagentConfig } from '../subagents/config.js';
+import { privateCacheConfig } from '../private-cache/window.js';
 import { WEB_FETCH_BROWSER_DEFAULTS, normalizeWebFetchBrowserConfig } from '../web-fetch-browser/config.js';
 import { WECHAT_DEFAULTS, normalizeWechatConfig } from '../agent-wechat/config.js';
 import { ANTIGRAVITY_DEFAULTS } from '../antigravity-cli/config.js';
@@ -940,6 +941,7 @@ export const DEFAULT_CONFIG = {
   characterLife: { enabled: false, graduated: false },
   personalityMemory: structuredClone(PERSONALITY_MEMORY_DEFAULTS),
   subagent: structuredClone(SUBAGENT_DEFAULTS),
+  privateCache: privateCacheConfig(),
   webFetchBrowser: structuredClone(WEB_FETCH_BROWSER_DEFAULTS),
   // 技能包（Skill Pack）：只读 Markdown 流程 + 工具白名单，不执行第三方代码。
   // enabled=false 时不注册 skill_list / skill_use，也不读技能目录。
@@ -1415,6 +1417,7 @@ function migrateConfig(parsed) {
   // 被 loadConfig 的 catch 吞掉后静默退回默认值、还会被持久化 —— 用户配置整份没了。
   if (!isPlainObject(parsed)) parsed = {};
   const out = structuredClone(parsed);
+  out.privateCache = privateCacheConfig(out.privateCache);
   out.webFetchBrowser = normalizeWebFetchBrowserConfig(out.webFetchBrowser);
   // 名单/数组段统一归一化：手改或 API 传成字符串/对象时，入站路径的 .map、
   // 模型请求的 .find、设置页的 .join 会直接抛，机器人静默不回复。

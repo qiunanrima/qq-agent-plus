@@ -168,3 +168,26 @@ test('私聊快照变化并追加历史时，已有的历史仍是共同前缀',
     console.log('私聊动态输入共同前缀字符', prefix(oldFirst, oldNext), '→', prefix(newFirst, newNext));
   } finally { store.close(); }
 });
+
+test('私聊长窗口连续滚动时分块复用历史，保留最近至少四分之三', () => {
+  configWith(false);
+  const store = new ChatStore(0);
+  const chat = 'private:887';
+  const last = [null, null], repeats = [0, 0];
+  try {
+    for (let i = 1; i <= 96; i++) {
+      store.appendSelf(chat, { text: '历史' + i, ts: 1000 + i, mid: i });
+      for (const mode of [0, 1]) {
+        const window = buildPastState(store, chat, { limit: 32, blockWindow: Boolean(mode) });
+        if (i >= 32) {
+          assert.ok(window.count >= 24 && window.count <= 32);
+          assert.equal(window.messages.at(-1).mid, String(i));
+          if (i > 32 && window.messages[0].id === last[mode]) repeats[mode]++;
+        }
+        last[mode] = window.messages[0].id;
+      }
+    }
+    assert.ok(repeats[1] > 40 && repeats[0] === 0);
+    console.log('同一历史起点连续复用次数（普通 / 分块）', repeats);
+  } finally { store.close(); }
+});

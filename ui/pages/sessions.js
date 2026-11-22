@@ -424,7 +424,7 @@ function renderSessionContextInspector(s) {
   const metrics = sessionMetricsOf(s);
   const cacheGroups = new Map();
   for (const call of calls) {
-    const label = [call.backend, call.model, call.conversationMode].filter(Boolean).join(' / ') || '历史记录';
+    const label = [call.backend, call.model, call.conversationMode, call.cacheLayout === 'private-block-window-v1' ? '分块缓存' : ''].filter(Boolean).join(' / ') || '历史记录';
     const group = cacheGroups.get(label) || { input: 0, cached: 0, known: 0, count: 0 };
     group.count++;
     if (call.cacheReported === true || (call.cacheReported == null && call.cachedTokens > 0)) {
