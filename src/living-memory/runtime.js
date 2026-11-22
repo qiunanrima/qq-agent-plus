@@ -1,3 +1,4 @@
+import { memoryEvidenceGuidance } from '../memory/evidence-guidance.js';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -91,7 +92,7 @@ function cardsPrompt(turns, requireEvidence) {
   const transcript = safeSlice(turns.map((turn) => turn.lines
     .map((line) => `${line.role === 'assistant' ? '机器人' : line.actor ? `参与者 QQ:${line.actor}` : '参与者'}：${line.text}`).join('\n')).join('\n\n'), MAX_TRANSCRIPT_CHARS);
   return [
-    '你是长期记忆提炼器。只提炼以后仍有价值、可验证、与当前会话相关的内容；不要复述闲聊。',
+    memoryEvidenceGuidance, '你是长期记忆提炼器。只提炼以后仍有价值、可验证、与当前会话相关的内容；不要复述闲聊。',
     '严禁记录密码、令牌、身份证、银行卡、详细住址、病历、诊断、政治立场等敏感信息。',
     '返回 JSON 数组，最多 6 项；每项字段：type、summary、content、importance(0-10)、confidence(0-1)、tags、entities、relations[{source,predicate,target}]、expiresDays。',
     ...(requireEvidence ? [
