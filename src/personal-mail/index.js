@@ -1,5 +1,6 @@
 import { ImapFlow } from 'imapflow';
 import { getConfig } from '../core/config.js';
+import { personalMailSettings } from './settings.js';
 
 const Gmail = 'gmail';
 const QQ = 'qq';
@@ -98,7 +99,7 @@ async function qqExcerpt(client, message, parts) {
   return limitText(Buffer.concat(chunks).toString('utf8'));
 }
 
-async function searchQQ(query, days, limit, { env, signal, makeImap }) {
+async function withQQInbox({ env, signal, makeImap }, run) {
   const client = makeImap({
     host: 'imap.qq.com', port: 993, secure: true, logger: false, disableAutoIdle: true,
     tls: { rejectUnauthorized: true },
@@ -113,29 +114,7 @@ async function searchQQ(query, days, limit, { env, signal, makeImap }) {
     await client.connect();
     const lock = await client.getMailboxLock('INBOX', { readOnly: true });
     try {
-      const matches = await client.search({
-        since: new Date(Date.now() - days * 86400000), deleted: false, text: query
-      }, { uid: true });
-      if (!Array.isArray(matches)) throw new Error('QQ mailbox search failed');
-      const uids = matches.sort((a, b) => b - a).slice(0, limit);
-      if (!uids.length) return [];
-      const messages = await client.fetchAll(uids.join(','), { envelope: true, bodyStructure: true, internalDate: true }, { uid: true });
-      messages.sort((a, b) => b.uid - a.uid);
-      const results = [];
-      for (const message of messages) {
-        const envelope = message.envelope ?? {};
-        const parts = walkParts(message.bodyStructure);
-        results.push({
-          subject: limitText(envelope.subject, 200),
-          from: limitText((envelope.from ?? []).map(({ name, address }) => [name, address].filter(Boolean).join(' ')).join(', '), 200),
-          receivedAt: timestamp(message.internalDate || envelope.date),
-          excerpt: await qqExcerpt(client, message, parts),
-          attachments: parts.map((part) => limitText(part.dispositionParameters?.filename || part.parameters?.name, 120))
-            .filter(Boolean).slice(0, 12),
-          source: limitText(envelope.messageId, 200)
-        });
-      }
-      return results;
+      return await run(client);
     } finally {
       lock.release();
     }
@@ -143,6 +122,34 @@ async function searchQQ(query, days, limit, { env, signal, makeImap }) {
     signal.removeEventListener('abort', close);
     close();
   }
+}
+
+async function searchQQ(query, days, limit, options) {
+  return withQQInbox(options, async (client) => {
+    const matches = await client.search({
+      since: new Date(Date.now() - days * 86400000), deleted: false, text: query
+    }, { uid: true });
+    if (!Array.isArray(matches)) throw new Error('QQ mailbox search failed');
+    const uids = matches.sort((a, b) => b - a).slice(0, limit);
+    if (!uids.length) return [];
+    const messages = await client.fetchAll(uids.join(','), { envelope: true, bodyStructure: true, internalDate: true }, { uid: true });
+    messages.sort((a, b) => b.uid - a.uid);
+    const results = [];
+    for (const message of messages) {
+      const envelope = message.envelope ?? {};
+      const parts = walkParts(message.bodyStructure);
+      results.push({
+        subject: limitText(envelope.subject, 200),
+        from: limitText((envelope.from ?? []).map(({ name, address }) => [name, address].filter(Boolean).join(' ')).join(', '), 200),
+        receivedAt: timestamp(message.internalDate || envelope.date),
+        excerpt: await qqExcerpt(client, message, parts),
+        attachments: parts.map((part) => limitText(part.dispositionParameters?.filename || part.parameters?.name, 120))
+          .filter(Boolean).slice(0, 12),
+        source: limitText(envelope.messageId, 200)
+      });
+    }
+    return results;
+  });
 }
 
 export async function searchPersonalMail(args, {
@@ -169,8 +176,31 @@ export async function searchPersonalMail(args, {
   return { results };
 }
 
+export async function testPersonalMailConnection(provider, {
+  env, fetchImpl = fetch, makeImap = (config) => new ImapFlow(config)
+}) {
+  if (!mailProviders(env).includes(provider)) return 'not_configured';
+  const signal = AbortSignal.timeout(12000);
+  try {
+    if (provider === Gmail) {
+      const token = await gmailToken(env, fetchImpl, signal);
+      const response = await fetchImpl('https://gmail.googleapis.com/gmail/v1/users/me/profile?fields=emailAddress', {
+        headers: { Authorization: 'Bearer ' + token }, redirect: 'error', signal
+      });
+      if (!response.ok) return 'unavailable';
+      await response.body?.cancel();
+    } else {
+      await withQQInbox({ env, signal, makeImap }, () => true);
+    }
+    return 'ok';
+  } catch {
+    return 'unavailable';
+  }
+}
+
 export function personalMailTool() {
-  const configured = mailProviders();
+  let configured;
+  try { configured = mailProviders(personalMailSettings.runtimeEnv()); } catch { return []; }
   if (!configured.length) return [];
   return [{
     name: 'personal_mail_search',
@@ -188,7 +218,11 @@ export function personalMailTool() {
           String(sender?.senderId ?? '') !== owner || !/邮件|邮箱|会议|会前/.test(String(sender?.text ?? ''))) {
         return { content: '仅在管理员 QQ 私聊明确要求查询邮件或会议资料时可用', isError: true };
       }
-      const result = await searchPersonalMail(args, { signal: ctx.signal });
+      let env;
+      try { env = personalMailSettings.runtimeEnv(); } catch {
+        return { content: "邮箱设置不可读取", isError: true };
+      }
+      const result = await searchPersonalMail(args, { env, signal: ctx.signal });
       return { content: JSON.stringify(result), isError: Boolean(result.error) };
     }
   }];

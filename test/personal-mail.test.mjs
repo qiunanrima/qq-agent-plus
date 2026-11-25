@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createPersonalMailSettings } from '../src/personal-mail/settings.js';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import test from 'node:test';
@@ -90,4 +94,28 @@ test('provider failure is isolated and never exposes account credentials', async
     { provider: 'qq', status: 'ok', messages: [] }
   ]);
   assert.ok((await searchPersonalMail({ query: 'a\nINVALID' }, { env })).error);
+});
+
+test('panel stores encrypted credentials and keeps legacy environment configuration revocable', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'qq-personal-mail-test-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const settings = createPersonalMailSettings({ dataDir, env: {} });
+  assert.equal(settings.status().gmail.configured, false);
+  const envelope = join(dataDir, 'personal-mail', 'settings.enc');
+  await assert.rejects(readFile(envelope), { code: 'ENOENT' });
+  assert.ok(settings.update('gmail', { enabled: true, values: { clientId: 'test-id' } }));
+  assert.equal(settings.update('gmail', { enabled: true, values: {
+    clientId: 'test-id', clientSecret: 'test-secret', refreshToken: 'test-refresh'
+  } }), null);
+  assert.match(await readFile(envelope, 'utf8'), /"tag"/);
+  assert.doesNotMatch(await readFile(envelope, 'utf8'), /test-(secret|refresh)/);
+  assert.equal(settings.status().gmail.enabled, true);
+  assert.equal(settings.update('gmail', { enabled: false, values: { refreshToken: '' } }), null);
+  assert.equal(settings.runtimeEnv().QQ_AGENT_GMAIL_REFRESH_TOKEN, undefined);
+  assert.equal(settings.runtimeEnv({ includeDisabled: true }).QQ_AGENT_GMAIL_REFRESH_TOKEN, 'test-refresh');
+  assert.equal(settings.status().gmail.configured, true);
+  const legacy = createPersonalMailSettings({ dataDir, env });
+  assert.equal(legacy.status().qq.enabled, true);
+  assert.equal(legacy.update('qq', { enabled: false, values: {} }), null);
+  assert.equal(legacy.runtimeEnv().QQ_AGENT_QQ_MAIL_AUTH_CODE, undefined);
 });

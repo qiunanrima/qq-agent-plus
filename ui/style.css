@@ -403,6 +403,11 @@ html.boot-show .loading-overlay { opacity: 1; }
    动画期间的 transform 会让 position:fixed 的子元素暂时以视图为包含块 —— 时长只有 360ms，
    且这一层没有常驻 transform（to 帧就是 none），不影响粘性栏/弹窗。 */
 .view.active { display: flex; }
+#view-personal-mail { overflow-y: auto; }
+#personal-mail-page { width: min(900px, 100%); min-width: 0; margin-inline: auto; }
+#personal-mail-page form + form { margin-top: 12px; }
+#personal-mail-page .field { margin-block: 8px; }
+#personal-mail-page .field input[type=email] { width: 100%; }
 /* 总览的卡片依次浮起：纯位移、每块错开 45ms。**不加 opacity 从 0 起** ——
    2026-10-09 实测过：切页后有一段同步渲染，若起始帧是透明，用户会先看到空白。
    只给直接子元素，避免深层节点一起动。页签本身的入场见下方「视图切换」一节。 */

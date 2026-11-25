@@ -46,6 +46,7 @@ import {
 import { loadMemoryView, renderMemoryList } from './pages/memory.js';
 import { loadLivingMemoryPage } from './pages/living-memory.js';
 import { loadCharacterLife } from './pages/character-life.js';
+import { loadPersonalMailPage } from './pages/personal-mail.js';
 import { loadPersonalityMemoryPage, loadSharedExperiences } from './pages/personality-memory.js';
 import { loadHippocampusPage } from './pages/hippocampus.js';
 import { loadPluginsPage } from './pages/plugins.js';
@@ -304,6 +305,7 @@ function switchTab(name) {
   if (name === 'hippocampus') loadHippocampusPage();
   if (name === 'living-memory') loadLivingMemoryPage({ force: true });
   if (name === 'character-life') void loadCharacterLife();
+  if (name === 'personal-mail') void loadPersonalMailPage();
   if (name === 'personality-memory') loadPersonalityMemoryPage();
   if (name === 'identity') loadIdentityFeaturePage();
   if (name === 'friends') loadFriendFeaturePage();
