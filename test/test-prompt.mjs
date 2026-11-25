@@ -199,5 +199,18 @@ for (const banned of ['[SILENT]', 'mcp__snowluma', 'qq_set_wake_config', 'qq_mar
   assert.ok(!DEFAULT_CONFIG.persona.roleText.includes(banned), `默认人设不应包含旧架构指令：${banned}`);
 }
 
+cfg.skills = { enabled: true, enabledIds: [], perChat: { 'private:12345': ['personal-briefing'] } };
+setRuntimeConfig(cfg);
+const workflowTurn = {
+  chatKey: 'private:12345', chatId: '12345', kind: 'private', store, memory,
+  triggerEntries: [{ id: 'notify-test', senderId: '12345', text: '汇总手机通知', ts: Date.now() }]
+};
+assert.match(buildUserPrompt(workflowTurn), /本轮用户原话匹配已启用的工作流：personal-briefing/);
+assert.match(buildUserPrompt(workflowTurn), /已有符合请求的技能编号时直接调用 skill_use/);
+assert.doesNotMatch(buildUserPrompt({ ...workflowTurn, chatKey: 'group:123', kind: 'group' }), /本轮用户原话匹配/);
+assert.doesNotMatch(buildUserPrompt({ ...workflowTurn,
+  triggerEntries: [{ ...workflowTurn.triggerEntries[0], self: true }]
+}), /本轮用户原话匹配/);
+
 console.log('✓ 提示词自测全部通过');
 store.close();

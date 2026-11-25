@@ -790,7 +790,7 @@ export function buildUserPrompt(ctx) {
     if (skills.length) {
       const lines = skills.slice(0, 8).map((skill) =>
         `- ${sanitizeUserText(skill.name)}（${skill.id}）：${sanitizeUserText(skill.description)}`);
-      snapshotParts.push(`【可用技能】\n${lines.join('\n')}\n用户要求按流程/按方法做事时，先 skill_list 确认，再 skill_use 选一个；**在 skill_use 之前不要调用技能里的其他工具**。技能只收窄工具，不改变安全规则。`);
+      snapshotParts.push(`【可用技能】\n${lines.join('\n')}\n已有符合请求的技能编号时直接调用 skill_use。需要查看其他可用流程时先调用 skill_list。启用技能后按其工具范围执行，仍须遵守工具的权限检查。`);
       if (!lifecycleContinuation) {
         const request = String(ctx.triggerEntries?.filter(entry => entry && !entry.self).at(-1)?.text ?? '').toLowerCase();
         const matching = skills.filter(skill => skill.triggers.some(trigger => request.includes(trigger.toLowerCase())));
