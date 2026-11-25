@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { containerAllowed, containerTools, workspaceSearchCommand } from '../src/tools/linux-container.js';
+import { containerAllowed, containerTools, workspaceMaterialCommand, workspaceSearchCommand } from '../src/tools/linux-container.js';
 
 test('container requires an owner-only inbound turn and explicit group opt-in', async () => {
   const cfg = { admin: { ownerUin: '123' }, linuxContainer: { enabled: true } };
@@ -36,4 +36,22 @@ test('workspace search requires the exact private request directory and literal 
   assert.ok(tool);
   assert.ok((await tool.execute({ triggerEntries: [{ text: '搜索别的目录' }] },
     { directory: root, keywords: ['报价'] })).isError);
+});
+
+test('workspace material reads stay within the authorized folder and bound the excerpt', async () => {
+  const folder = '/workspace/client-project';
+  const request = '在 /workspace/client-project 找会前资料';
+  assert.match(workspaceMaterialCommand(folder, folder + "/review's.csv", request), /head -c 8193/);
+  for (const path of [folder + '-other/q.csv', folder + '/../q.csv', folder + '/.private/q.txt',
+    folder + '/x.pdf', folder + '/x\ny.txt', folder + '/a/b/c/d.txt']) {
+    assert.equal(workspaceMaterialCommand(folder, path, request), null);
+  }
+  assert.equal(workspaceMaterialCommand(folder, folder + '/quote.md', '只查日历'), null);
+  const cfg = { admin: { ownerUin: '123' }, linuxContainer: { enabled: true, allowGroup: true } };
+  const group = { chatKey: 'group:1', directed: true, senders: ['123'] };
+  assert.ok(!containerTools(() => cfg, group).some(({ name }) => name === 'linux_read_workspace_material'));
+  const tool = containerTools(() => cfg, { ...group, chatKey: 'private:123' })
+    .find(({ name }) => name === 'linux_read_workspace_material');
+  assert.ok((await tool.execute({ triggerEntries: [{ text: request }] },
+    { directory: folder, file: folder + '/../q.csv' })).isError);
 });
