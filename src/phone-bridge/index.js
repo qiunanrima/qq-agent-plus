@@ -93,9 +93,48 @@ function isOwnerRequest(ctx, pattern) {
       pattern.test(String(sender?.text ?? ''));
 }
 
-export function readOwnerPhoneNotifications(ctx, limit) {
-  if (!isOwnerRequest(ctx, /(?:手机|微信|QQ|应用|系统).{0,12}通知|通知栏|通知收件箱/i)) return null;
-  return readStored(DATA_DIR, 'inbox.json', []).slice(-Math.max(1, Math.min(10, Number(limit) || 5))).reverse();
+const notificationApps = new Map([
+  ['微信', 'com.tencent.mm'], ['wechat', 'com.tencent.mm'],
+  ['qq', 'com.tencent.mobileqq'], ['tim', 'com.tencent.tim']
+]);
+
+export function selectPhoneNotifications(inbox, { app, query, since, until, limit } = {}) {
+  const name = typeof app === 'string' ? app.trim().toLowerCase() : '';
+  const source = notificationApps.get(name) ?? name;
+  const keyword = typeof query === 'string' ? query.trim().toLowerCase().slice(0, 100) : '';
+  const bound = value => Number.isSafeInteger(value) ? value : null;
+  const from = bound(since);
+  const to = bound(until);
+  if (from !== null && to !== null && from >= to) return { error: '通知查询的结束时间必须晚于开始时间' };
+
+  const matches = inbox.filter(event => {
+    if (source && event.source !== source) return false;
+    const received = Date.parse(event.receivedAt);
+    if (from !== null && !(received >= from)) return false;
+    if (to !== null && !(received < to)) return false;
+    return !keyword || (event.title + '\n' + event.body).toLowerCase().includes(keyword);
+  }).reverse();
+  const count = Math.max(1, Math.min(20, Math.trunc(Number(limit)) || 5));
+  const counts = new Map();
+  for (const event of matches) counts.set(event.source, (counts.get(event.source) ?? 0) + 1);
+  return {
+    events: matches.slice(0, count),
+    matched: matches.length,
+    byApp: [...counts].map(([source, count]) => ({ source, count })),
+    truncated: matches.length > count,
+    lastReceivedAt: inbox.at(-1)?.receivedAt ?? null
+  };
+}
+
+export function readOwnerPhoneNotifications(ctx, args = {}) {
+  if (!isOwnerRequest(ctx, /通知|通知栏|(?:微信|QQ|TIM).{0,10}(?:消息|提醒)/i)) return null;
+  const sender = ctx.triggerEntries.filter(entry => !entry?.self).at(-1);
+  const named = [...String(sender.text ?? '').matchAll(/微信|wechat|(?<![a-z])(?:qq|tim)(?![a-z])/gi)]
+    .map(match => notificationApps.get(match[0].toLowerCase()));
+  const requested = [...new Set(named)];
+  return selectPhoneNotifications(readStored(DATA_DIR, 'inbox.json', []), {
+    ...args, app: args.app || (requested.length === 1 ? requested[0] : undefined)
+  });
 }
 
 export function readOwnerCalendar(ctx, { from, to }) {

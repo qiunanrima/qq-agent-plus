@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRouter } from '../src/console/router.js';
-import { registerPhoneBridge } from '../src/phone-bridge/index.js';
+import { registerPhoneBridge, selectPhoneNotifications } from '../src/phone-bridge/index.js';
 
 test('phone upload uses its own credential and stores a retried event only once', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-phone-bridge-'));
@@ -88,4 +88,21 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.deepEqual((await commands(false, [result])).acknowledged, [command.id]);
   assert.deepEqual((await commands(false, [result])).acknowledged, [command.id]);
   assert.equal((await commands(true)).command, null);
+});
+
+test('phone notification results filter by app, keyword and half-open time range before limiting', () => {
+  const since = Date.parse('2026-11-25T08:00:00Z');
+  const event = (source, body, delta) => ({ source, title: '标题', body, receivedAt: new Date(since + delta).toISOString() });
+  const first = event('com.tencent.mm', 'Sprint A', 0);
+  const second = event('com.tencent.mm', 'sprint B', 1);
+  const latest = event('com.tencent.mobileqq', 'Sprint C', 2);
+  const result = selectPhoneNotifications([first, second, latest], {
+    app: '微信', query: 'SPRINT', since, until: since + 2, limit: 1
+  });
+  assert.deepEqual(result, {
+    events: [second], matched: 2, byApp: [{ source: 'com.tencent.mm', count: 2 }],
+    truncated: true, lastReceivedAt: latest.receivedAt
+  });
+  assert.deepEqual(selectPhoneNotifications([first, second, latest], { until: since + 1 }).events, [first]);
+  assert.ok(selectPhoneNotifications([], { since, until: since }).error);
 });
