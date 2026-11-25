@@ -54,7 +54,7 @@ function walkParts(root) {
   return parts;
 }
 
-async function searchGmail(query, days, limit, { env, fetchImpl, signal }) {
+async function searchGmail(query, days, limit, { env, fetchImpl, signal, inbox = null }) {
   const token = await gmailToken(env, fetchImpl, signal);
   async function request(path, params) {
     const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages' + path);
@@ -66,9 +66,11 @@ async function searchGmail(query, days, limit, { env, fetchImpl, signal }) {
     if (!response.ok) throw new Error('Gmail request failed');
     return response.json();
   }
-  const q = '"' + query.replaceAll('"', ' ').trim() + '" newer_than:' + days + 'd';
+  const q = inbox ? 'in:inbox newer_than:2d' : '"' + query.replaceAll('"', ' ').trim() + '" newer_than:' + days + 'd';
   const list = await request('', { q, maxResults: String(limit), fields: 'messages/id' });
-  return Promise.all((list.messages ?? []).slice(0, limit).map(async ({ id }) => {
+  const messages = (list.messages ?? []).slice(0, limit);
+  if (inbox?.baseline) return messages.map(({ id }) => ({ id }));
+  return Promise.all(messages.filter(({ id }) => !inbox?.seen.has(id)).slice(0, inbox ? 8 : limit).map(async ({ id }) => {
     const message = await request('/' + encodeURIComponent(id), {
       format: 'full',
       fields: 'id,threadId,snippet,internalDate,payload(headers,filename,parts(filename,parts(filename,parts(filename))))'
@@ -76,6 +78,7 @@ async function searchGmail(query, days, limit, { env, fetchImpl, signal }) {
     const headers = message.payload?.headers ?? [];
     const header = (name) => headers.find((item) => item.name?.toLowerCase() === name)?.value;
     return {
+      ...(inbox ? { id } : {}),
       subject: limitText(header('subject'), 200),
       from: limitText(header('from'), 200),
       receivedAt: timestamp(Number(message.internalDate)),
@@ -127,18 +130,22 @@ async function withQQInbox({ env, signal, makeImap }, run) {
 async function searchQQ(query, days, limit, options) {
   return withQQInbox(options, async (client) => {
     const matches = await client.search({
-      since: new Date(Date.now() - days * 86400000), deleted: false, text: query
+      since: new Date(Date.now() - days * 86400000), deleted: false, ...(options.inbox ? {} : { text: query })
     }, { uid: true });
     if (!Array.isArray(matches)) throw new Error('QQ mailbox search failed');
+    const prefix = String(client.mailbox?.uidValidity ?? '') + ':';
     const uids = matches.sort((a, b) => b - a).slice(0, limit);
-    if (!uids.length) return [];
-    const messages = await client.fetchAll(uids.join(','), { envelope: true, bodyStructure: true, internalDate: true }, { uid: true });
+    if (options.inbox?.baseline) return uids.map((uid) => ({ id: prefix + uid }));
+    const selected = uids.filter((uid) => !options.inbox?.seen.has(prefix + uid)).slice(0, options.inbox ? 8 : limit);
+    if (!selected.length) return [];
+    const messages = await client.fetchAll(selected.join(','), { envelope: true, bodyStructure: true, internalDate: true }, { uid: true });
     messages.sort((a, b) => b.uid - a.uid);
     const results = [];
     for (const message of messages) {
       const envelope = message.envelope ?? {};
       const parts = walkParts(message.bodyStructure);
       results.push({
+        ...(options.inbox ? { id: prefix + message.uid } : {}),
         subject: limitText(envelope.subject, 200),
         from: limitText((envelope.from ?? []).map(({ name, address }) => [name, address].filter(Boolean).join(' ')).join(', '), 200),
         receivedAt: timestamp(message.internalDate || envelope.date),
@@ -150,6 +157,14 @@ async function searchQQ(query, days, limit, options) {
     }
     return results;
   });
+}
+
+export function pollPersonalInbox(provider, env, inbox, signal) {
+  const options = {
+    env, inbox, fetchImpl: fetch, makeImap: config => new ImapFlow(config),
+    signal: withDeadline(signal, 18000)
+  };
+  return (provider === Gmail ? searchGmail : searchQQ)('', 2, 256, options);
 }
 
 export async function searchPersonalMail(args, {

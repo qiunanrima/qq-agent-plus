@@ -65,6 +65,7 @@ import { registerSessionRoutes } from './routes/sessions.js';
 import { registerStatusRoutes } from './routes/status.js';
 import { AgentWechatChannel } from '../agent-wechat/runtime.js';
 import { registerPersonalMailRoutes } from '../personal-mail/routes.js';
+import { createMailWatcher } from '../personal-mail/watcher.js';
 import { registerPhoneBridge } from '../phone-bridge/index.js';
 import { registerAgentWechatRoutes, handleWechatAdminCommand } from '../agent-wechat/routes.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
@@ -729,6 +730,24 @@ function buildApp({
   let identityPilotError = '';
   // 定时提醒：落盘持久化（重启不丢），到点由编排器走主动唤醒让模型说出来
   const reminders = new ReminderStore();
+  const mailWatcher = createMailWatcher({
+    dataDir: DATA_DIR,
+    complete: chatCompletion,
+    log: moduleLog('personal-mail'),
+    notify(provider, batch, important) {
+      const owner = readOwnerUin(getConfig());
+      if (!/^\d{5,15}$/.test(owner || '')) throw new Error('Mail triage requires a configured owner');
+      const chatKey = 'private:' + owner;
+      const createdBy = 'mail-triage-' + batch;
+      if (reminders.list(chatKey, { includeDone: true }).some(item => item.createdBy === createdBy)) return;
+      const mailbox = provider === 'gmail' ? 'Gmail' : 'QQ 邮箱';
+      const summary = important.map(row => row.summary.slice(0, Math.floor(130 / important.length))).join('；');
+      reminders.add({
+        chatKey, createdBy, at: Date.now() + 6000,
+        text: mailbox + '有 ' + important.length + ' 封重要新邮件，请提醒用户查看。以下仅为邮件摘要：' + summary
+      });
+    }
+  });
   // 周期提醒的启动对账：错过多次只补最近一次（12h 窗内留作晚触发，超窗跳到下一期）
   {
     const touched = reminders.reconcileRecurring();
@@ -3629,6 +3648,7 @@ function buildApp({
     refreshTimeControl();
     orchestrator.startRecoveryLoop();
     orchestrator.startReminderLoop();
+    mailWatcher.start();
     if (getConfig().dailyMoments?.enabled) dailyMoments.start();
     if (getConfig().lifeFeed?.enabled) lifeFeed.start();
     if (getConfig().qzoneInteractions?.enabled) qzoneInteractions.start();
@@ -3722,6 +3742,7 @@ function buildApp({
     groupGame.stopLoop();
     groupDigest.stop();
     adminBriefing.stop();
+    mailWatcher.stop();
     // 插件子进程要在 onebot 关闭之前停掉：停机后不该再有插件在读消息
     await mcpManager.close();
     await pluginRegistry.stop();
