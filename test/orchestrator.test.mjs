@@ -2918,6 +2918,37 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     assert.ok(notes[0].includes('别猜'), notes[0]);
   });
 
+  it('mail workflow wakes the owner once and stops after an unconfirmed send', async (t) => {
+    const { runner, store, cfg } = fixture(t, { reminders: new ReminderStore(path.join(root, 'reminders-mail-wake.json')) });
+    const chatKey = 'private:42';
+    setRuntimeConfig({ ...cfg, admin: { ...cfg.admin, ownerUin: '42' }, allow: { ...cfg.allow, private: ['42'] } });
+    const enqueue = (id, text) => {
+      runner.reminders.items.push({
+        id, chatKey, at: Date.now() - 1000, text, createdBy: 'mail-triage-' + 'a'.repeat(24),
+        origin: 'personal-mail', status: 'pending'
+      });
+    };
+    const calls = [];
+    runner.wake = async (key, options) => {
+      calls.push({ key, options });
+      if (calls.length === 1) return { sent: [{ text: '有重要邮件' }] };
+      const id = store.beginSend(key, null, { type: 'text' });
+      store.finishSend(id, { error: 'socket timeout', outcome: 'unknown' });
+    };
+    enqueue('mail-sent', 'Gmail 有重要新邮件。');
+    runner.fireDueReminders();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls[0].key, chatKey);
+    assert.match(calls[0].options.wakeNote, /^【定时提醒】邮件工作流待办/);
+    assert.equal(runner.reminders.items[0].status, 'fired');
+    enqueue('mail-unknown', 'Gmail 跟进收到回复。');
+    runner.fireDueReminders();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(runner.reminders.items[1].status, 'failed');
+    runner.fireDueReminders();
+    assert.equal(calls.length, 2);
+  });
+
   it('锚点（2026-10-10 反馈）：提醒走"逐字"框架，话术真源在 reminders.buildReminderNote', () => {
     const orch = fs.readFileSync(new URL('../src/core/orchestrator.js', import.meta.url), 'utf8');
     assert.ok(orch.includes("const isReminderNote = String(wakeNote).startsWith('【定时提醒】');"), '要有提醒专用分支');
