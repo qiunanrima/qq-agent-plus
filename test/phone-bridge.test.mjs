@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRouter } from '../src/console/router.js';
-import { registerPhoneBridge, selectPhoneNotifications } from '../src/phone-bridge/index.js';
+import { registerPhoneBridge, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
 
 test('phone upload uses its own credential and stores a retried event only once', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-phone-bridge-'));
@@ -90,7 +90,13 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.deepEqual(claims.map((item) => item.command?.id).filter(Boolean), [command.id]);
   assert.equal((await commands(true)).command, null);
   const result = { id: command.id, status: 'written' };
-  assert.deepEqual((await commands(false, [result])).acknowledged, [command.id]);
+  const next = { ...command, id: randomUUID() };
+  const jobsFile = join(dataDir, 'phone-bridge', 'calendar-writes.json');
+  const jobs = JSON.parse(await readFile(jobsFile, 'utf8'));
+  await writeFile(jobsFile, JSON.stringify([...jobs, next]));
+  const combined = await commands(true, [result]);
+  assert.deepEqual(combined.acknowledged, [command.id]);
+  assert.equal(combined.command.id, next.id);
   assert.deepEqual((await commands(false, [result])).acknowledged, [command.id]);
   assert.equal((await commands(true)).command, null);
 });
@@ -112,4 +118,19 @@ test('phone notification results filter by app, keyword and half-open time range
   const lateUpload = { ...latest, postedAt: new Date(since - 1).toISOString() };
   assert.deepEqual(selectPhoneNotifications([first, second, lateUpload], { since }).events, [second, first]);
   assert.ok(selectPhoneNotifications([], { since, until: since }).error);
+});
+
+test('calendar results distinguish an empty covered period from dates the phone has not synced', () => {
+  const snap = { from: 100, to: 200, events: [{ start: 110, end: 120 }, { start: 130, end: 130 }] };
+  assert.deepEqual(selectPhoneCalendar(null, { from: 120, to: 130 }), {
+    synced: false, coverage: 'none', requested: { from: 120, to: 130 }, events: []
+  });
+  const empty = selectPhoneCalendar(snap, { from: 120, to: 130 });
+  assert.equal(empty.coverage, 'full');
+  assert.deepEqual(empty.events, []);
+  const partial = selectPhoneCalendar(snap, { from: 0, to: 140 });
+  assert.equal(partial.coverage, 'partial');
+  assert.deepEqual(partial.events, snap.events);
+  assert.equal(selectPhoneCalendar(snap, { from: 200, to: 300 }).coverage, 'none');
+  assert.ok(selectPhoneCalendar(snap, { from: 120, to: 120 }).error);
 });

@@ -147,12 +147,25 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
 
 export function readOwnerCalendar(ctx, { from, to }) {
   if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档/)) return null;
-  const snapshot = readStored(DATA_DIR, 'calendar.json', null);
-  if (!snapshot) return { synced: false };
-  const start = Number.isSafeInteger(from) ? from : Date.now();
-  const end = Number.isSafeInteger(to) ? to : start + 7 * 86400000;
-  const events = snapshot.events.filter((event) => event.start < end && event.end >= start);
-  return { ...snapshot, events: events.slice(0, 30), truncated: events.length > 30 };
+  return selectPhoneCalendar(readStored(DATA_DIR, 'calendar.json', null), { from, to });
+}
+
+export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now()) {
+  const start = from ?? now;
+  const end = to ?? (start + 7 * 86400000);
+  if (![start, end].every(time => Number.isSafeInteger(time) && Math.abs(time) <= 8.64e15) || end <= start) {
+    return { error: '请提供有效的日程查询起止时间' };
+  }
+  const requested = { from: start, to: end };
+  if (!snapshot) return { synced: false, coverage: 'none', requested, events: [] };
+  const overlapFrom = Math.max(start, snapshot.from);
+  const overlapTo = Math.min(end, snapshot.to);
+  const coverage = overlapFrom >= overlapTo ? 'none' :
+    overlapFrom === start && overlapTo === end ? 'full' : 'partial';
+  const events = coverage === 'none' ? [] : snapshot.events.filter(event =>
+    event.start < overlapTo && (event.end > overlapFrom || (event.end === event.start && event.start >= overlapFrom))
+  );
+  return { ...snapshot, synced: true, requested, coverage, events: events.slice(0, 30), truncated: events.length > 30 };
 }
 
 function syncCalendarCommands(dataDir, payload, json, res) {

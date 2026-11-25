@@ -3021,8 +3021,8 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         const snapshot = readOwnerCalendar(ctx, args);
-        if (!snapshot) return err('仅在管理员 QQ 私聊明确查询日程时可用');
-        return ok(snapshot);
+        if (!snapshot) return err('仅在管理员 QQ 私聊查询日程时可用', { reportIncident: false });
+        return snapshot.error ? err(snapshot.error, { reportIncident: false }) : ok(sanitizeDeep(snapshot));
       }
     }, {
       name: 'phone_calendar_write',
