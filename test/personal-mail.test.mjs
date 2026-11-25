@@ -33,6 +33,23 @@ test('mail access status and recent inbox work without a search term', async () 
     { results: [{ provider: 'gmail', status: 'ok', messages: [] }] });
 });
 
+test('Gmail follow-up reads an exact thread and distinguishes incoming replies from sent mail', async () => {
+  const fetchImpl = async request => {
+    const url = new URL(request);
+    if (url.pathname === '/token') return Response.json({ access_token: 'test-access' });
+    assert.equal(url.pathname, '/gmail/v1/users/me/threads/thread123');
+    return Response.json({ messages: [
+      { id: 'sent', labelIds: ['SENT'], snippet: 'Request for quote', internalDate: '1' },
+      { id: 'reply', labelIds: ['INBOX'], snippet: 'Quote is ready', internalDate: '2' },
+      { id: 'draft', labelIds: ['DRAFT'], snippet: 'Unsent draft', internalDate: '3' }
+    ] });
+  };
+  const result = await runPersonalMailRequest({ action: 'thread', threadId: 'thread123' }, { env, fetchImpl });
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.messages.map(({ id, direction }) => [id, direction]),
+    [['sent', 'outgoing'], ['reply', 'incoming']]);
+});
+
 test('search returns separate source references from Gmail and read-only QQ IMAP', async () => {
   assert.deepEqual(mailProviders({}), []);
   assert.deepEqual(mailProviders(env), ['gmail', 'qq']);
