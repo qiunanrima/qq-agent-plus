@@ -46,6 +46,9 @@ test('workspace material reads stay within the authorized folder and bound the e
   assert.match(pdf, /test "\$file" = .*invoice\.pdf/);
   assert.match(pdf, /timeout 8s pdftotext -f 1 -l 8/);
   assert.match(pdf, /head -c 8193/);
+  const image = workspaceMaterialCommand(folder, folder + '/receipt.jpg', request);
+  assert.match(image, /OMP_THREAD_LIMIT=1/);
+  assert.match(image, /timeout 12s tesseract "\$file" stdout -l chi_sim\+eng/);
   for (const path of [folder + '-other/q.csv', folder + '/../q.csv', folder + '/.private/q.txt',
     folder + '/../x.pdf', folder + '/x\ny.txt', folder + '/a/b/c/d.txt']) {
     assert.equal(workspaceMaterialCommand(folder, path, request), null);

@@ -9,3 +9,5 @@
 命令从容器内的 /workspace 开始执行，导入的 QQ 附件位于其 inbox 子目录。
 
 安装了 `poppler-utils` 的工作区容器支持从本轮明确指定的目录读取文字型 PDF。文件最多 16 MiB，读取前 8 页并返回最多 8 KiB 文字。扫描件需要另行识别。
+
+安装了 `tesseract-ocr`、`tesseract-ocr-chi-sim` 和 `tesseract-ocr-eng` 的容器也可以本地识别 PNG 或 JPEG。单张最多 16 MiB，识别输出最多 8 KiB。识别出的金额和编号应复核后计入报销。
