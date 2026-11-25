@@ -88,6 +88,23 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.equal(readResult.status, 200);
   assert.equal(requestPhoneCalendar(dataDir, distant).coverage, 'full');
   assert.equal(requestPhoneCalendar(dataDir, { from, to }).from, from);
+  const day = 86400000;
+  const longRange = { from: to + 10 * day, to: to + 60 * day };
+  const longQuery = requestPhoneCalendar(dataDir, longRange);
+  assert.equal(longQuery.totalSegments, 2);
+  for (let segment = 0; segment < 2; segment++) {
+    const task = await fetch(base + '/api/phone-bridge/calendar', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: JSON.stringify({ mode: 'read-request' })
+    });
+    const { request: part } = await task.json();
+    const response = await fetch(base + '/api/phone-bridge/calendar', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ requestId: part.id, from: part.from, to: part.to, timeZone: 'Asia/Shanghai', events: [] })
+    });
+    assert.equal(response.status, 200);
+    if (segment === 0) assert.equal(requestPhoneCalendar(dataDir, longRange).completedSegments, 1);
+  }
+  assert.equal(requestPhoneCalendar(dataDir, longRange).coverage, 'full');
 
   const command = { id: randomUUID(), title: 'Queued meeting', location: '',
     start: Date.now() + 60000, end: Date.now() + 120000, createdAt: Date.now(), status: 'queued' };

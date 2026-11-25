@@ -177,9 +177,11 @@ export function requestPhoneCalendar(dataDir, range, now = Date.now()) {
   const ordinary = selectPhoneCalendar(readStored(dataDir, 'calendar.json', null), range, now);
   if (ordinary.error || ordinary.coverage === 'full') return ordinary;
   const { from, to } = ordinary.requested;
-  if (to - from > calendarReadMaxSpan) return { ...ordinary, requestedSync: 'range_too_wide' };
+  const total = Math.ceil((to - from) / calendarReadMaxSpan);
+  if (total > 12) return { ...ordinary, requestedSync: 'range_too_wide' };
   const requests = readStored(dataDir, calendarReadFile, [])
     .filter(item => now - item.createdAt < calendarReadLifetime);
+  if (total > 1) return requestCalendarChunks(dataDir, ordinary, requests, now, total);
   const same = requests.find(item => item.from === from && item.to === to);
   if (same) return same.snapshot
     ? selectPhoneCalendar(same.snapshot, range, now)
@@ -188,8 +190,44 @@ export function requestPhoneCalendar(dataDir, range, now = Date.now()) {
   if (covering) return selectPhoneCalendar(covering.snapshot, range, now);
   if (requests.filter(item => !item.snapshot).length >= 12) return { ...ordinary, requestedSync: 'queue_full' };
   const request = { id: randomUUID(), from, to, createdAt: now };
-  writeStored(dataDir, calendarReadFile, [...requests.slice(-23), request]);
+  writeStored(dataDir, calendarReadFile, [...requests.slice(-35), request]);
   return { ...ordinary, requestedSync: 'pending', requestId: request.id };
+}
+
+function requestCalendarChunks(dataDir, ordinary, requests, now, total) {
+  const { from, to } = ordinary.requested;
+  const snapshots = [];
+  const additions = [];
+  let pending = requests.filter(item => !item.snapshot).length;
+  for (let start = from; start < to; start += calendarReadMaxSpan) {
+    const end = Math.min(start + calendarReadMaxSpan, to);
+    const existing = requests.find(item => item.from === start && item.to === end);
+    if (existing?.snapshot) snapshots.push(existing.snapshot);
+    if (existing || pending >= 12) continue;
+    additions.push({ id: randomUUID(), from: start, to: end, createdAt: now });
+    pending++;
+  }
+  if (additions.length) {
+    const kept = requests.filter(item => (item.to > from && item.from < to) || !item.snapshot);
+    const spare = requests.filter(item => !kept.includes(item));
+    writeStored(dataDir, calendarReadFile, [...spare, ...kept, ...additions].slice(-36));
+  }
+  if (snapshots.length < total) return {
+    ...ordinary, requestedSync: 'pending', completedSegments: snapshots.length, totalSegments: total
+  };
+  const events = new Map();
+  for (const snapshot of snapshots) {
+    for (const event of snapshot.events) {
+      const key = JSON.stringify([event.start, event.end, event.title, event.location, event.allDay]);
+      events.set(key, event);
+    }
+  }
+  const first = snapshots[0];
+  return selectPhoneCalendar({
+    from, to, timeZone: first.timeZone, receivedAt: snapshots.map(item => item.receivedAt).sort()[0],
+    events: [...events.values()].sort((a, b) => a.start - b.start),
+    truncated: snapshots.some(item => item.truncated)
+  }, { from, to }, now);
 }
 
 export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now()) {
