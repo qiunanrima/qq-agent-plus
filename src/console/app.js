@@ -64,6 +64,7 @@ import { registerBackupRoutes } from './routes/backup.js';
 import { registerSessionRoutes } from './routes/sessions.js';
 import { registerStatusRoutes } from './routes/status.js';
 import { AgentWechatChannel } from '../agent-wechat/runtime.js';
+import { registerPhoneBridge } from '../phone-bridge/index.js';
 import { registerAgentWechatRoutes, handleWechatAdminCommand } from '../agent-wechat/routes.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
 import { registerConfigRoutes } from './routes/config.js';
@@ -2420,6 +2421,7 @@ function buildApp({
   registerCodexRoutes(router, { json, getConfig });
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
   const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit, log: moduleLog('agent-wechat') });
+  registerPhoneBridge(router, { json, readBody });
   registerAgentWechatRoutes(router, { runtime: agentWechat, getConfig, updateConfig, json, readBody, auditWrite });
   const bilibiliChannel = new BilibiliChannel({ registry: pluginRegistry, store, orchestrator, getConfig, emit, log });
 

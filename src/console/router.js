@@ -41,7 +41,8 @@ export function createRouter(deps = {}) {
       method: String(method || 'GET').toUpperCase(),
       path,
       handler,
-      auth: opts.auth !== false,
+      auth: !opts.authorize && opts.auth !== false,
+      authorize: opts.authorize,
       keyEndpoint: opts.keyEndpoint === true,
       audit: opts.audit || ''
     });
@@ -112,7 +113,8 @@ export function createRouter(deps = {}) {
     const needsAuth = matched.length
       ? matched.some(({ route }) => route.auth)
       : pathname.startsWith('/api/');
-    if (needsAuth && !authorize(req)) {
+    if ((needsAuth && !authorize(req)) ||
+        matched.some(({ route }) => route.authorize && !route.authorize(req))) {
       json(res, 401, { error: '未授权' });
       return true;
     }
