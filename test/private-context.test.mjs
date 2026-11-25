@@ -14,12 +14,13 @@ const { buildPastState } = await import('../src/llm/prompt.js');
 const { buildToolDefs, executeTool } = await import('../src/tools/tools.js');
 
 function seed() {
+  const now = Date.now();
   const store = new ChatStore(0);
-  store.appendIncoming('group:9', { mid: 91, ts: 500, senderId: '9', senderName: '群友', text: '群里说的话' });
-  store.appendIncoming('private:1', { mid: 11, ts: 1000, senderId: '1', senderName: 'A', text: '和 A 说的话' });
-  store.appendIncoming('private:2', { mid: 22, ts: 2000, senderId: '2', senderName: 'B', text: '[引用#22·B：原话] 和 B 说的话' });
-  store.appendIncoming('group:8', { mid: 81, ts: 2500, senderId: '8', senderName: '别群群友', text: '另一个群的话' });
-  store.appendIncoming('private:1', { mid: 12, ts: 3000, senderId: '1', senderName: 'A', text: 'A 又说了一句' });
+  store.appendIncoming('group:9', { mid: 91, ts: now - 3500, senderId: '9', senderName: '群友', text: '群里说的话' });
+  store.appendIncoming('private:1', { mid: 11, ts: now - 3000, senderId: '1', senderName: 'A', text: '和 A 说的话' });
+  store.appendIncoming('private:2', { mid: 22, ts: now - 2000, senderId: '2', senderName: 'B', text: '[引用#22·B：原话] 和 B 说的话' });
+  store.appendIncoming('group:8', { mid: 81, ts: now - 1500, senderId: '8', senderName: '别群群友', text: '另一个群的话' });
+  store.appendIncoming('private:1', { mid: 12, ts: now - 1000, senderId: '1', senderName: 'A', text: 'A 又说了一句' });
   store.drainUnread('group:9');
   store.drainUnread('group:8');
   store.drainUnread('private:1');
@@ -170,7 +171,9 @@ test('私聊快照变化并追加历史时，已有的历史仍是共同前缀',
 });
 
 test('私聊长窗口连续滚动时分块复用历史，保留最近至少四分之三', () => {
-  configWith(false);
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.store.contextLayering.maxHistoryMessages = 32;
+  setRuntimeConfig(cfg);
   const store = new ChatStore(0);
   const chat = 'private:887';
   const last = [null, null], repeats = [0, 0];
@@ -190,4 +193,46 @@ test('私聊长窗口连续滚动时分块复用历史，保留最近至少四�
     assert.ok(repeats[1] > 40 && repeats[0] === 0);
     console.log('同一历史起点连续复用次数（普通 / 分块）', repeats);
   } finally { store.close(); }
+});
+
+test('共享上下文给每个来源独立的 24 小时窗口和面板条数', async () => {
+  configWith(false, true);
+  const store = new ChatStore(0, { filename: 'shared-window.sqlite' });
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const append = (chatKey, ts, text) => store.appendIncoming(chatKey, { ts, senderId: '1', text });
+  append('private:1', now - day - 1, '旧私聊');
+  append('private:1', now - day, '窗口边界');
+  append('private:1', now - 1, '最近私聊');
+  append('group:8', now - day - 1, '不活跃群');
+  for (let i = 0; i < 32; i++) append('group:9', now - 100 + i, '繁忙群消息 ' + i);
+  for (const chatKey of store.listChats()) store.drainUnread(chatKey);
+
+  const history = buildPastState(store, 'private:1', { now, limit: 8 });
+  assert.equal(DEFAULT_CONFIG.store.contextLayering.maxHistoryMessages, 30);
+  assert.equal(history.count, 32);
+  assert.deepEqual(history.messages.slice(0, 2).map((m) => m.text), ['窗口边界', '最近私聊']);
+  assert.deepEqual(history.messages.slice(2).map((m) => m.text),
+    Array.from({ length: 30 }, (_, i) => '繁忙群消息 ' + (i + 2)));
+  assert.match(history.text, /^当前会话\n[\s\S]*\n\n\[群 9\]\n/);
+  assert.doesNotMatch(history.text, /不活跃群|旧私聊/);
+
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.memory.crossScopeSharedContext = true;
+  cfg.store.contextLayering.maxHistoryMessages = 20;
+  cfg.store.contextLayering.enabled = false;
+  setRuntimeConfig(cfg);
+  const shorter = buildPastState(store, 'private:1', { now });
+  assert.equal(shorter.count, 22);
+
+  const tool = buildToolDefs().find((d) => d.name === 'get_recent_messages');
+  const result = await executeTool([tool], {
+    chatKey: 'private:1', store,
+    session: { pastStateMessageKeys: history.messages.map((m) => m.chatKey + '/' + m.id) }
+  }, 'get_recent_messages', JSON.stringify({ limit: 10 }));
+  const remaining = JSON.parse(result.content).messages.map((m) => m.text);
+  assert.equal(remaining.length, 4);
+  assert.ok(remaining.includes('[群 9] 繁忙群消息 1'));
+  assert.ok(remaining.includes('旧私聊'));
+  store.close();
 });

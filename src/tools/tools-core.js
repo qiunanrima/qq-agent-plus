@@ -2360,9 +2360,11 @@ export function buildToolDefs() {
           && String(ctx.chatKey || '').startsWith('private:');
         const sharedContext = crossScope || sharedPrivate;
         const pastCount = Math.max(0, Number(ctx.session.pastStateCount) || 0);
-        // 共享上下文的 pastState 不包含 leased 触发消息；pastStateCount 却把触发数加上了，
-        // 直接用会多跳过 N 条（复审 P2）。
-        const offsetBase = sharedContext
+        // 分来源选出的消息在全局时间线上并不连续，按存档 ID 跳过模型已看到的消息。
+        const seenKeys = sharedContext && Array.isArray(ctx.session.pastStateMessageKeys)
+          ? ctx.session.pastStateMessageKeys
+          : null;
+        const offsetBase = seenKeys ? 0 : sharedContext
           ? Math.max(0, pastCount - Math.max(0, Number(ctx.triggerEntries?.length) || 0))
           : pastCount;
         let messages = ctx.store.recent(ctx.chatKey, {
@@ -2370,7 +2372,8 @@ export function buildToolDefs() {
           offset: offset + offsetBase,
           scope: crossScope ? 'all' : (sharedPrivate ? 'private' : 'chat'),
           // 共享上下文时与【过去状态】同口径：只翻已处理的历史，不把别处的未读带进来
-          readOnly: sharedContext
+          readOnly: sharedContext,
+          excludeMessageKeys: seenKeys || []
         })
           // 引擎发的游戏私聊（身份/查验结果/行动回执）连翻页都不该看到：模型在私聊里不是上帝视角
           .filter((m) => m.eventKind !== 'game-secret');

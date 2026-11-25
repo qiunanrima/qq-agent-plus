@@ -29,6 +29,7 @@ import {
 } from '../core/tier-slider.js';
 export { _sliderToTier as sliderToTier, _tierToSlider as tierToSlider };
 import { formatFullTime, formatShortTime, quotePrefixFor, safeSlice, sanitizeUserText, resolveSelfName, stripQuoteMessageId } from '../core/util.js';
+import { isExternalChat } from '../channels/registry.js';
 import { filterBlockedHistory } from '../core/blocklist.js';
 import { displayNameOf } from '../core/display-name.js';
 import { roleplayRules } from './roleplay-prompt.js';
@@ -458,47 +459,78 @@ export const PAST_STATE_MAX_CHARS = 100000;
  * 组装"过去状态"文本：消息 JSON 的最近一段（带时间与已读语义）。
  * 读取条数由**上下文档位**决定（见 resolveContextTier），不再是固定值。
  */
-export function buildPastState(store, chatKey, { excludeIds = [], limit = null, blockWindow = false } = {}) {
+export function buildPastState(store, chatKey, { excludeIds = [], limit = null, now = Date.now(), blockWindow = false } = {}) {
   const cfg = getConfig().store;
   const layering = cfg.contextLayering || {};
   const layered = layering.enabled === true;
   const configuredLimit = Math.min(PAST_STATE_MAX_MESSAGES,
     limit === null ? Math.max(1, Number(cfg.allCount) || 300) : Math.max(0, Number(limit) || 0));
-  const maxLimit = layered
-    ? Math.min(configuredLimit, Math.max(1, Number(layering.maxHistoryMessages) || 24))
-    : configuredLimit;
   const exclude = new Set(excludeIds);
-  if (maxLimit <= 0) return { text: '', count: 0, messages: [] };
+  if (configuredLimit <= 0) return { text: '', count: 0, messages: [] };
   const memCfg = getConfig().memory || {};
   // 群聊与私聊共用上下文（issue #14 第二项）：与 privateSharedContext 一样只影响读取侧。
-  const crossScope = memCfg.crossScopeSharedContext === true;
-  const sharedPrivate = !crossScope && memCfg.privateSharedContext === true && String(chatKey || '').startsWith('private:');
-  const crossChat = (m) => String(m?.chatKey || '') !== String(chatKey);
-  let messages = store.recent(chatKey, {
-    limit: maxLimit + exclude.size,
-    readOnly: true,
-    scope: crossScope ? 'all' : (sharedPrivate ? 'private' : 'chat')
-  }).filter((m) => ((crossScope || sharedPrivate) && crossChat(m)) ? true : !exclude.has(m.id));
-  // 引擎发的游戏私聊（身份/查验结果/行动回执）不进模型上下文：模型在私聊里不该是上帝视角
-  // （2026-09-29 审查 P2；标记由群游戏管理器在发送时登记、ingest 落库时打上 eventKind='game-secret'）
-  messages = messages.filter((m) => m.eventKind !== 'game-secret');
-  // 共享上下文：别的会话消息要标明来源，并去掉只在原会话有效的 mid，
-  // 否则模型会拿别的会话的 #id 去引用/看图，永远查不到（issue #14）。
-  if (crossScope || sharedPrivate) {
-    messages = messages.map((m) => {
-      if (!crossChat(m)) return m;
-      const [kind, id] = String(m.chatKey || '').split(':');
-      const label = kind === 'group' ? `[群 ${id || '?'}]` : `[与 ${id || '另一位好友'}]`;
-      return { ...m, mid: null, reply: null, text: `${label} ${stripQuoteMessageId(m.text)}` };
+  const crossScope = !isExternalChat(chatKey) && memCfg.crossScopeSharedContext === true;
+  const sharedPrivate = !crossScope && !isExternalChat(chatKey)
+    && memCfg.privateSharedContext === true && String(chatKey || '').startsWith('private:');
+  const sharing = crossScope || sharedPrivate;
+  const historyCount = Math.max(1, Number(layering.maxHistoryMessages) || 30);
+  const maxLimit = sharing ? historyCount : (layered ? Math.min(configuredLimit, historyCount) : configuredLimit);
+  const since = sharing ? now - 24 * 60 * 60 * 1000 : 0;
+  const sources = [chatKey];
+  if (sharing) {
+    sources.push(...(store.activeHistoryChats?.(since) || []).filter((key) =>
+      key !== chatKey && !isExternalChat(key)
+      && (key.startsWith('private:') || (crossScope && key.startsWith('group:')))));
+  }
+
+  const histories = [];
+  for (const source of sources) {
+    const current = source === chatKey;
+    const messages = filterBlockedHistory(store.recent(source, {
+      limit: maxLimit + (current ? exclude.size : 0),
+      readOnly: true,
+      scope: 'chat',
+      since
+    }).filter((m) => m.eventKind !== 'game-secret' && (!current || !exclude.has(m.id))), source)
+      .slice(-maxLimit);
+    if (!messages.length) continue;
+    const [kind, id] = String(source || '').split(':');
+    const label = current ? '' : kind === 'group' ? `[群 ${id}]` : `[与 ${id}]`;
+    histories.push({
+      label,
+      messages: current ? messages : messages.map((m) => ({
+        ...m, mid: null, reply: null, text: stripQuoteMessageId(m.text)
+      }))
     });
   }
-  // 屏蔽名单兜底：屏蔽前已存档的消息也不能再进提示词；跨会话按消息自己的群号过滤。
-  messages = filterBlockedHistory(messages, chatKey, { crossScope });
-  messages = messages.slice(-maxLimit);
   const maxChars = Math.max(100, Math.min(PAST_STATE_MAX_CHARS,
     layered
       ? Math.min(Number(cfg.pastStateMaxChars) || 24000, Number(layering.maxHistoryChars) || 8000)
       : (Number(cfg.pastStateMaxChars) || 24000)));
+  const sections = histories.map(({ label, messages }) => {
+    const heading = label || (histories.length > 1 ? '当前会话' : '');
+    const overhead = (heading ? heading.length + 1 : 0) + (histories.length > 1 ? 2 : 0);
+    const render = (budget) => renderPastHistory(messages, budget, label ? '' : chatKey, !sharing && blockWindow, maxLimit);
+    return { heading, overhead, render, result: render(maxChars - overhead) };
+  });
+  // 先满足短会话，再把剩余字符均分给长会话。最终仍按来源顺序展示。
+  const bySize = [...sections].sort((a, b) => a.result.text.length + a.overhead - b.result.text.length - b.overhead);
+  let remaining = maxChars + (histories.length > 1 ? 2 : 0);
+  for (const [index, section] of bySize.entries()) {
+    const budget = Math.floor(remaining / (bySize.length - index)) - section.overhead;
+    if (section.result.text.length > budget) section.result = section.render(budget);
+    if (section.result.messages.length) remaining -= section.overhead + section.result.text.length;
+  }
+  const rendered = sections.filter(({ result }) => result.messages.length);
+  const selected = rendered.flatMap(({ result }) => result.messages);
+  return {
+    text: rendered.map(({ heading, result }) => heading ? heading + '\n' + result.text : result.text).join('\n\n'),
+    count: selected.length,
+    messages: selected
+  };
+}
+
+function renderPastHistory(messages, maxChars, chatKey, blockWindow, maxLimit) {
   let remaining = maxChars;
   const selected = [];
   const lines = [];
@@ -506,28 +538,28 @@ export function buildPastState(store, chatKey, { excludeIds = [], limit = null, 
     let line = formatEntry({ ...m, text: m.self && m.chatKey === chatKey && String(chatKey).startsWith('private:') ? m.text : safeSlice(m.text, 2000) }, { withId: true });
     const separator = lines.length ? 1 : 0;
     if (line.length + separator > remaining) {
-      // 至少保留最新一条的可用正文；更早的历史仍按完整消息裁剪。
       if (lines.length) break;
       const marker = '…（历史消息已截断）';
       const prefix = formatEntry({ ...m, text: '', reply: null }, { withId: true });
       const budget = remaining - prefix.length - marker.length;
       if (budget <= 0) break;
       const body = String(m.text || '');
-      const tail = m.self && chatKey.startsWith('private:') ? Math.floor(budget / 2) : 0;
+      const tail = m.self && String(chatKey).startsWith('private:') ? Math.floor(budget / 2) : 0;
       line = prefix + safeSlice(body, budget - tail) + marker + (tail ? body.slice(-tail) : '');
     }
     remaining -= line.length + separator;
     lines.unshift(line);
     selected.unshift(m);
   }
+
   // 一并把选中的消息返回：调用方要用它判定"记忆该带哪些群友"，
   // 避免模型看到历史里根本没出现的群友印象（那样显得莫名其妙）。
-  if (blockWindow && !crossScope && !sharedPrivate && (selected.length === maxLimit || selected.length < messages.length)) {
+  if (blockWindow && (selected.length === maxLimit || selected.length < messages.length)) {
     const skip = privateCacheBoundary(selected, lines);
     lines.splice(0, skip);
     selected.splice(0, skip);
   }
-  return { text: lines.join('\n'), count: lines.length, messages: selected };
+  return { text: lines.join('\n'), messages: selected };
 }
 
 /**
@@ -660,7 +692,7 @@ export function buildUserPrompt(ctx) {
     : Math.max(0, Number(ctx.contextLimit) || 0);
   const past = lifecycleContinuation
     ? { text: '', count: 0, messages: [] }
-    : buildPastState(ctx.store, ctx.chatKey, { excludeIds, limit: contextLimit, blockWindow: ctx.blockWindow === true });
+    : buildPastState(ctx.store, ctx.chatKey, { excludeIds, limit: contextLimit, now, blockWindow: ctx.blockWindow === true });
   // 把【过去状态】实际带了多少条写回 session，供 get_recent_messages 的 offset 补偿：
   // 这些消息模型已经看过，翻页时应当跳过，否则 offset=N 拿到的仍是重复内容。
   // （此前该属性从未被赋值，导致 tools.js 的补偿恒为 0，翻页工具形同失效。）
@@ -668,6 +700,7 @@ export function buildUserPrompt(ctx) {
   // 翻页结果开头就会重复触发批那几条（历史说明里推荐了翻页工具，这里一并算对）。
   if (ctx.session && typeof ctx.session === 'object') {
     ctx.session.pastStateCount = past.count + (ctx.triggerEntries?.length || 0);
+    ctx.session.pastStateMessageKeys = past.messages.map((message) => (message.chatKey || ctx.chatKey) + '/' + message.id);
   }
 
   const parts = [];
@@ -706,10 +739,10 @@ export function buildUserPrompt(ctx) {
     parts.push('【生命周期续接】' + (staleNote ? staleNote + String.fromCharCode(10) : '')
       + '此前轮次已按原顺序放在上文；这里只处理本次新增消息，不要重复回复旧消息。');
   } else if (past.text && ctx.historyFirst) {
-    parts.push(`【过去状态】当前会话的已读记录，从旧到新排列。“我”是你已发送的发言，# 后是消息 id。需要更早的记录可用 get_recent_messages。\n${past.text}`);
+    parts.push(`【过去状态】已读记录按会话来源分段，每段从旧到新。“我”是你已发送的发言，当前会话的 # 后是消息 id。需要更早的记录可用 get_recent_messages。\n${past.text}`);
     if (staleNote) parts.push(staleNote);
   } else if (past.text) {
-    parts.push(`【过去状态】${staleNote ? staleNote + String.fromCharCode(10) : ''}以下是这个会话最近的聊天记录（按时间排序，越往下越新；你的发言标为"我"；这些都已经看过；每行的 #消息id 用来定位具体某条 —— 引用、看图、收藏表情、翻页工具都要用它，个别行如拍一拍没有 id）。这里只带了最近 ${past.count} 条；同一个会话里 #消息id 通常随时间递增，可以用它核对先后（遇到被补课的旧消息、或 id 跳号时，以行序为准）。要看更早的记录用 get_recent_messages 往前翻：\n${past.text}`);
+    parts.push(`【过去状态】${staleNote ? staleNote + String.fromCharCode(10) : ''}以下是已读聊天记录，共 ${past.count} 条，按会话来源分段，每段从旧到新。你的发言标为“我”。当前会话带 #消息id，可用于引用和看图。更早的记录可用 get_recent_messages：\n${past.text}`);
   } else {
     // "这次没带历史"和"这个会话真的没有历史"必须分开说：前者（档位给 0 条、或字符预算
     // 连最新一条都放不下）以前也报"你第一次参与这个会话"，模型会当新会话开场、

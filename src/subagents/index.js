@@ -69,7 +69,7 @@ export class RestrictedSubagents {
         memory: ctx.memory, identityPilot: ctx.identityPilot,
         store: Object.fromEntries(['recent', 'searchHistory', 'findByMid'].filter(name => typeof ctx.store?.[name] === 'function')
           .map(name => [name, ctx.store[name].bind(ctx.store)])),
-        session: { pastStateCount: session.pastStateCount, memoryRecallIds: [] }, signal };
+        session: { pastStateCount: session.pastStateCount, pastStateMessageKeys: session.pastStateMessageKeys, memoryRecallIds: [] }, signal };
       for (let round = 0; round < limits.rounds; round++) {
         check();
         if (usage.totalTokens >= limits.tokens) throw new Error('子代理已达Token预算上限');

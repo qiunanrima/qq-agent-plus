@@ -1085,7 +1085,7 @@ async function saveConfig({ quiet = false } = {}) {
       pastStateMaxChars: clampInt(val('#cfg-pastchars', c.store?.pastStateMaxChars), 100, 100000, 24000),
       contextLayering: {
         enabled: chk('#cfg-history-window', c.store?.contextLayering?.enabled !== false),
-        maxHistoryMessages: clampInt(val('#cfg-history-count', c.store?.contextLayering?.maxHistoryMessages), 20, 100, 50),
+        maxHistoryMessages: clampInt(val('#cfg-history-count', c.store?.contextLayering?.maxHistoryMessages), 20, 100, 30),
         maxHistoryChars: clampInt(val('#cfg-history-chars', c.store?.contextLayering?.maxHistoryChars), 1000, 100000, 8000)
       },
       // 统一开关 + 分群滑条表（__replace__：删掉的群设置要真删，深合并做不到）

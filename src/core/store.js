@@ -1418,7 +1418,13 @@ export class ChatStore {
     return Number(row?.ts) || 0;
   }
 
-  recent(chatKey, { limit = 80, offset = 0, includeSelf = true, readOnly = false, afterId = 0, beforeId = 0, fromId = null, scope = 'chat' } = {}) {
+  activeHistoryChats(since) {
+    return this.db.prepare(`SELECT chat_key, MAX(ts) AS latest FROM messages
+      WHERE ts >= ? AND state='acked' AND event_kind <> 'game-secret'
+      GROUP BY chat_key ORDER BY latest DESC, chat_key`).all(since).map((row) => row.chat_key);
+  }
+
+  recent(chatKey, { limit = 80, offset = 0, includeSelf = true, readOnly = false, afterId = 0, beforeId = 0, fromId = null, scope = 'chat', since = 0, excludeMessageKeys = [] } = {}) {
     // afterId：增量消费按 id **升序**取"游标之后最早的一批"；积压超过 limit 时下一轮继续，
     // 不能按 DESC 取最新 N 条再 reverse —— 那会把落在窗口外的最老消息静默跳过（游戏丢票）。
     // beforeId：控制台向上翻页，取"比这个 id 更老的最新 N 条"，仍按时间正序返回。
@@ -1432,14 +1438,16 @@ export class ChatStore {
     const filters = `${includeSelf ? '' : 'AND self=0'} ${readOnly ? "AND state='acked'" : ''}`;
     if (scope === 'private' && String(chatKey || '').startsWith('private:')) {
       const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key LIKE 'private:%' AND chat_key NOT GLOB 'private:wechat_*' AND chat_key NOT GLOB 'private:bilibili_*' ${filters}
+        AND (chat_key || '/' || id) NOT IN (SELECT value FROM json_each(?))
         ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`)
-        .all(Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
+        .all(JSON.stringify(excludeMessageKeys), Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
       return rows.reverse().map(entry);
     }
     if (scope === 'all') {
       const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key NOT GLOB 'private:wechat_*' AND chat_key NOT GLOB 'private:bilibili_*' AND chat_key NOT GLOB 'group:wechat_*' ${filters}
+        AND (chat_key || '/' || id) NOT IN (SELECT value FROM json_each(?))
         ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`)
-        .all(Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
+        .all(JSON.stringify(excludeMessageKeys), Math.max(1, Number(limit) || 1), Math.max(0, Number(offset) || 0));
       return rows.reverse().map(entry);
     }
     if (fromId !== null && fromId !== undefined) {
@@ -1459,6 +1467,11 @@ export class ChatStore {
         AND id < ? ORDER BY id DESC LIMIT ?`)
         .all(chatKey, before, Math.max(1, Number(limit) || 1));
       return rows.reverse().map(entry);
+    }
+    if (since > 0) {
+      return this.db.prepare(`SELECT * FROM messages WHERE chat_key=? AND ts >= ? ${filters}
+        ORDER BY ts DESC, id DESC LIMIT ?`)
+        .all(chatKey, since, Math.max(1, Number(limit) || 1)).reverse().map(entry);
     }
     const rows = this.db.prepare(`SELECT * FROM messages WHERE chat_key=? ${filters}
       ORDER BY id DESC LIMIT ? OFFSET ?`)

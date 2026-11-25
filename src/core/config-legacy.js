@@ -885,7 +885,7 @@ export const DEFAULT_CONFIG = {
     // 最近聊天窗口；旧配置显式关闭时保留原口径。
     contextLayering: {
       enabled: true,
-      maxHistoryMessages: 50,
+      maxHistoryMessages: 30,
       maxHistoryChars: 8000
     },
     // ── 响应档位的作用范围 ──
@@ -1611,7 +1611,7 @@ function migrateConfig(parsed) {
       groupSliderPos,
       contextLayering: {
         enabled: store.contextLayering?.enabled !== false,
-        maxHistoryMessages: Math.min(100, Math.max(20, Math.round(Number(store.contextLayering?.maxHistoryMessages) || 50))),
+        maxHistoryMessages: Math.min(100, Math.max(20, Math.round(Number(store.contextLayering?.maxHistoryMessages) || 30))),
         maxHistoryChars: Math.min(100000, Math.max(1000, Number(store.contextLayering?.maxHistoryChars) || 8000))
       }
     };

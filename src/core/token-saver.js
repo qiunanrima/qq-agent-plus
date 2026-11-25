@@ -87,7 +87,7 @@ export function tokenSaverEffective(cfg = {}) {
   const num = (value, fallback) => Number(value) || fallback;
   const layerEnabled = cfg.store?.contextLayering?.enabled === true;
   const layerCap = layerEnabled
-    ? Math.max(1, Number(cfg.store?.contextLayering?.maxHistoryMessages) || 24)
+    ? Math.max(1, Number(cfg.store?.contextLayering?.maxHistoryMessages) || 30)
     : null;
   const rows = [
     { key: 'atCount', label: '被艾特时读多少条已读', user: count(cfg.store?.atCount), cap: caps?.atCount, layerCap },
@@ -110,7 +110,7 @@ export function tokenSaverEffective(cfg = {}) {
       user: Math.max(count(cfg.store?.atCount), count(cfg.store?.allCount), count(cfg.store?.keywordCount), count(cfg.store?.randomCount), 1),
       cap: cfg.store?.contextLayering?.enabled !== true
         ? null
-        : Math.max(1, Number(cfg.store?.contextLayering?.maxHistoryMessages) || 24)
+        : Math.max(1, Number(cfg.store?.contextLayering?.maxHistoryMessages) || 30)
     },
     // 日说说有**自己的**轮次旋钮（dailyMoments.maxRounds，默认 8），与聊天那条 api.maxRounds 不是一回事
     { key: 'dailyMomentsMaxRounds', label: '每日动态最大轮次（配置文件里改）', user: num(cfg.dailyMoments?.maxRounds, 8), cap: caps?.maxRounds }

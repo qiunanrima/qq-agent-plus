@@ -579,10 +579,10 @@ return `
       <div class="field" style="margin-top:10px">
         <label><input type="checkbox" id="cfg-history-window" ${st.contextLayering?.enabled !== false ? 'checked' : ''} /> 限制自动携带的最近聊天</label>
         <label for="cfg-history-count">最近聊天条数（20～100）</label>
-        <input type="number" id="cfg-history-count" min="20" max="100" value="${esc(st.contextLayering?.maxHistoryMessages ?? 50)}" />
+        <input type="number" id="cfg-history-count" min="20" max="100" value="${esc(st.contextLayering?.maxHistoryMessages ?? 30)}" />
         <label for="cfg-history-chars">最近聊天字符预算</label>
         <input type="number" id="cfg-history-chars" min="1000" max="100000" step="1000" value="${esc(st.contextLayering?.maxHistoryChars ?? 8000)}" />
-        <div class="hint">默认最多50条、8000字符，也受当前响应档位限制。更早消息保留在档案，需要时由模型检索，复杂问题可委派已启用的子代理。</div>
+        <div class="hint">默认 30 条，字符预算 8000。共享上下文时，每个群和私聊各取最近 24 小时内的消息，每个来源都使用这里的条数上限，字符预算共用。上方开关控制单会话的条数限制及这里的字符预算。</div>
       </div>
       <div class="field" style="margin-top:10px">
         <label for="cfg-pastchars">过去状态最多字符数</label>
