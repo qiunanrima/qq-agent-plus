@@ -59,7 +59,7 @@ export function workspaceSearchCommand(directory, keywords, requestText) {
     + 'find -P "$dir" -maxdepth 3 -type f \\( ' + filters + ' \\) -printf "%p\\0" | head -z -n 26';
 }
 
-export function workspaceMaterialCommand(directory, file, requestText) {
+export function workspaceMaterialCommand(directory, file, requestText, { scanPdf = false } = {}) {
   if (!workspaceDirectoryAllowed(directory, requestText) || typeof file !== 'string' ||
       Buffer.byteLength(file) > 1024 || !file.startsWith(directory + '/') ||
       !/\.(?:txt|md|csv|tsv|pdf|png|jpe?g)$/i.test(file) || /[\x00-\x1f\x7f]/.test(file)) return null;
@@ -67,6 +67,15 @@ export function workspaceMaterialCommand(directory, file, requestText) {
   if (parts.length > 3 || parts.some((part) => !part || part.startsWith('.'))) return null;
   const quoted = quoteShell(file);
   const verified = 'set -eu; file=$(realpath -e -- ' + quoted + '); test "$file" = ' + quoted + '; test -f "$file"; ';
+  if (scanPdf) {
+    if (!/\.pdf$/i.test(file)) return null;
+    return verified + 'command -v pdftoppm >/dev/null && command -v tesseract >/dev/null || exit 69; '
+      + 'test "$(stat -c %s -- "$file")" -le ' + ATTACHMENT_LIMIT + ' || exit 65; '
+      + 'tmp=$(mktemp -d); trap \'rm -f -- "$tmp/page.png" "$tmp/text"; rmdir -- "$tmp"\' EXIT; '
+      + 'timeout 8s pdftoppm -f 1 -l 1 -scale-to 2400 -singlefile -png "$file" "$tmp/page" || exit 66; '
+      + '(ulimit -f 2048; export OMP_THREAD_LIMIT=1; timeout 12s tesseract "$tmp/page.png" stdout -l chi_sim+eng > "$tmp/text") || exit 66; '
+      + 'head -c ' + (MATERIAL_LIMIT + 1) + ' -- "$tmp/text"';
+  }
   if (/\.pdf$/i.test(file)) {
     return verified + 'command -v pdftotext >/dev/null || exit 69; '
       + 'test "$(stat -c %s -- "$file")" -le ' + ATTACHMENT_LIMIT + ' || exit 65; '
@@ -121,7 +130,7 @@ export function containerTools(getConfig, turn) {
   });
   if (privateOwner) tools.push({
     name: 'linux_read_workspace_material',
-    description: '读取管理员本轮指定目录里的文本资料、文字型 PDF 或 PNG/JPEG 图片。最多返回 8 KiB，PDF 最多读前 8 页。图片由容器本地 OCR，可能误读金额和编号。引用时附文件路径。',
+    description: '读取管理员指定目录里的文本资料、PDF 或 PNG/JPEG。最多返回 8 KiB，PDF 先提取前 8 页文字，无文字时识别第一页。OCR 可能误读金额和编号，引用时附文件路径。',
     parameters: { type: 'object', required: ['directory', 'file'], properties: {
       directory: { type: 'string' }, file: { type: 'string' }
     } },
@@ -131,23 +140,28 @@ export function containerTools(getConfig, turn) {
       const command = workspaceMaterialCommand(directory, file, request?.text);
       if (!command) return { content: '请使用本轮明确指定的 /workspace 子目录及其中支持的资料', isError: true };
       try {
-        const result = await containerRequest({ action: 'exec', command }, ctx.signal);
+        let result = await containerRequest({ action: 'exec', command }, ctx.signal);
         const pdf = /\.pdf$/i.test(file);
         const image = imageMaterial.test(file);
         if (pdf && result.code === 69) return { content: '容器未安装 PDF 文字提取工具', isError: true, reportIncident: false };
         if (pdf && result.code !== 0) return { content: 'PDF 无法提取文字或超过读取限制', isError: true, reportIncident: false };
-        if (image && result.code === 69) return { content: '容器未安装图片文字识别工具', isError: true, reportIncident: false };
-        if (image && result.code !== 0) return { content: '图片识别失败或超过读取限制', isError: true, reportIncident: false };
+        const scan = pdf && !result.output.trim();
+        if (scan) {
+          const scanCommand = workspaceMaterialCommand(directory, file, request?.text, { scanPdf: true });
+          result = await containerRequest({ action: 'exec', command: scanCommand }, ctx.signal);
+        }
+        const ocr = scan || image;
+        if (ocr && result.code === 69) return { content: '容器缺少 OCR 所需工具', isError: true, reportIncident: false };
+        if (ocr && result.code !== 0) return { content: 'OCR 失败或超过读取限制', isError: true, reportIncident: false };
         if (result.code !== 0 || result.output.includes('\0')) {
           return { content: '文件不可读取或不是文本资料', isError: true };
         }
         const text = Buffer.from(result.output);
         const truncated = text.length > MATERIAL_LIMIT;
         const excerpt = text.subarray(0, MATERIAL_LIMIT).toString('utf8').replace(/\uFFFD$/u, '');
-        if (pdf && !excerpt.trim()) return { content: 'PDF 前 8 页没有可提取的文字，请提供可读票据', isError: true, reportIncident: false };
-        if (image && !excerpt.trim()) return { content: '图片没有识别到可读文字', isError: true, reportIncident: false };
-        return { content: JSON.stringify({ file, excerpt, truncated, ...(pdf ? { pagesReadUpTo: 8 } : {}),
-          ...(image ? { extraction: 'ocr', needsVerification: true } : {}) }) };
+        if (ocr && !excerpt.trim()) return { content: 'OCR 未识别到可读文字', isError: true, reportIncident: false };
+        return { content: JSON.stringify({ file, excerpt, truncated, ...(pdf ? { pagesReadUpTo: scan ? 1 : 8 } : {}),
+          ...(ocr ? { extraction: 'ocr', needsVerification: true } : {}) }) };
       } catch {
         return { content: '容器资料读取未完成', isError: true };
       }
