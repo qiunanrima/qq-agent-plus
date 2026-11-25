@@ -3044,8 +3044,8 @@ export function buildToolDefs() {
       parameters: { type: 'object', properties: {
         app: { type: 'string', description: '应用包名，或微信、QQ、TIM' },
         query: { type: 'string', maxLength: 100, description: '通知标题或正文包含的词' },
-        since: { type: 'integer', description: '服务端接收时间下界，Unix 毫秒，包含' },
-        until: { type: 'integer', description: '服务端接收时间上界，Unix 毫秒，不包含' },
+        since: { type: 'integer', description: '通知时间下界，Unix 毫秒，包含。旧记录使用服务端接收时间' },
+        until: { type: 'integer', description: '通知时间上界，Unix 毫秒，不包含。旧记录使用服务端接收时间' },
         limit: { type: 'integer', minimum: 1, maximum: 20 }
       } },
       async execute(ctx, args) {

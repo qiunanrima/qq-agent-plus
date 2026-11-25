@@ -34,7 +34,8 @@ test('phone upload uses its own credential and stores a retried event only once'
   });
   const base = 'http://127.0.0.1:' + server.address().port;
   const id = randomUUID();
-  const event = { id, source: 'com.tencent.mm', title: 'Example', body: 'Test notification' };
+  const postedAt = Date.parse('2026-11-25T08:00:00Z');
+  const event = { id, source: 'com.tencent.mm', title: 'Example', body: 'Test notification', postedAt };
   const send = (credential, events = [event]) => fetch(base + '/api/phone-bridge/notifications', {
     method: 'POST', headers: { Authorization: 'Bearer ' + credential },
     body: JSON.stringify({ events })
@@ -53,6 +54,7 @@ test('phone upload uses its own credential and stores a retried event only once'
   const stored = JSON.parse(await readFile(join(dataDir, 'phone-bridge', 'inbox.json'), 'utf8'));
   assert.equal(stored.length, 1);
   assert.equal(stored[0].body, event.body);
+  assert.equal(stored[0].postedAt, new Date(postedAt).toISOString());
 
   const from = 1795564800000;
   const to = from + 86400000;
@@ -104,5 +106,7 @@ test('phone notification results filter by app, keyword and half-open time range
     truncated: true, lastReceivedAt: latest.receivedAt
   });
   assert.deepEqual(selectPhoneNotifications([first, second, latest], { until: since + 1 }).events, [first]);
+  const lateUpload = { ...latest, postedAt: new Date(since - 1).toISOString() };
+  assert.deepEqual(selectPhoneNotifications([first, second, lateUpload], { since }).events, [second, first]);
   assert.ok(selectPhoneNotifications([], { since, until: since }).error);
 });

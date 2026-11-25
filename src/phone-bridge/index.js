@@ -44,15 +44,19 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
         !event || !/^[0-9a-f-]{36}$/i.test(event.id ?? '') ||
         !/^[a-z0-9_.]{1,200}$/i.test(event.source ?? '') ||
         typeof event.title !== 'string' || event.title.length > 256 ||
-        typeof event.body !== 'string' || event.body.length > 2048
+        typeof event.body !== 'string' || event.body.length > 2048 ||
+        (event.postedAt !== undefined && (!Number.isSafeInteger(event.postedAt) || event.postedAt <= 0 || event.postedAt > 8.64e15))
       )) throw new Error('invalid events');
     } catch {
       return json(res, 400, { error: '通知数据格式无效' });
     }
     if (events.length) {
       const inbox = new Map(readStored(dataDir, 'inbox.json', []).map((event) => [event.id, event]));
-      for (const { id, source, title, body } of events) {
-        if (!inbox.has(id)) inbox.set(id, { id, source, title, body, receivedAt: new Date().toISOString() });
+      for (const { id, source, title, body, postedAt } of events) {
+        if (!inbox.has(id)) inbox.set(id, {
+          id, source, title, body, receivedAt: new Date().toISOString(),
+          ...(postedAt === undefined ? {} : { postedAt: new Date(postedAt).toISOString() })
+        });
       }
       writeStored(dataDir, 'inbox.json', [...inbox.values()].slice(-200));
     }
@@ -109,11 +113,11 @@ export function selectPhoneNotifications(inbox, { app, query, since, until, limi
 
   const matches = inbox.filter(event => {
     if (source && event.source !== source) return false;
-    const received = Date.parse(event.receivedAt);
+    const received = Date.parse(event.postedAt ?? event.receivedAt);
     if (from !== null && !(received >= from)) return false;
     if (to !== null && !(received < to)) return false;
     return !keyword || (event.title + '\n' + event.body).toLowerCase().includes(keyword);
-  }).reverse();
+  }).reverse().sort((a, b) => Date.parse(b.postedAt ?? b.receivedAt) - Date.parse(a.postedAt ?? a.receivedAt));
   const count = Math.max(1, Math.min(20, Math.trunc(Number(limit)) || 5));
   const counts = new Map();
   for (const event of matches) counts.set(event.source, (counts.get(event.source) ?? 0) + 1);
