@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRouter } from '../src/console/router.js';
-import { registerPhoneBridge, requestPhoneCalendar, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
+import { findCalendarWindows, registerPhoneBridge, requestPhoneCalendar, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
 
 test('phone upload uses its own credential and stores a retried event only once', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-phone-bridge-'));
@@ -165,4 +165,13 @@ test('calendar results distinguish an empty covered period from dates the phone 
   assert.deepEqual(partial.events, snap.events);
   assert.equal(selectPhoneCalendar(snap, { from: 200, to: 300 }).coverage, 'none');
   assert.ok(selectPhoneCalendar(snap, { from: 120, to: 120 }).error);
+});
+
+test('availability merges overlapping bookings and accounts for buffers outside the query', () => {
+  const minute = 60000;
+  const booking = (start, end) => ({ start: start * minute, end: end * minute });
+  const events = [booking(120, 140), booking(20, 55), booking(95, 125)];
+  assert.deepEqual(findCalendarWindows(events, {
+    from: 60 * minute, to: 220 * minute, durationMinutes: 20, bufferMinutes: 10
+  }), [{ from: 65 * minute, to: 85 * minute }, { from: 150 * minute, to: 220 * minute }]);
 });

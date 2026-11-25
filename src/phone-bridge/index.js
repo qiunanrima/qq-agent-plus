@@ -169,8 +169,40 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
 }
 
 export function readOwnerCalendar(ctx, range) {
-  if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档/)) return null;
-  return requestPhoneCalendar(DATA_DIR, range);
+  if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档|约|空闲/)) return null;
+  if (range.durationMinutes === undefined) return requestPhoneCalendar(DATA_DIR, range);
+  const { durationMinutes, bufferMinutes = 0 } = range;
+  const from = range.from ?? Date.now();
+  const to = range.to ?? from + 7 * 86400000;
+  if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440 ||
+      !Number.isSafeInteger(bufferMinutes) || bufferMinutes < 0 || bufferMinutes > 1440 ||
+      !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to <= from) {
+    return { error: '请提供有效的查询时间、会议时长和间隔分钟数' };
+  }
+  const buffer = bufferMinutes * 60000;
+  const calendar = requestPhoneCalendar(DATA_DIR, { from: from - buffer, to: to + buffer });
+  if (calendar.error) return calendar;
+  const { coverage, truncated, requestedSync, timeZone, receivedAt, events, completedSegments, totalSegments } = calendar;
+  return {
+    requested: { from, to }, coverage, truncated, requestedSync, timeZone, receivedAt, completedSegments, totalSegments,
+    ...(coverage === 'full' && !truncated ? { available: findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes }) } : {})
+  };
+}
+
+export function findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes }) {
+  const duration = durationMinutes * 60000;
+  const buffer = bufferMinutes * 60000;
+  const busy = events.map(event => ({ start: event.start - buffer, end: event.end + buffer }))
+    .filter(event => event.end > from && event.start < to && event.start < event.end)
+    .sort((a, b) => a.start - b.start);
+  const windows = [];
+  let cursor = from;
+  for (const event of busy) {
+    if (event.start - cursor >= duration) windows.push({ from: cursor, to: event.start });
+    cursor = Math.max(cursor, event.end);
+  }
+  if (to - cursor >= duration) windows.push({ from: cursor, to });
+  return windows;
 }
 
 export function requestPhoneCalendar(dataDir, range, now = Date.now()) {
