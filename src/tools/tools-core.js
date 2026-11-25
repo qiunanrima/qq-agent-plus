@@ -3050,8 +3050,8 @@ export function buildToolDefs() {
       } },
       async execute(ctx, args) {
         const result = readOwnerPhoneNotifications(ctx, args);
-        if (!result) return err('仅在管理员 QQ 私聊明确查询手机通知时可用');
-        return result.error ? err(result.error) : ok(sanitizeDeep(result));
+        if (!result) return err('仅在管理员 QQ 私聊可查询手机通知', { reportIncident: false });
+        return result.error ? err(result.error, { reportIncident: false }) : ok(sanitizeDeep(result));
       }
     }] : []),
     {

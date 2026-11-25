@@ -90,7 +90,7 @@ function isOwnerRequest(ctx, pattern) {
   const sender = ctx.triggerEntries?.filter((entry) => !entry?.self).at(-1);
   return phoneBridgeEnabled() && /^[0-9]{5,15}$/.test(owner) &&
       ctx.chatKey === 'private:' + owner && String(sender?.senderId ?? '') === owner &&
-      pattern.test(String(sender?.text ?? ''));
+      (!pattern || pattern.test(String(sender?.text ?? '')));
 }
 
 const notificationApps = new Map([
@@ -127,7 +127,7 @@ export function selectPhoneNotifications(inbox, { app, query, since, until, limi
 }
 
 export function readOwnerPhoneNotifications(ctx, args = {}) {
-  if (!isOwnerRequest(ctx, /通知|通知栏|(?:微信|QQ|TIM).{0,10}(?:消息|提醒)/i)) return null;
+  if (!isOwnerRequest(ctx)) return null;
   const sender = ctx.triggerEntries.filter(entry => !entry?.self).at(-1);
   const named = [...String(sender.text ?? '').matchAll(/微信|wechat|(?<![a-z])(?:qq|tim)(?![a-z])/gi)]
     .map(match => notificationApps.get(match[0].toLowerCase()));

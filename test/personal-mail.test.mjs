@@ -5,7 +5,7 @@ import { createPersonalMailSettings } from '../src/personal-mail/settings.js';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import test from 'node:test';
-import { mailProviders, searchPersonalMail } from '../src/personal-mail/index.js';
+import { mailProviders, runPersonalMailRequest, searchPersonalMail } from '../src/personal-mail/index.js';
 
 const env = {
   QQ_AGENT_GMAIL_CLIENT_ID: 'test-id',
@@ -14,6 +14,24 @@ const env = {
   QQ_AGENT_QQ_MAIL_USER: 'test@example.invalid',
   QQ_AGENT_QQ_MAIL_AUTH_CODE: 'test-auth-code'
 };
+
+test('mail access status and recent inbox work without a search term', async () => {
+  const requested = [];
+  const fetchImpl = async request => {
+    const url = new URL(request);
+    requested.push(url.pathname);
+    if (url.pathname === '/token') return Response.json({ access_token: 'test-access' });
+    if (url.pathname.endsWith('/profile')) return Response.json({});
+    assert.equal(url.searchParams.get('q'), 'in:inbox newer_than:14d');
+    return Response.json({});
+  };
+  const options = { env, fetchImpl };
+  assert.deepEqual(await runPersonalMailRequest({ provider: 'gmail' }, options),
+    { results: [{ provider: 'gmail', status: 'ok' }] });
+  assert.deepEqual(requested, ['/token', '/gmail/v1/users/me/profile']);
+  assert.deepEqual(await runPersonalMailRequest({ action: 'recent', provider: 'gmail' }, options),
+    { results: [{ provider: 'gmail', status: 'ok', messages: [] }] });
+});
 
 test('search returns separate source references from Gmail and read-only QQ IMAP', async () => {
   assert.deepEqual(mailProviders({}), []);
