@@ -831,6 +831,7 @@ export const DEFAULT_CONFIG = {
   },
   // MCP（Model Context Protocol）客户端：把外部 MCP Server 的工具接进模型。
   // 默认关闭；每个 server 的 command 由管理员在配置里显式填写，等同于执行本机命令。
+  linuxContainer: { enabled: false, allowGroup: false, cpu: 1, memory: 512, pids: 128 },
   mcp: {
     enabled: false,
     servers: []
@@ -2256,6 +2257,16 @@ export function updateConfig(patch, { force = false } = {}) {
   try { next.agentWechat = normalizeWechatConfig(next.agentWechat); }
   catch (error) { throw invalidConfig(error.message); }
   next.subagent = normalizeSubagentConfig(next.subagent);
+  if (safePatch.linuxContainer !== undefined) {
+    const limits = next.linuxContainer;
+    if (typeof limits?.enabled !== 'boolean' || typeof limits.allowGroup !== 'boolean'
+      || !Number.isFinite(limits.cpu) || limits.cpu < 0.1 || limits.cpu > 4
+      || !Number.isInteger(limits.memory) || limits.memory < 64 || limits.memory > 4096
+      || !Number.isInteger(limits.pids) || limits.pids < 16 || limits.pids > 1024) {
+      throw invalidConfig('Linux 容器资源设置无效');
+    }
+    if (limits.enabled && !/^\d+$/.test(String(next.admin?.ownerUin || ''))) throw invalidConfig('请先配置管理员 QQ');
+  }
   validateCliConfigs(next, safePatch, invalidConfig);
   next.dailyMoments.scheduleWindows = normalizeMomentWindows(next.dailyMoments.scheduleWindows);
   if (!['observe', 'active'].includes(next.runtime?.mode)) throw invalidConfig('Invalid runtime mode');

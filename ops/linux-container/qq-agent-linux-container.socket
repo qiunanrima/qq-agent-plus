@@ -1,0 +1,9 @@
+[Unit]
+Description=QQ Agent container control socket
+[Socket]
+ListenStream=/run/qq-agent-linux-container.sock
+SocketUser=qqagent
+SocketMode=0600
+Accept=yes
+[Install]
+WantedBy=sockets.target

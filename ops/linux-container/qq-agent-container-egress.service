@@ -1,0 +1,9 @@
+[Unit]
+Description=QQ workspace egress isolation
+Before=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /usr/local/lib/qq-agent-linux-container/egress.nft
+[Install]
+RequiredBy=docker.service

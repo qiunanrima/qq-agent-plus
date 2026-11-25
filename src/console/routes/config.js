@@ -1,6 +1,7 @@
 // 配置读取 / 保存 / 重载路由（从 console/app.js 拆出，2026-10-31 结构整治 M3）。
 // 这是全站最大的写接口（约 600 行）：密钥归属钉、__replace__ 语义、hasXxx 回填、
 // 保存失败回滚都在原处逐字保留 —— 拆分只搬位置，不改逻辑。
+import { containerRequest } from '../../tools/linux-container.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -15,6 +16,7 @@ import { initChannelPrices } from '../../pricing/channel-prices.js';
 import { sanitizeConfigSecrets } from '../../core/secret-keys.js';
 
 export function registerConfigRoutes(router, deps = {}) {
+  let applyingContainerConfig = false;
   const json = deps.json;
   const readBody = deps.readBody;
   const getConfig = deps.getConfig;
@@ -58,6 +60,9 @@ export function registerConfigRoutes(router, deps = {}) {
   };
 
   router.add('GET', '/api/config', async (req, res) => {
+    if (patch?.linuxContainer && applyingContainerConfig) {
+      return json(res, 409, { ok: false, error: '容器配置正在应用，请稍后再保存' });
+    }
     const cfgNow = getConfig();
     // 不把任何真实 Key 暴露给前端：递归清空所有密钥类字段，用 hasKey 表示"有密钥"。
     // 注意：不要用手工逐字段列举——之前漏了 5 个搜索 Key 和 2 个 SnowLuma 令牌，
@@ -581,6 +586,16 @@ export function registerConfigRoutes(router, deps = {}) {
       compressAfterDays: next.store?.sessionCompressAfterDays,
       maxTotalMb: next.store?.sessionMaxTotalMb
     });
+    if (patch?.linuxContainer) {
+      applyingContainerConfig = true;
+      try {
+        await containerRequest({ ...next.linuxContainer, action: 'configure' });
+      } catch (error) {
+        return json(res, 503, { ok: false, error: '配置已保存，容器尚未确认应用：' + error.message });
+      } finally {
+        applyingContainerConfig = false;
+      }
+    }
     if (patch?.mcp) {
       try { await mcpManager.reload(); }
       catch (error) { mcpLog('配置保存后重载失败:', error); }

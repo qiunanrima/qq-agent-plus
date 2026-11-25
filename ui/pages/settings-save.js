@@ -79,6 +79,13 @@ async function saveConfig({ quiet = false } = {}) {
 
   const patch = {};
 
+  if (sec === 'linuxContainer') {
+    patch.linuxContainer = {
+      enabled: chk('#cfg-container-on'), allowGroup: chk('#cfg-container-group'),
+      cpu: Number(val('#cfg-container-cpu')), memory: Number(val('#cfg-container-memory')),
+      pids: Number(val('#cfg-container-pids'))
+    };
+  }
   if (sec === 'mcp') {
     const servers = $$('#mcp-servers .mcp-server').map((row) => {
       const read = (sel) => String(row.querySelector(sel)?.value ?? '').trim();

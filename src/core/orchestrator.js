@@ -1,3 +1,4 @@
+import { containerTools } from '../tools/linux-container.js';
 import { channelForChat, isExternalChat, isWechatChat } from '../channels/registry.js';
 import { mountOnDemandTools } from '../tools/on-demand.js';
 import { wechatBindingContext } from '../agent-wechat/config.js';
@@ -2208,6 +2209,11 @@ export class Orchestrator {
       },
       allowed: () => canRun(chatKey) && !this.paused && !this.aborted,
       complete: (messages, options) => this.#memoryChat(messages, { ...options, forceChatModel: true, usageSource: 'subagent' })
+    }));
+    toolDefs.push(...containerTools(getConfig, {
+      chatKey, proactive: proactive || manual, external: Boolean(channel),
+      senders: (triggerEntries || []).map(entry => entry.senderId),
+      directed: (triggerEntries || []).some(entry => mentionsOrPokesBot(entry, this.onebot.selfId))
     }));
     toolDefs.push(...antigravityQuotaTools(getConfig), ...pluginToolDefs, ...mcpToolDefs);
     if (channel) toolDefs.splice(0, toolDefs.length, ...channel.toolsFor(chatKey, toolDefs, { memory: this.memory, persona, personalityMemory: this.personalityMemory }));

@@ -65,6 +65,7 @@ const SECTION_SEARCH_TERMS = {
   experiments: '实验 功能 试点',
   platform: '平台 能力 权限 工具',
   'agent-wechat': '微信 wxid 绑定 QQ 白名单 Agent WeChat',
+  linuxContainer: 'Linux 容器 CPU 内存 进程 管理员 群聊',
   mcp: 'MCP 工具 server 外部 协议',
   knowledge: '知识库 文档 FAQ 群规 检索',
   memes: '梗 黑话 外号 群梗库 梗百科',
@@ -110,7 +111,7 @@ function renderSettingsSidebar() {
     ['对话与人格', [['persona', '人设'], ['chat', '聊天设置'], ['messageTypes', '消息类型'], ['allow', '聊天白名单'], ['memory', '记忆']]],
     ['模型与服务', [['api', '模型 API'], ...(state.config?.modelFallback?.graduated ? [['model-fallback', '模型回退']] : []), ...(state.config?.codexCli?.graduated ? [['codex-cli', 'Codex CLI']] : []), ...(state.config?.antigravityCli?.graduated ? [['antigravity-cli', 'Antigravity CLI']] : []), ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', 'Token 节省']]],
     ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['life-feed', '见闻'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
-    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ...(state.config?.agentWechat?.graduated ? [['agent-wechat', '微信接入']] : []), ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
+    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot'], ...(state.config?.agentWechat?.graduated ? [['agent-wechat', '微信接入']] : []), ['linuxContainer', 'Linux 容器'], ['mcp', 'MCP'], ['knowledge', '知识库'], ['memes', '梗库'], ['moderation', '群管理']]],
     ['系统', [['appearance', '外观'], ['desktop', '系统']]]
   ];
   sidebar.innerHTML = `
@@ -370,6 +371,15 @@ function renderSettingsSection(c) {
     chat: () => renderChatSection(c),
     messageTypes: () => renderMessageTypesSection(c),
     platform: () => renderPlatformSection(c),
+    linuxContainer: () => `<h3>Linux 容器</h3>
+      <p>管理员可让 Agent 以 root 身份执行命令。容器可访问公网，停用后保留文件。</p>
+      <div class="field"><label><input id="cfg-container-on" type="checkbox" ${c.linuxContainer?.enabled ? 'checked' : ''}> 启用容器</label></div>
+      <div class="field"><label><input id="cfg-container-group" type="checkbox" ${c.linuxContainer?.allowGroup ? 'checked' : ''}> 允许管理员在群聊中点名唤醒容器</label></div>
+      <div class="field-row">
+        <div class="field"><label for="cfg-container-cpu">CPU 核数</label><input id="cfg-container-cpu" type="number" min="0.1" max="4" step="0.1" value="${esc(c.linuxContainer?.cpu ?? 1)}"></div>
+        <div class="field"><label for="cfg-container-memory">内存（MiB）</label><input id="cfg-container-memory" type="number" min="64" max="4096" value="${esc(c.linuxContainer?.memory ?? 512)}"></div>
+        <div class="field"><label for="cfg-container-pids">进程数上限</label><input id="cfg-container-pids" type="number" min="16" max="1024" value="${esc(c.linuxContainer?.pids ?? 128)}"></div>
+      </div>`,
     mcp: () => renderMcpSection(c),
     knowledge: () => renderKnowledgeSection(c),
     memes: () => renderMemesSection(c),

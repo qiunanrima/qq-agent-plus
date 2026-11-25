@@ -1,0 +1,12 @@
+[Unit]
+Description=QQ Agent container request
+Requires=qq-agent-container-egress.service docker.service
+After=qq-agent-container-egress.service docker.service
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/lib/qq-agent-linux-container/helper.py
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=42
+NoNewPrivileges=yes
+ProtectSystem=strict
