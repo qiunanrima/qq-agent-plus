@@ -60,9 +60,6 @@ export function registerConfigRoutes(router, deps = {}) {
   };
 
   router.add('GET', '/api/config', async (req, res) => {
-    if (patch?.linuxContainer && applyingContainerConfig) {
-      return json(res, 409, { ok: false, error: '容器配置正在应用，请稍后再保存' });
-    }
     const cfgNow = getConfig();
     // 不把任何真实 Key 暴露给前端：递归清空所有密钥类字段，用 hasKey 表示"有密钥"。
     // 注意：不要用手工逐字段列举——之前漏了 5 个搜索 Key 和 2 个 SnowLuma 令牌，
@@ -72,6 +69,9 @@ export function registerConfigRoutes(router, deps = {}) {
   });
   router.add('POST', '/api/config', async (req, res) => {
     const patch = await readBody(req);
+    if (patch?.linuxContainer && applyingContainerConfig) {
+      return json(res, 409, { ok: false, error: '容器配置正在应用，请稍后再保存' });
+    }
     // readBody 可能很慢（设置页整包可达数 MB），期间别的保存/接口写入可能已经落盘。
     // 快照必须取在读完之后：下面 tts/imageGen/asr 的 keys、voices 都是"服务端维护的映射"，
     // 用旧快照重建会把并发请求刚写进去的 Key 静默抹掉。
