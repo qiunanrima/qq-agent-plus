@@ -1,12 +1,10 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { mailProviders, pollPersonalInbox } from './index.js';
 import { personalMailSettings } from './settings.js';
+import { readTriageState, triageAccountKey, triageDigest, triageFile } from './triage-store.js';
 
 const interval = 120_000;
 const categories = new Set(['routine', 'deadline', 'security', 'request', 'schedule']);
-const digest = value => createHash('sha256').update(value).digest('hex');
 const cleanSummary = value => String(value ?? '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim().slice(0, 120);
 
 export async function summarizeInbox(messages, complete, signal) {
@@ -30,7 +28,7 @@ export async function summarizeInbox(messages, complete, signal) {
 }
 
 export function createMailWatcher({ dataDir, complete, notify, log, poll = pollPersonalInbox, runtimeEnv = () => personalMailSettings.runtimeEnv() }) {
-  const file = path.join(dataDir, 'personal-mail-triage.json');
+  const file = triageFile(dataDir);
   let timer;
   let controller;
   let stopped = true;
@@ -52,15 +50,12 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
 
   async function checkOnce(signal = new AbortController().signal) {
     const env = runtimeEnv();
-    let state = {};
-    try { state = JSON.parse(fs.readFileSync(file, 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const state = readTriageState(dataDir);
 
     for (const provider of mailProviders(env)) {
       if (signal.aborted) return;
       try {
-        const account = provider === 'qq' ? env.QQ_AGENT_QQ_MAIL_USER : env.QQ_AGENT_GMAIL_REFRESH_TOKEN;
-        const key = provider + ':' + digest(account);
+        const key = triageAccountKey(provider, env);
         await enqueuePending(state, key, provider);
         const previous = state[key];
         const messages = await poll(provider, env, { baseline: !previous, seen: new Set(previous?.seen) }, signal);
@@ -72,11 +67,13 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
         const important = rows.filter(row => row.category !== 'routine');
         state[key] = {
           seen: [...new Set([...messages.map(message => message.id), ...(previous?.seen ?? [])])].slice(0, 256),
-          summaries: [...rows.map((row, index) => ({ ...row, receivedAt: messages[index].receivedAt })),
+          summaries: [...rows.map((row, index) => ({
+            ...row, receivedAt: messages[index].receivedAt, source: messages[index].source
+          })),
             ...(previous?.summaries ?? [])].slice(0, 100)
         };
         if (important.length) {
-          const batch = digest(JSON.stringify([key, messages.map(message => message.id)])).slice(0, 24);
+          const batch = triageDigest(JSON.stringify([key, messages.map(message => message.id)])).slice(0, 24);
           state[key].pending = { batch, important };
         }
         save(state);
