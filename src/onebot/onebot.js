@@ -1000,6 +1000,10 @@ export function extractMediaFromSegments(segments) {
   for (const seg of segments ?? []) {
     if (!seg || typeof seg !== 'object') continue;
     const d = seg.data ?? {};
+    if (seg.type === 'file') {
+      media.push({ kind: 'file', file: String(d.name || d.file || '').slice(0, 240),
+        fileSegId: String(d.file_id || d.id || ''), url: String(d.url || '') });
+    }
     if (seg.type === 'image') {
       media.push({ kind: 'image', file: String(d.file ?? ''), url: String(d.url ?? ''), summary: String(d.summary ?? '') });
     } else if (seg.type === 'face') {

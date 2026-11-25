@@ -11,7 +11,28 @@ def docker(*args):
     subprocess.run(['/usr/bin/docker', *args], check=True, stdout=subprocess.DEVNULL, timeout=30)
 
 
+def import_file(req):
+    size, name = req['size'], req['name']
+    if type(size) is not int or not 0 <= size <= 16 * 1024 * 1024:
+        raise ValueError('invalid attachment size')
+    if (not isinstance(name, str) or name in ('', '.', '..') or len(name.encode()) > 255
+            or '/' in name or any(ord(char) < 32 for char in name)):
+        name = 'attachment'
+    payload = sys.stdin.buffer.read(size)
+    if len(payload) != size:
+        raise ValueError('attachment truncated')
+    result = subprocess.run(['/usr/bin/docker', 'exec', '-i', '-u', '0', TARGET,
+                             '/bin/sh', '-eu', '-c',
+                             'umask 077; mkdir -p /workspace/inbox; '
+                             'dir=$(mktemp -d /workspace/inbox/qq-XXXXXXXX); '
+                             'cat > "$dir/$1"; printf "%s" "$dir/$1"', 'import', name],
+                            input=payload, stdout=subprocess.PIPE, check=True, timeout=30)
+    return {'path': result.stdout.decode()}
+
+
 def handle(req):
+    if req['action'] == 'import':
+        return import_file(req)
     if req['action'] == 'configure':
         if req['enabled'] is False:
             docker('stop', TARGET)

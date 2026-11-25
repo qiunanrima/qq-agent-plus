@@ -2213,6 +2213,7 @@ export class Orchestrator {
     toolDefs.push(...containerTools(getConfig, {
       chatKey, proactive: proactive || manual, external: Boolean(channel),
       senders: (triggerEntries || []).map(entry => entry.senderId),
+      attachments: (triggerEntries || []).flatMap(entry => (entry.media || []).filter(item => item.kind === 'file')).slice(0, 20),
       directed: (triggerEntries || []).some(entry => mentionsOrPokesBot(entry, this.onebot.selfId))
     }));
     toolDefs.push(...antigravityQuotaTools(getConfig), ...pluginToolDefs, ...mcpToolDefs);
