@@ -742,7 +742,7 @@ export function buildUserPrompt(ctx) {
     parts.push(`【过去状态】已读记录按会话来源分段，每段从旧到新。“我”是你已发送的发言，当前会话的 # 后是消息 id。需要更早的记录可用 get_recent_messages。\n${past.text}`);
     if (staleNote) parts.push(staleNote);
   } else if (past.text) {
-    parts.push(`【过去状态】${staleNote ? staleNote + String.fromCharCode(10) : ''}以下是已读聊天记录，共 ${past.count} 条，按会话来源分段，每段从旧到新。你的发言标为“我”。当前会话带 #消息id，可用于引用和看图。更早的记录可用 get_recent_messages：\n${past.text}`);
+    parts.push(`【过去状态】${staleNote ? staleNote + String.fromCharCode(10) : ''}这里只带了最近 ${past.count} 条已读消息，按会话来源分段，每段越往下越新。你的发言标为“我”。当前会话带 #消息id，可用于引用和看图。#消息id 通常随时间递增，核对先后时以行序为准。更早的记录可用 get_recent_messages：\n${past.text}`);
   } else {
     // "这次没带历史"和"这个会话真的没有历史"必须分开说：前者（档位给 0 条、或字符预算
     // 连最新一条都放不下）以前也报"你第一次参与这个会话"，模型会当新会话开场、
