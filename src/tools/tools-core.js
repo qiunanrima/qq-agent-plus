@@ -1,6 +1,6 @@
 import { personalMailTool } from '../personal-mail/index.js';
 import { phoneBridgeEnabled, ownerCalendarWrite, readOwnerCalendar, readOwnerPhoneNotifications } from '../phone-bridge/index.js';
-import { expenseCsv, reconcileExpenses } from './expense-reconcile.js';
+import { expenseCsv, expenseCsvFields, reconcileExpenses } from './expense-reconcile.js';
 import { containerRequest } from './linux-container.js';
 import { readOwnerUin } from '../core/notify-owner.js';
 import { resolvePersona } from '../personas.js';
@@ -3018,13 +3018,19 @@ export function buildToolDefs() {
       description: '核对已从授权文件或邮件读到的人民币票据。相同编号只计一次，冲突或缺资料列入待复核。用户要求导出时可设置 exportCsv，将清单保存到独立工作区。',
       parameters: { type: 'object', required: ['entries'], properties: {
         exportCsv: { type: 'boolean', description: '按用户要求导出报销核对清单 CSV' },
+        columns: { type: 'array', maxItems: 30, description: '公司 CSV 模板的列名及顺序。依照用户提供或读取到的表头映射，未知字段留空。',
+          items: { type: 'object', required: ['header', 'field'], properties: {
+            header: { type: 'string', maxLength: 100 },
+            field: { type: 'string', enum: expenseCsvFields }
+          } }
+        },
         entries: { type: 'array', maxItems: 100, items: { type: 'object', required: ['source'], properties: {
           source: { type: 'string', maxLength: 320, description: '工作区路径或邮件来源' },
           receiptId: { type: 'string', maxLength: 128, description: '票面可核实的唯一编号，未知则省略' },
           amount: { type: 'string', description: '人民币金额，例如 123.45，未知则省略' }
         } } }
       } },
-      async execute(ctx, { entries, exportCsv }) {
+      async execute(ctx, { entries, exportCsv, columns }) {
         const owner = readOwnerUin(getConfig());
         const sender = ctx.triggerEntries?.filter(entry => entry && !entry.self).at(-1);
         if (!owner || ctx.chatKey !== 'private:' + owner || String(sender?.senderId ?? '') !== owner) {
@@ -3039,7 +3045,9 @@ export function buildToolDefs() {
           if (getConfig().linuxContainer?.enabled !== true) {
             return ok(sanitizeDeep({ ...result, exportStatus: '独立工作区未启用' }));
           }
-          const data = Buffer.from(expenseCsv(result));
+          const csv = expenseCsv(result, columns);
+          if (csv === null) return err('报销模板的列名或字段映射无效', { reportIncident: false });
+          const data = Buffer.from(csv);
           try {
             const file = await containerRequest({ action: 'import', name: '报销核对清单.csv', size: data.length }, ctx.signal, data);
             return ok(sanitizeDeep({ ...result, file: file.path }));

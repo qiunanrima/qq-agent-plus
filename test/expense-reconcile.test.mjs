@@ -28,3 +28,16 @@ test('CSV includes the audited total and treats spreadsheet formulas as literal 
   assert.ok(csv.includes('"待复核"'));
   assert.ok(csv.includes('"合计","","12.34"'));
 });
+
+test('company CSV export preserves provided header order and leaves unmapped columns empty', () => {
+  const result = reconcileExpenses([
+    { receiptId: 'A', amount: '12.34', source: 'invoice.pdf' },
+    { source: 'unverified' }
+  ]);
+  assert.equal(expenseCsv(result, [
+    { header: '金额', field: 'amount' },
+    { header: '部门', field: 'blank' },
+    { header: '单号', field: 'receiptId' }
+  ]), '\uFEFF"金额","部门","单号"\r\n"12.34","","A"\r\n');
+  assert.equal(expenseCsv(result, [{ header: '未知', field: 'unknown' }]), null);
+});

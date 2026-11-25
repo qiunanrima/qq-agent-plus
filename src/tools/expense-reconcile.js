@@ -37,14 +37,25 @@ export function reconcileExpenses(entries) {
   return { currency: 'CNY', total: amount(total), receipts, review };
 }
 
-export function expenseCsv(result) {
+export const expenseCsvFields = ['receiptId', 'amount', 'source', 'currency', 'blank'];
+
+export function expenseCsv(result, columns) {
+  if (columns !== undefined && (!Array.isArray(columns) || columns.length < 1 || columns.length > 30 ||
+      columns.some(column => typeof column?.header !== 'string' || !column.header.trim() ||
+        column.header.length > 100 || !expenseCsvFields.includes(column.field)))) return null;
   const issues = {
     missing_source: '缺少来源',
     missing_receipt_id: '缺少票据编号',
     invalid_amount: '金额缺失或格式不正确',
     conflicting_amounts: '金额冲突'
   };
-  const rows = [
+  const rows = columns ? [
+    columns.map(column => column.header),
+    ...result.receipts.map(row => {
+      const values = { receiptId: row.receiptId, amount: row.amount, source: row.sources.join(' | '), currency: result.currency, blank: '' };
+      return columns.map(column => values[column.field]);
+    })
+  ] : [
     ['状态', '票据编号', '金额（CNY）', '来源', '说明'],
     ...result.receipts.map(row => ['已核对', row.receiptId, row.amount, row.sources.join(' | '), '']),
     ...result.review.map(row => [
