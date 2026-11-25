@@ -3018,7 +3018,13 @@ export function buildToolDefs() {
           from: { type: 'integer', description: '可选的查询起点，Unix 毫秒，默认现在' },
           to: { type: 'integer', description: '可选的查询终点，Unix 毫秒，默认起点七天后' },
           durationMinutes: { type: 'integer', minimum: 1, maximum: 1440, description: '需要安排的会议时长，用于计算空档' },
-          bufferMinutes: { type: 'integer', minimum: 0, maximum: 1440, description: '新会议与已有日程之间的最短间隔，默认 0 分钟' }
+          bufferMinutes: { type: 'integer', minimum: 0, maximum: 1440, description: '新会议与已有日程之间的最短间隔，默认 0 分钟' },
+          exclude: { type: 'array', maxItems: 60, description: '用户要求避开的时段（例如午休，每天单列一项）',
+            items: { type: 'object', required: ['from', 'to'], properties: {
+              from: { type: 'integer', description: '时段起点，Unix 毫秒' },
+              to: { type: 'integer', description: '时段终点，Unix 毫秒' }
+            } }
+          }
         }
       },
       async execute(ctx, args) {

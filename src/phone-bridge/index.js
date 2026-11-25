@@ -171,7 +171,7 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
 export function readOwnerCalendar(ctx, range) {
   if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档|约|空闲/)) return null;
   if (range.durationMinutes === undefined) return requestPhoneCalendar(DATA_DIR, range);
-  const { durationMinutes, bufferMinutes = 0 } = range;
+  const { durationMinutes, bufferMinutes = 0, exclude = [] } = range;
   const from = range.from ?? Date.now();
   const to = range.to ?? from + 7 * 86400000;
   if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440 ||
@@ -179,20 +179,29 @@ export function readOwnerCalendar(ctx, range) {
       !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to <= from) {
     return { error: '请提供有效的查询时间、会议时长和间隔分钟数' };
   }
+  if (!Array.isArray(exclude) || exclude.length > 60 || exclude.some(item =>
+    !Number.isSafeInteger(item?.from) || !Number.isSafeInteger(item?.to) || item.to <= item.from)) {
+    return { error: '请提供有效的避开时段，最多 60 段' };
+  }
   const buffer = bufferMinutes * 60000;
   const calendar = requestPhoneCalendar(DATA_DIR, { from: from - buffer, to: to + buffer });
   if (calendar.error) return calendar;
   const { coverage, truncated, requestedSync, timeZone, receivedAt, events, completedSegments, totalSegments } = calendar;
   return {
     requested: { from, to }, coverage, truncated, requestedSync, timeZone, receivedAt, completedSegments, totalSegments,
-    ...(coverage === 'full' && !truncated ? { available: findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes }) } : {})
+    ...(coverage === 'full' && !truncated ? {
+      available: findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude })
+    } : {})
   };
 }
 
-export function findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes }) {
+export function findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude = [] }) {
   const duration = durationMinutes * 60000;
   const buffer = bufferMinutes * 60000;
-  const busy = events.map(event => ({ start: event.start - buffer, end: event.end + buffer }))
+  const busy = [
+    ...events.map(event => ({ start: event.start - buffer, end: event.end + buffer })),
+    ...exclude.map(item => ({ start: item.from, end: item.to }))
+  ]
     .filter(event => event.end > from && event.start < to && event.start < event.end)
     .sort((a, b) => a.start - b.start);
   const windows = [];

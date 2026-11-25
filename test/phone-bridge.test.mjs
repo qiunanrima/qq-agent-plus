@@ -174,4 +174,8 @@ test('availability merges overlapping bookings and accounts for buffers outside 
   assert.deepEqual(findCalendarWindows(events, {
     from: 60 * minute, to: 220 * minute, durationMinutes: 20, bufferMinutes: 10
   }), [{ from: 65 * minute, to: 85 * minute }, { from: 150 * minute, to: 220 * minute }]);
+  assert.deepEqual(findCalendarWindows(events, {
+    from: 60 * minute, to: 220 * minute, durationMinutes: 20, bufferMinutes: 10,
+    exclude: [{ from: 160 * minute, to: 180 * minute }]
+  }), [{ from: 65 * minute, to: 85 * minute }, { from: 180 * minute, to: 220 * minute }]);
 });
