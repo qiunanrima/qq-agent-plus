@@ -55,6 +55,9 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.equal(stored.length, 1);
   assert.equal(stored[0].body, event.body);
   assert.equal(stored[0].postedAt, new Date(postedAt).toISOString());
+  assert.deepEqual(await (await send(token, [])).json(), { accepted: [] });
+  const sync = JSON.parse(await readFile(join(dataDir, 'phone-bridge', 'notification-sync.json'), 'utf8'));
+  assert.ok(Date.parse(sync.lastSyncAt) >= Date.parse(stored[0].receivedAt));
 
   const from = 1795564800000;
   const to = from + 86400000;

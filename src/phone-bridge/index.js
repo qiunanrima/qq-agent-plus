@@ -60,6 +60,7 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
       }
       writeStored(dataDir, 'inbox.json', [...inbox.values()].slice(-200));
     }
+    writeStored(dataDir, 'notification-sync.json', { lastSyncAt: new Date().toISOString() });
     return json(res, 200, { accepted: events.map(({ id }) => id) });
   }, { authorize });
 
@@ -136,9 +137,12 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
   const named = [...String(sender.text ?? '').matchAll(/微信|wechat|(?<![a-z])(?:qq|tim)(?![a-z])/gi)]
     .map(match => notificationApps.get(match[0].toLowerCase()));
   const requested = [...new Set(named)];
-  return selectPhoneNotifications(readStored(DATA_DIR, 'inbox.json', []), {
+  const result = selectPhoneNotifications(readStored(DATA_DIR, 'inbox.json', []), {
     ...args, app: args.app || (requested.length === 1 ? requested[0] : undefined)
   });
+  if (result.error) return result;
+  const sync = readStored(DATA_DIR, 'notification-sync.json', null);
+  return { ...result, lastSyncAt: sync?.lastSyncAt ?? result.lastReceivedAt };
 }
 
 export function readOwnerCalendar(ctx, { from, to }) {
