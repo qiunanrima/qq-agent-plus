@@ -23,7 +23,8 @@ const writeSkill = (root, dir, manifest, body = '# 流程\n\n按步骤做。\n')
 test('内置技能包可加载，字段与工具白名单有效', () => {
   const registry = new SkillRegistry();
   const ids = registry.list().map((skill) => skill.id);
-  assert.deepEqual(ids.sort(), ['chat-summary', 'comment-analysis', 'video-digest']);
+  assert.deepEqual(ids.sort(), ['chat-summary', 'comment-analysis', 'personal-briefing', 'video-digest']);
+  assert.ok(registry.get('personal-briefing').allowedTools.includes('phone_calendar'));
   assert.equal(registry.errors.length, 0);
   const summary = registry.get('chat-summary');
   assert.equal(summary.name, '群聊总结');

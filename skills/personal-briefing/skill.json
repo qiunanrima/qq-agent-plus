@@ -4,5 +4,5 @@
   "version": "1.0.0",
   "description": "在管理员私聊按当次授权汇总手机通知、日程、邮件和工作区资料。",
   "allowedTools": ["phone_notifications", "phone_calendar", "personal_mail_search", "linux_find_workspace_files", "linux_read_workspace_material", "send_message"],
-  "triggers": ["每日秘书", "会前准备", "汇总手机通知"]
+  "triggers": ["每日秘书", "会前准备", "会要准备什么", "会议要准备什么", "汇总手机通知"]
 }

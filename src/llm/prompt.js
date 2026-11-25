@@ -758,6 +758,13 @@ export function buildUserPrompt(ctx) {
       const lines = skills.slice(0, 8).map((skill) =>
         `- ${sanitizeUserText(skill.name)}（${skill.id}）：${sanitizeUserText(skill.description)}`);
       snapshotParts.push(`【可用技能】\n${lines.join('\n')}\n用户要求按流程/按方法做事时，先 skill_list 确认，再 skill_use 选一个；**在 skill_use 之前不要调用技能里的其他工具**。技能只收窄工具，不改变安全规则。`);
+      if (!lifecycleContinuation) {
+        const request = String(ctx.triggerEntries?.filter(entry => entry && !entry.self).at(-1)?.text ?? '').toLowerCase();
+        const matching = skills.filter(skill => skill.triggers.some(trigger => request.includes(trigger.toLowerCase())));
+        if (matching.length) {
+          parts.push(`本轮用户原话匹配已启用的工作流：${matching.map(skill => skill.id).join('、')}。若语义符合当前请求，先调用 skill_use，再执行工作流。`);
+        }
+      }
     }
   } catch { /* 技能目录读失败不影响聊天 */ }
 
