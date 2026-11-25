@@ -51,7 +51,9 @@ def handle(req):
     if req['action'] != 'exec' or not isinstance(req.get('command'), str) or len(req['command'].encode()) > 8192:
         raise ValueError('invalid command')
     with subprocess.Popen(['/usr/bin/docker', 'exec', '-u', '0', TARGET,
-                           '/usr/bin/timeout', '-k', '2', '30', '/bin/sh', '-c', req['command']],
+                           '/usr/bin/timeout', '-k', '2', '30', '/bin/sh', '-c',
+                           'mkdir -p /workspace && cd /workspace && exec /bin/sh -c "$1"',
+                           'workspace', req['command']],
                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
         output = bytearray()
         truncated = False

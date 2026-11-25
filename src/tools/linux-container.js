@@ -41,7 +41,7 @@ export function containerTools(getConfig, turn) {
   if (!containerAllowed(getConfig(), turn)) return [];
   const tools = [{
     name: 'linux_shell',
-    description: '在管理员的持久 Linux 容器内以 root 运行 shell 命令，可访问公网。仅按管理员本轮指示操作。超时或连接中断后先检查状态。',
+    description: '在管理员的持久 Linux 容器 /workspace 中以 root 运行 shell 命令，可访问公网。QQ 附件在 inbox/ 下。仅按管理员本轮指示操作。超时或连接中断后先检查状态。',
     parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
     execute: async (ctx, { command }) => {
       if (!containerAllowed(getConfig(), turn)) return { content: '容器访问已关闭', isError: true };
