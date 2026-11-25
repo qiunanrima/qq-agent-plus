@@ -42,8 +42,12 @@ test('workspace material reads stay within the authorized folder and bound the e
   const folder = '/workspace/client-project';
   const request = '在 /workspace/client-project 找会前资料';
   assert.match(workspaceMaterialCommand(folder, folder + "/review's.csv", request), /head -c 8193/);
+  const pdf = workspaceMaterialCommand(folder, folder + '/invoice.pdf', request);
+  assert.match(pdf, /test "\$file" = .*invoice\.pdf/);
+  assert.match(pdf, /timeout 8s pdftotext -f 1 -l 8/);
+  assert.match(pdf, /head -c 8193/);
   for (const path of [folder + '-other/q.csv', folder + '/../q.csv', folder + '/.private/q.txt',
-    folder + '/x.pdf', folder + '/x\ny.txt', folder + '/a/b/c/d.txt']) {
+    folder + '/../x.pdf', folder + '/x\ny.txt', folder + '/a/b/c/d.txt']) {
     assert.equal(workspaceMaterialCommand(folder, path, request), null);
   }
   assert.equal(workspaceMaterialCommand(folder, folder + '/quote.md', '只查日历'), null);

@@ -7,3 +7,5 @@
 移除接入时先在控制台关闭容器，再停用 `qq-agent-linux-container.socket`。保留 Docker 容器即可保留文件。
 
 命令从容器内的 /workspace 开始执行，导入的 QQ 附件位于其 inbox 子目录。
+
+安装了 `poppler-utils` 的工作区容器支持从本轮明确指定的目录读取文字型 PDF。文件最多 16 MiB，读取前 8 页并返回最多 8 KiB 文字。扫描件需要另行识别。
