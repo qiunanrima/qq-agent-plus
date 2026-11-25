@@ -11,6 +11,7 @@ process.on('exit', () => { try { fs.rmSync(__dir, { recursive: true, force: true
 const { DEFAULT_CONFIG, updateConfig } = await import('../src/core/config.js');
 const { SkillRegistry, resetSkillRegistryForTests, skillBlocksTool, skillGateMessage } = await import('../src/skills/registry.js');
 const { buildToolDefs, executeTool } = await import('../src/tools/tools-core.js');
+const { executeTool: dispatchTool } = await import('../src/tools/tools.js');
 
 const writeSkill = (root, dir, manifest, body = '# 流程\n\n按步骤做。\n') => {
   const target = path.join(root, dir);
@@ -30,6 +31,44 @@ test('内置技能包可加载，字段与工具白名单有效', () => {
   assert.equal(summary.name, '群聊总结');
   assert.ok(summary.allowedTools.includes('send_message'));
   assert.match(summary.instructions, /不要引用私聊内容/);
+});
+
+test('personal briefing reads only matching synced phone notifications in the owner chat', async t => {
+  const token = process.env.QQ_AGENT_PHONE_TOKEN;
+  process.env.QQ_AGENT_PHONE_TOKEN = 'a'.repeat(64);
+  t.after(() => {
+    if (token === undefined) delete process.env.QQ_AGENT_PHONE_TOKEN;
+    else process.env.QQ_AGENT_PHONE_TOKEN = token;
+  });
+  const owner = '12345';
+  const chatKey = 'private:' + owner;
+  updateConfig({
+    admin: { ownerUin: owner },
+    skills: { enabled: true, enabledIds: [], perChat: { __replace__: { [chatKey]: ['personal-briefing'] } } }
+  });
+  const dir = path.join(__dir, 'phone-bridge');
+  fs.mkdirSync(dir, { recursive: true });
+  const receivedAt = '2026-11-26T01:00:00.000Z';
+  fs.writeFileSync(path.join(dir, 'inbox.json'), JSON.stringify([
+    { source: 'com.tencent.mm', title: '微信通知', body: '样例', receivedAt },
+    { source: 'com.tencent.mobileqq', title: 'QQ 通知', body: '样例', receivedAt },
+    { source: 'com.example.other', title: '其他应用', body: '样例', receivedAt }
+  ]));
+  fs.writeFileSync(path.join(dir, 'notification-sync.json'), JSON.stringify({ lastSyncAt: '2026-11-26T01:05:00.000Z' }));
+  const defs = buildToolDefs();
+  const ctx = { chatKey, session: {}, triggerEntries: [{ senderId: owner, text: '汇总手机通知，看看微信' }] };
+  const active = await dispatchTool(defs, ctx, 'skill_use', '{"id":"personal-briefing"}');
+  assert.equal(active.isError, undefined);
+  const read = await dispatchTool(defs, ctx, 'phone_notifications', '{}');
+  assert.equal(read.isError, undefined);
+  const parsed = JSON.parse(read.content);
+  assert.deepEqual(parsed.events.map(event => event.source), ['com.tencent.mm']);
+  assert.equal(parsed.lastSyncAt, '2026-11-26T01:05:00.000Z');
+  ctx.triggerEntries[0].text = '汇总微信和 QQ 通知';
+  const multiple = JSON.parse((await dispatchTool(defs, ctx, 'phone_notifications', '{}')).content);
+  assert.deepEqual(multiple.events.map(event => event.source).sort(), ['com.tencent.mm', 'com.tencent.mobileqq']);
+  const group = await dispatchTool(defs, { ...ctx, chatKey: 'group:1' }, 'phone_notifications', '{}');
+  assert.equal(group.isError, true);
 });
 
 test('技能 manifest 校验：坏 id、超长正文、缺 SKILL.md 都会被拒绝', () => {

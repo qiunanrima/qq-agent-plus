@@ -126,9 +126,12 @@ const notificationApps = new Map([
   ['qq', 'com.tencent.mobileqq'], ['tim', 'com.tencent.tim']
 ]);
 
-export function selectPhoneNotifications(inbox, { app, query, since, until, limit } = {}) {
-  const name = typeof app === 'string' ? app.trim().toLowerCase() : '';
-  const source = notificationApps.get(name) ?? name;
+export function selectPhoneNotifications(inbox, { app, apps, query, since, until, limit } = {}) {
+  const names = Array.isArray(apps) && apps.length ? apps : (app ? [app] : []);
+  const sources = new Set(names.filter(name => typeof name === 'string').map(name => {
+    const normalized = name.trim().toLowerCase();
+    return notificationApps.get(normalized) ?? normalized;
+  }).filter(Boolean));
   const keyword = typeof query === 'string' ? query.trim().toLowerCase().slice(0, 100) : '';
   const bound = value => Number.isSafeInteger(value) ? value : null;
   const from = bound(since);
@@ -136,7 +139,7 @@ export function selectPhoneNotifications(inbox, { app, query, since, until, limi
   if (from !== null && to !== null && from >= to) return { error: '通知查询的结束时间必须晚于开始时间' };
 
   const matches = inbox.filter(event => {
-    if (source && event.source !== source) return false;
+    if (sources.size && !sources.has(event.source)) return false;
     const received = Date.parse(event.postedAt ?? event.receivedAt);
     if (from !== null && !(received >= from)) return false;
     if (to !== null && !(received < to)) return false;
@@ -161,7 +164,7 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
     .map(match => notificationApps.get(match[0].toLowerCase()));
   const requested = [...new Set(named)];
   const result = selectPhoneNotifications(readStored(DATA_DIR, 'inbox.json', []), {
-    ...args, app: args.app || (requested.length === 1 ? requested[0] : undefined)
+    ...args, apps: args.app || args.apps?.length ? args.apps : requested
   });
   if (result.error) return result;
   const sync = readStored(DATA_DIR, 'notification-sync.json', null);
