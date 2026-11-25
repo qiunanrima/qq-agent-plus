@@ -737,7 +737,7 @@ function buildApp({
     if (!/^\d{5,15}$/.test(owner || '')) throw new Error('Mail reminders require a configured owner');
     const chatKey = 'private:' + owner;
     if (reminders.list(chatKey, { includeDone: true }).some(item => item.createdBy === createdBy)) return;
-    reminders.add({ chatKey, createdBy, at: Date.now() + 6000, text });
+    reminders.add({ chatKey, createdBy, at: Date.now() + 6000, text, origin: 'personal-mail' });
   }
   const mailWatcher = createMailWatcher({
     dataDir: DATA_DIR,

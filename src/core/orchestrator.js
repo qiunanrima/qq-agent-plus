@@ -85,7 +85,7 @@ import { memesForPrompt } from '../memes/store.js';
 import { visibleImpressions, memoryVisibilityOf } from './memory-visibility.js';
 import { knowledgeEnabled } from '../knowledge/store.js';
 import { PersonaBackground } from '../persona-background/index.js';
-import { buildReminderNote, reminderNoteCost } from './reminders.js';
+import { buildReminderNote, isMailWorkflowReminder, reminderNoteCost } from './reminders.js';
 import { ZONE_OFFSET_MS, randInt, createEventBus, todayKey, sanitizeUserText } from './util.js';
 import { readFollowUpAt, readProactiveAttempts, readProactiveState, writeFollowUpAt, writeProactiveAttempt, writeProactiveChatAttempts, writePrivateInitiative } from './proactive-state.js';
 import { buildSystemPrompt, buildUserPrompt, isAtMe, resolveContextTier } from '../llm/prompt.js';
@@ -3115,7 +3115,7 @@ export class Orchestrator {
         continue;
       }
       this.reminders.markExpired(item.id, now);
-      log.info(`[reminder] 过期作废（迟到超过 12 小时）：${item.chatKey} ${String(item.text).slice(0, 30)}`);
+      log.info(`[reminder] 过期作废（迟到超过 12 小时）：${item.chatKey} ${isMailWorkflowReminder(item) ? '邮件工作流' : String(item.text).slice(0, 30)}`);
     }
     // 同一会话多条同时到期：**合并成一条 note 只排一次唤醒** —— scheduledWakes 每会话单槽，
     // 逐条排会互相覆盖：先排的被顶掉，却已经标记 fired，内容就永久丢了（2026-09-28 审查 P2）。
@@ -3256,7 +3256,8 @@ export class Orchestrator {
           if (delivered) {
             settleAll('sent', { deliveredAt: Date.now() });
             for (const pair of batch) this.reminders.markFired(pair.it.id, now);
-            log.info(`[reminder] 已播报 ${batch.length} 条：${chatKey} ${batch.map((pair) => String(pair.it.text)).join(' / ')}`);
+            log.info(`[reminder] 已播报 ${batch.length} 条：${chatKey} ${batch.map(({ it }) =>
+              isMailWorkflowReminder(it) ? '邮件工作流' : String(it.text)).join(' / ')}`);
             return;
           }
           // 发送结果不确定（outbox unknown）时绝不自动重试：换一轮 lease 后
@@ -3321,7 +3322,8 @@ export class Orchestrator {
         });
       const deferred = items.length - chosen.length;
       // 全文进日志（单条正文 ≤200 字）：先记下派发内容，播报结果在 then/catch 里补。
-      log.info(`[reminder] 到点派发 ${batch.length} 条：${chatKey} ${batch.map((pair) => String(pair.it.text)).join(' / ')}`
+      log.info(`[reminder] 到点派发 ${batch.length} 条：${chatKey} ${batch.map(({ it }) =>
+        isMailWorkflowReminder(it) ? '邮件工作流' : String(it.text)).join(' / ')}`
         + (deferred > 0 ? `（另有 ${deferred} 条本轮装不进提示词，30 秒后继续派发）` : ''));
     }
   }
