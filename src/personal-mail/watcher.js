@@ -36,11 +36,21 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
   let stopped = true;
 
   function save(state) {
-    fs.writeFileSync(file + '.tmp', JSON.stringify(state), { mode: 0o600 });
+    fs.writeFileSync(file + '.tmp', JSON.stringify(state), { mode: 0o600, flush: true });
     fs.renameSync(file + '.tmp', file);
   }
 
-  async function tick(signal) {
+  async function enqueuePending(state, key, provider) {
+    const entry = state[key];
+    if (!entry?.pending) return;
+    const { batch, important } = entry.pending;
+    // The reminder queue deduplicates this hand-off ID across restarts.
+    await notify(provider, batch, important);
+    delete entry.pending;
+    save(state);
+  }
+
+  async function checkOnce(signal = new AbortController().signal) {
     const env = runtimeEnv();
     let state = {};
     try { state = JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -51,6 +61,7 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
       try {
         const account = provider === 'qq' ? env.QQ_AGENT_QQ_MAIL_USER : env.QQ_AGENT_GMAIL_REFRESH_TOKEN;
         const key = provider + ':' + digest(account);
+        await enqueuePending(state, key, provider);
         const previous = state[key];
         const messages = await poll(provider, env, { baseline: !previous, seen: new Set(previous?.seen) }, signal);
         if (!messages.length && previous) continue;
@@ -59,16 +70,17 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
           : [];
         signal.throwIfAborted();
         const important = rows.filter(row => row.category !== 'routine');
-        if (important.length) {
-          const batch = digest(JSON.stringify([key, messages.map(message => message.id)])).slice(0, 24);
-          notify(provider, batch, important);
-        }
         state[key] = {
           seen: [...new Set([...messages.map(message => message.id), ...(previous?.seen ?? [])])].slice(0, 256),
           summaries: [...rows.map((row, index) => ({ ...row, receivedAt: messages[index].receivedAt })),
             ...(previous?.summaries ?? [])].slice(0, 100)
         };
+        if (important.length) {
+          const batch = digest(JSON.stringify([key, messages.map(message => message.id)])).slice(0, 24);
+          state[key].pending = { batch, important };
+        }
         save(state);
+        await enqueuePending(state, key, provider);
       } catch {
         if (!signal.aborted) log(provider + ' 邮件整理未完成，将在下轮检查。');
       }
@@ -77,7 +89,7 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
 
   async function run() {
     controller = new AbortController();
-    try { await tick(controller.signal); }
+    try { await checkOnce(controller.signal); }
     catch { if (!stopped) log('邮件整理状态读取失败。'); }
     finally {
       controller = undefined;
@@ -86,6 +98,7 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
   }
 
   return {
+    checkOnce,
     start() {
       if (!stopped || controller || process.env.QQ_AGENT_MAIL_TRIAGE !== '1') return;
       stopped = false;
