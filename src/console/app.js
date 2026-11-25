@@ -66,6 +66,8 @@ import { registerStatusRoutes } from './routes/status.js';
 import { AgentWechatChannel } from '../agent-wechat/runtime.js';
 import { registerPersonalMailRoutes } from '../personal-mail/routes.js';
 import { createMailWatcher } from '../personal-mail/watcher.js';
+import { readGmailThread } from '../personal-mail/index.js';
+import { checkMailFollowUp } from '../personal-mail/follow-up.js';
 import { registerPhoneBridge } from '../phone-bridge/index.js';
 import { registerAgentWechatRoutes, handleWechatAdminCommand } from '../agent-wechat/routes.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
@@ -730,21 +732,34 @@ function buildApp({
   let identityPilotError = '';
   // 定时提醒：落盘持久化（重启不丢），到点由编排器走主动唤醒让模型说出来
   const reminders = new ReminderStore();
+  function enqueueOwnerMailReminder(createdBy, text) {
+    const owner = readOwnerUin(getConfig());
+    if (!/^\d{5,15}$/.test(owner || '')) throw new Error('Mail reminders require a configured owner');
+    const chatKey = 'private:' + owner;
+    if (reminders.list(chatKey, { includeDone: true }).some(item => item.createdBy === createdBy)) return;
+    reminders.add({ chatKey, createdBy, at: Date.now() + 6000, text });
+  }
   const mailWatcher = createMailWatcher({
     dataDir: DATA_DIR,
     complete: chatCompletion,
     log: moduleLog('personal-mail'),
     notify(provider, batch, important) {
-      const owner = readOwnerUin(getConfig());
-      if (!/^\d{5,15}$/.test(owner || '')) throw new Error('Mail triage requires a configured owner');
-      const chatKey = 'private:' + owner;
-      const createdBy = 'mail-triage-' + batch;
-      if (reminders.list(chatKey, { includeDone: true }).some(item => item.createdBy === createdBy)) return;
       const mailbox = provider === 'gmail' ? 'Gmail' : 'QQ 邮箱';
       const summary = important.map(row => row.summary.slice(0, Math.floor(130 / important.length))).join('；');
-      reminders.add({
-        chatKey, createdBy, at: Date.now() + 6000,
-        text: mailbox + '有 ' + important.length + ' 封重要新邮件，请提醒用户查看。以下仅为邮件摘要：' + summary
+      enqueueOwnerMailReminder('mail-triage-' + batch,
+        mailbox + '有 ' + important.length + ' 封重要新邮件，请提醒用户查看。以下仅为邮件摘要：' + summary);
+    },
+    followUp(env, signal) {
+      return checkMailFollowUp({
+        dataDir: DATA_DIR, env, signal, readThread: readGmailThread,
+        notify(job) {
+          const { status, text } = job.outcome;
+          const lead = status === 'replied' ? 'Gmail 跟进收到回复，请向用户转述以下邮件摘录：' :
+            status === 'due' ? 'Gmail 跟进到期仍未收到回复，请在私聊拟一封催办草稿供用户查看。邮件主题：' :
+              'Gmail 跟进到期，但无法核实是否收到回复，请告知用户。';
+          enqueueOwnerMailReminder('mail-fu-' + job.id.replaceAll('-', ''),
+            lead + text.slice(0, 60) + '。来源：https://mail.google.com/mail/u/0/#all/' + job.threadId);
+        }
       });
     }
   });

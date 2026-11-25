@@ -27,7 +27,7 @@ export async function summarizeInbox(messages, complete, signal) {
   });
 }
 
-export function createMailWatcher({ dataDir, complete, notify, log, poll = pollPersonalInbox, runtimeEnv = () => personalMailSettings.runtimeEnv() }) {
+export function createMailWatcher({ dataDir, complete, notify, followUp, log, poll = pollPersonalInbox, runtimeEnv = () => personalMailSettings.runtimeEnv() }) {
   const file = triageFile(dataDir);
   let timer;
   let controller;
@@ -86,7 +86,10 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
 
   async function run() {
     controller = new AbortController();
-    try { await checkOnce(controller.signal); }
+    try {
+      if (process.env.QQ_AGENT_MAIL_TRIAGE === '1') await checkOnce(controller.signal);
+      if (!controller.signal.aborted && followUp) await followUp(runtimeEnv(), controller.signal);
+    }
     catch { if (!stopped) log('邮件整理状态读取失败。'); }
     finally {
       controller = undefined;
@@ -97,7 +100,7 @@ export function createMailWatcher({ dataDir, complete, notify, log, poll = pollP
   return {
     checkOnce,
     start() {
-      if (!stopped || controller || process.env.QQ_AGENT_MAIL_TRIAGE !== '1') return;
+      if (!stopped || controller || (!followUp && process.env.QQ_AGENT_MAIL_TRIAGE !== '1')) return;
       stopped = false;
       timer = setTimeout(run, 1000).unref();
     },
