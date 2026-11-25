@@ -1,6 +1,7 @@
 import { personalMailTool } from '../personal-mail/index.js';
 import { phoneBridgeEnabled, ownerCalendarWrite, readOwnerCalendar, readOwnerPhoneNotifications } from '../phone-bridge/index.js';
-import { reconcileExpenses } from './expense-reconcile.js';
+import { expenseCsv, reconcileExpenses } from './expense-reconcile.js';
+import { containerRequest } from './linux-container.js';
 import { readOwnerUin } from '../core/notify-owner.js';
 import { resolvePersona } from '../personas.js';
 import { historySearchTool } from './history-search.js';
@@ -3014,22 +3015,39 @@ export function buildToolDefs() {
     ...personalMailTool(),
     {
       name: 'expense_reconcile',
-      description: '核对已从授权文件或邮件读到的人民币票据。只传有凭据的金额和票据编号。相同编号只计一次；冲突或缺资料列入待复核。按分计算合计。',
+      description: '核对已从授权文件或邮件读到的人民币票据。相同编号只计一次，冲突或缺资料列入待复核。用户要求导出时可设置 exportCsv，将清单保存到独立工作区。',
       parameters: { type: 'object', required: ['entries'], properties: {
+        exportCsv: { type: 'boolean', description: '按用户要求导出报销核对清单 CSV' },
         entries: { type: 'array', maxItems: 100, items: { type: 'object', required: ['source'], properties: {
           source: { type: 'string', maxLength: 320, description: '工作区路径或邮件来源' },
           receiptId: { type: 'string', maxLength: 128, description: '票面可核实的唯一编号，未知则省略' },
           amount: { type: 'string', description: '人民币金额，例如 123.45，未知则省略' }
         } } }
       } },
-      async execute(ctx, { entries }) {
+      async execute(ctx, { entries, exportCsv }) {
         const owner = readOwnerUin(getConfig());
         const sender = ctx.triggerEntries?.filter(entry => entry && !entry.self).at(-1);
         if (!owner || ctx.chatKey !== 'private:' + owner || String(sender?.senderId ?? '') !== owner) {
           return err('仅在管理员 QQ 私聊可核对票据', { reportIncident: false });
         }
         const result = reconcileExpenses(entries);
-        return result.error ? err(result.error, { reportIncident: false }) : ok(sanitizeDeep(result));
+        if (result.error) return err(result.error, { reportIncident: false });
+        if (exportCsv === true) {
+          if (!/导出|保存|生成.{0,8}(?:表|文件)|报销单|填.{0,8}模板/.test(String(sender.text ?? ''))) {
+            return ok(sanitizeDeep({ ...result, exportStatus: '本轮未明确要求导出' }));
+          }
+          if (getConfig().linuxContainer?.enabled !== true) {
+            return ok(sanitizeDeep({ ...result, exportStatus: '独立工作区未启用' }));
+          }
+          const data = Buffer.from(expenseCsv(result));
+          try {
+            const file = await containerRequest({ action: 'import', name: '报销核对清单.csv', size: data.length }, ctx.signal, data);
+            return ok(sanitizeDeep({ ...result, file: file.path }));
+          } catch {
+            return ok(sanitizeDeep({ ...result, exportStatus: '导出结果未确认' }));
+          }
+        }
+        return ok(sanitizeDeep(result));
       }
     },
     ...(phoneBridgeEnabled() ? [{

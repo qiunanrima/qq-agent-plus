@@ -36,3 +36,27 @@ export function reconcileExpenses(entries) {
   }
   return { currency: 'CNY', total: amount(total), receipts, review };
 }
+
+export function expenseCsv(result) {
+  const issues = {
+    missing_source: '缺少来源',
+    missing_receipt_id: '缺少票据编号',
+    invalid_amount: '金额缺失或格式不正确',
+    conflicting_amounts: '金额冲突'
+  };
+  const rows = [
+    ['状态', '票据编号', '金额（CNY）', '来源', '说明'],
+    ...result.receipts.map(row => ['已核对', row.receiptId, row.amount, row.sources.join(' | '), '']),
+    ...result.review.map(row => [
+      '待复核', row.receiptId ?? '', '', row.sources?.join(' | ') ?? row.source ?? '',
+      [issues[row.issue], ...(row.amounts ?? [])].join(' ')
+    ]),
+    ['合计', '', result.total, '', '仅含已核对票据']
+  ];
+  const cell = value => {
+    const text = String(value).replace(/[\r\n\t\u0000-\u001f]/gu, ' ');
+    const literal = /^\s*[=+\-@]/u.test(text) ? "'" + text : text;
+    return '"' + literal.replaceAll('"', '""') + '"';
+  };
+  return '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
+}

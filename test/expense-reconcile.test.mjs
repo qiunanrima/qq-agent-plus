@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { reconcileExpenses } from '../src/tools/expense-reconcile.js';
+import { expenseCsv, reconcileExpenses } from '../src/tools/expense-reconcile.js';
 
 test('expense reconciliation sums exact cents and isolates conflicts and missing evidence', () => {
   const result = reconcileExpenses([
@@ -16,4 +16,15 @@ test('expense reconciliation sums exact cents and isolates conflicts and missing
   assert.deepEqual(result.receipts[0].sources, ['mail', 'workspace']);
   assert.deepEqual(result.review.map(row => row.issue).sort(),
     ['conflicting_amounts', 'invalid_amount', 'missing_receipt_id']);
+});
+
+test('CSV includes the audited total and treats spreadsheet formulas as literal text', () => {
+  const csv = expenseCsv(reconcileExpenses([
+    { receiptId: '=1+1', amount: '12.34', source: 'receipt,"A"' },
+    { source: 'needs review' }
+  ]));
+  assert.ok(csv.startsWith('\uFEFF'));
+  assert.ok(csv.includes('"\'=1+1","12.34","receipt,""A"""'));
+  assert.ok(csv.includes('"待复核"'));
+  assert.ok(csv.includes('"合计","","12.34"'));
 });
