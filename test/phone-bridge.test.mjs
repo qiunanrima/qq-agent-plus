@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRouter } from '../src/console/router.js';
-import { registerPhoneBridge, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
+import { registerPhoneBridge, requestPhoneCalendar, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
 
 test('phone upload uses its own credential and stores a retried event only once', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-phone-bridge-'));
@@ -73,6 +73,21 @@ test('phone upload uses its own credential and stores a retried event only once'
   const snapshot = JSON.parse(await readFile(join(dataDir, 'phone-bridge', 'calendar.json'), 'utf8'));
   assert.equal(snapshot.from, from);
   assert.deepEqual(snapshot.events, []);
+  const distant = { from: to + 86400000, to: to + 2 * 86400000 };
+  const pending = requestPhoneCalendar(dataDir, distant);
+  assert.equal(pending.requestedSync, 'pending');
+  assert.equal(requestPhoneCalendar(dataDir, distant).requestId, pending.requestId);
+  const readRequest = await fetch(base + '/api/phone-bridge/calendar', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: JSON.stringify({ mode: 'read-request' })
+  });
+  assert.deepEqual(await readRequest.json(), { request: { id: pending.requestId, ...distant } });
+  const readResult = await fetch(base + '/api/phone-bridge/calendar', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ requestId: pending.requestId, ...distant, timeZone: 'Asia/Shanghai', events: [] })
+  });
+  assert.equal(readResult.status, 200);
+  assert.equal(requestPhoneCalendar(dataDir, distant).coverage, 'full');
+  assert.equal(requestPhoneCalendar(dataDir, { from, to }).from, from);
 
   const command = { id: randomUUID(), title: 'Queued meeting', location: '',
     start: Date.now() + 60000, end: Date.now() + 120000, createdAt: Date.now(), status: 'queued' };

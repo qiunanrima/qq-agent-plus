@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { DATA_DIR, getConfig } from '../core/config.js';
 
 const endpoint = '/api/phone-bridge/notifications';
+const calendarReadFile = 'calendar-reads.json';
+const calendarReadMaxSpan = 45 * 86400000;
+const calendarReadLifetime = 86400000;
 const digest = (value) => createHash('sha256').update(value).digest();
 
 export function phoneBridgeEnabled() {
@@ -66,12 +69,19 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
 
   router.add('POST', '/api/phone-bridge/calendar', async (req, res) => {
     let snapshot;
+    let requestId;
     try {
       const payload = await readBody(req, 256 * 1024);
       if (payload?.mode === 'commands') return syncCalendarCommands(dataDir, payload, json, res);
+      if (payload?.mode === 'read-request') {
+        const request = readStored(dataDir, calendarReadFile, []).find(item =>
+          !item.snapshot && Date.now() - item.createdAt < calendarReadLifetime);
+        return json(res, 200, { request: request ? { id: request.id, from: request.from, to: request.to } : null });
+      }
+      requestId = payload?.requestId;
       const { from, to, timeZone, events } = payload;
       const isTime = (value) => Number.isSafeInteger(value) && Math.abs(value) <= 8.64e15;
-      if (!isTime(from) || !isTime(to) || to <= from || to - from > 45 * 86400000 ||
+      if (!isTime(from) || !isTime(to) || to <= from || to - from > calendarReadMaxSpan ||
           typeof timeZone !== 'string' || timeZone.length > 80 ||
           !Array.isArray(events) || events.length > 300 || events.some((event) =>
             !event || !isTime(event.start) || !isTime(event.end) || event.end < event.start ||
@@ -80,12 +90,25 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
           )) throw new Error('invalid snapshot');
       snapshot = {
         from, to, timeZone, receivedAt: new Date().toISOString(),
+        ...(requestId !== undefined && payload.truncated === true ? { truncated: true } : {}),
         events: events.map(({ start, end, title, location, allDay }) => ({ start, end, title, location, allDay }))
       };
     } catch {
       return json(res, 400, { error: '日程快照格式无效' });
     }
-    writeStored(dataDir, 'calendar.json', snapshot);
+    if (requestId !== undefined) {
+      const requests = readStored(dataDir, calendarReadFile, []);
+      const request = requests.find(item => item.id === requestId);
+      if (!request || request.from !== snapshot.from || request.to !== snapshot.to) {
+        return json(res, 409, { error: '日程查询与请求不匹配' });
+      }
+      if (!request.snapshot) {
+        request.snapshot = snapshot;
+        writeStored(dataDir, calendarReadFile, requests);
+      }
+    } else {
+      writeStored(dataDir, 'calendar.json', snapshot);
+    }
     return json(res, 200, { accepted: snapshot.events.length });
   }, { authorize });
 }
@@ -145,9 +168,28 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
   return { ...result, lastSyncAt: sync?.lastSyncAt ?? result.lastReceivedAt };
 }
 
-export function readOwnerCalendar(ctx, { from, to }) {
+export function readOwnerCalendar(ctx, range) {
   if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档/)) return null;
-  return selectPhoneCalendar(readStored(DATA_DIR, 'calendar.json', null), { from, to });
+  return requestPhoneCalendar(DATA_DIR, range);
+}
+
+export function requestPhoneCalendar(dataDir, range, now = Date.now()) {
+  const ordinary = selectPhoneCalendar(readStored(dataDir, 'calendar.json', null), range, now);
+  if (ordinary.error || ordinary.coverage === 'full') return ordinary;
+  const { from, to } = ordinary.requested;
+  if (to - from > calendarReadMaxSpan) return { ...ordinary, requestedSync: 'range_too_wide' };
+  const requests = readStored(dataDir, calendarReadFile, [])
+    .filter(item => now - item.createdAt < calendarReadLifetime);
+  const same = requests.find(item => item.from === from && item.to === to);
+  if (same) return same.snapshot
+    ? selectPhoneCalendar(same.snapshot, range, now)
+    : { ...ordinary, requestedSync: 'pending', requestId: same.id };
+  const covering = requests.find(item => item.snapshot && item.from <= from && item.to >= to);
+  if (covering) return selectPhoneCalendar(covering.snapshot, range, now);
+  if (requests.filter(item => !item.snapshot).length >= 12) return { ...ordinary, requestedSync: 'queue_full' };
+  const request = { id: randomUUID(), from, to, createdAt: now };
+  writeStored(dataDir, calendarReadFile, [...requests.slice(-23), request]);
+  return { ...ordinary, requestedSync: 'pending', requestId: request.id };
 }
 
 export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now()) {
@@ -165,7 +207,8 @@ export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now()) {
   const events = coverage === 'none' ? [] : snapshot.events.filter(event =>
     event.start < overlapTo && (event.end > overlapFrom || (event.end === event.start && event.start >= overlapFrom))
   );
-  return { ...snapshot, synced: true, requested, coverage, events: events.slice(0, 30), truncated: events.length > 30 };
+  return { ...snapshot, synced: true, requested, coverage, events: events.slice(0, 30),
+    truncated: Boolean(snapshot.truncated) || events.length > 30 };
 }
 
 function syncCalendarCommands(dataDir, payload, json, res) {
