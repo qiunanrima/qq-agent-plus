@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR, getConfig } from '../core/config.js';
@@ -10,13 +10,28 @@ export function phoneBridgeEnabled() {
   return /^[a-f0-9]{64}$/i.test(process.env.QQ_AGENT_PHONE_TOKEN ?? '');
 }
 
-function readInbox(dataDir) {
+function readStored(dataDir, file, fallback) {
   try {
-    return JSON.parse(readFileSync(join(dataDir, 'phone-bridge', 'inbox.json'), 'utf8'));
+    return JSON.parse(readFileSync(join(dataDir, 'phone-bridge', file), 'utf8'));
   } catch (error) {
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT') return fallback;
     throw error;
   }
+}
+
+function writeStored(dataDir, file, data) {
+  const dir = join(dataDir, 'phone-bridge');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const target = join(dir, file);
+  writeFileSync(target + '.tmp', JSON.stringify(data), { mode: 0o600 });
+  renameSync(target + '.tmp', target);
+}
+
+function authorize(req) {
+  return phoneBridgeEnabled() && timingSafeEqual(
+    digest(String(req.headers.authorization ?? '')),
+    digest('Bearer ' + process.env.QQ_AGENT_PHONE_TOKEN)
+  );
 }
 
 export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR }) {
@@ -35,32 +50,125 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
       return json(res, 400, { error: '通知数据格式无效' });
     }
     if (events.length) {
-      const inbox = new Map(readInbox(dataDir).map((event) => [event.id, event]));
+      const inbox = new Map(readStored(dataDir, 'inbox.json', []).map((event) => [event.id, event]));
       for (const { id, source, title, body } of events) {
         if (!inbox.has(id)) inbox.set(id, { id, source, title, body, receivedAt: new Date().toISOString() });
       }
-      const dir = join(dataDir, 'phone-bridge');
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const target = join(dir, 'inbox.json');
-      writeFileSync(target + '.tmp', JSON.stringify([...inbox.values()].slice(-200)), { mode: 0o600 });
-      renameSync(target + '.tmp', target);
+      writeStored(dataDir, 'inbox.json', [...inbox.values()].slice(-200));
     }
     return json(res, 200, { accepted: events.map(({ id }) => id) });
-  }, {
-    authorize(req) {
-      return phoneBridgeEnabled() && timingSafeEqual(
-        digest(String(req.headers.authorization ?? '')),
-        digest('Bearer ' + process.env.QQ_AGENT_PHONE_TOKEN)
-      );
+  }, { authorize });
+
+  router.add('POST', '/api/phone-bridge/calendar', async (req, res) => {
+    let snapshot;
+    try {
+      const payload = await readBody(req, 256 * 1024);
+      if (payload?.mode === 'commands') return syncCalendarCommands(dataDir, payload, json, res);
+      const { from, to, timeZone, events } = payload;
+      const isTime = (value) => Number.isSafeInteger(value) && Math.abs(value) <= 8.64e15;
+      if (!isTime(from) || !isTime(to) || to <= from || to - from > 45 * 86400000 ||
+          typeof timeZone !== 'string' || timeZone.length > 80 ||
+          !Array.isArray(events) || events.length > 300 || events.some((event) =>
+            !event || !isTime(event.start) || !isTime(event.end) || event.end < event.start ||
+            typeof event.allDay !== 'boolean' || typeof event.title !== 'string' || event.title.length > 160 ||
+            typeof event.location !== 'string' || event.location.length > 100
+          )) throw new Error('invalid snapshot');
+      snapshot = {
+        from, to, timeZone, receivedAt: new Date().toISOString(),
+        events: events.map(({ start, end, title, location, allDay }) => ({ start, end, title, location, allDay }))
+      };
+    } catch {
+      return json(res, 400, { error: '日程快照格式无效' });
     }
-  });
+    writeStored(dataDir, 'calendar.json', snapshot);
+    return json(res, 200, { accepted: snapshot.events.length });
+  }, { authorize });
+}
+
+function isOwnerRequest(ctx, pattern) {
+  const owner = String(getConfig().admin?.ownerUin ?? '');
+  const sender = ctx.triggerEntries?.filter((entry) => !entry?.self).at(-1);
+  return phoneBridgeEnabled() && /^[0-9]{5,15}$/.test(owner) &&
+      ctx.chatKey === 'private:' + owner && String(sender?.senderId ?? '') === owner &&
+      pattern.test(String(sender?.text ?? ''));
 }
 
 export function readOwnerPhoneNotifications(ctx, limit) {
-  const owner = String(getConfig().admin?.ownerUin ?? '');
-  const sender = ctx.triggerEntries?.filter((entry) => !entry?.self).at(-1);
-  if (!phoneBridgeEnabled() || !/^[0-9]{5,15}$/.test(owner) ||
-      ctx.chatKey !== 'private:' + owner || String(sender?.senderId ?? '') !== owner ||
-      !/(?:手机|微信|QQ|应用|系统).{0,12}通知|通知栏|通知收件箱/i.test(String(sender?.text ?? ''))) return null;
-  return readInbox(DATA_DIR).slice(-Math.max(1, Math.min(10, Number(limit) || 5))).reverse();
+  if (!isOwnerRequest(ctx, /(?:手机|微信|QQ|应用|系统).{0,12}通知|通知栏|通知收件箱/i)) return null;
+  return readStored(DATA_DIR, 'inbox.json', []).slice(-Math.max(1, Math.min(10, Number(limit) || 5))).reverse();
+}
+
+export function readOwnerCalendar(ctx, { from, to }) {
+  if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档/)) return null;
+  const snapshot = readStored(DATA_DIR, 'calendar.json', null);
+  if (!snapshot) return { synced: false };
+  const start = Number.isSafeInteger(from) ? from : Date.now();
+  const end = Number.isSafeInteger(to) ? to : start + 7 * 86400000;
+  const events = snapshot.events.filter((event) => event.start < end && event.end >= start);
+  return { ...snapshot, events: events.slice(0, 30), truncated: events.length > 30 };
+}
+
+function syncCalendarCommands(dataDir, payload, json, res) {
+  const { ready, results } = payload;
+  if (typeof ready !== 'boolean' || !Array.isArray(results) || results.length > 20 ||
+      results.some((item) => !item || !/^[a-f0-9-]{36}$/i.test(item.id ?? '') ||
+        !['written', 'failed', 'unknown'].includes(item.status))) {
+    return json(res, 400, { error: '日程回执格式无效' });
+  }
+  const jobs = readStored(dataDir, 'calendar-writes.json', []);
+  const now = Date.now();
+  let changed = false;
+  const acknowledged = [];
+  for (const { id, status } of results) {
+    const job = jobs.find((candidate) => candidate.id === id);
+    if (job?.status === 'dispatched') {
+      job.status = status;
+      job.updatedAt = now;
+      changed = true;
+    }
+    if (job?.status === status) acknowledged.push(id);
+  }
+  for (const job of jobs) {
+    if (job.status === 'queued' && (job.start <= now || now - job.createdAt > 86400000)) {
+      job.status = 'expired';
+      job.updatedAt = now;
+      changed = true;
+    }
+  }
+  const next = ready ? jobs.find((job) => job.status === 'queued') : null;
+  if (next) {
+    next.status = 'dispatched';
+    next.updatedAt = now;
+    changed = true;
+  }
+  if (changed) writeStored(dataDir, 'calendar-writes.json', jobs);
+  return json(res, 200, { acknowledged, command: next ?? null });
+}
+
+export function ownerCalendarWrite(ctx, args, dataDir = DATA_DIR) {
+  if (!isOwnerRequest(ctx, /日程|日历|会议|行程/)) return null;
+  const jobs = readStored(dataDir, 'calendar-writes.json', []);
+  if (args.action === 'status') {
+    return { jobs: jobs.slice(-10).reverse().map(({ id, title, status, start, updatedAt }) =>
+      ({ id, title, status, start, updatedAt })) };
+  }
+  if (args.action !== 'create' || !isOwnerRequest(ctx, /(?:新建|添加|加到|加进|记到|记进|定|建|排|创建).{0,16}(?:日程|日历|会议|行程)|(?:日程|日历).{0,12}(?:添加|新建|创建)/)) return null;
+  const title = typeof args.title === 'string' ? args.title.trim() : '';
+  const location = typeof args.location === 'string' ? args.location.trim() : '';
+  const { start, end } = args;
+  const now = Date.now();
+  if (!title || title.length > 160 || location.length > 100 ||
+      !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+      start <= now || end <= start || end - start > 86400000 || end > 8.64e15) {
+    return { error: '请提供准确的标题、未来开始时间和结束时间，日程最长 24 小时' };
+  }
+  const duplicate = jobs.find((job) => job.title === title && job.location === location &&
+    job.start === start && job.end === end && !['failed', 'expired'].includes(job.status));
+  if (duplicate) return { id: duplicate.id, status: duplicate.status };
+  const pending = jobs.filter((job) => job.status === 'queued' && job.start > now && now - job.createdAt < 86400000);
+  if (pending.length >= 20) return { error: '手机待处理日程队列已满' };
+  const last = jobs.filter((job) => !pending.includes(job)).slice(-100);
+  const job = { id: randomUUID(), title, location, start, end, createdAt: now, updatedAt: now, status: 'queued' };
+  writeStored(dataDir, 'calendar-writes.json', [...last, ...pending, job]);
+  return { id: job.id, status: job.status, note: '待手机领取并确认写入，当前尚未写入日历。' };
 }
