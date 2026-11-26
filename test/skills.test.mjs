@@ -74,7 +74,7 @@ test('personal briefing reads only matching synced phone notifications in the ow
   fs.writeFileSync(path.join(dir, 'calendar.json'), JSON.stringify({
     from: start - 60000, to: start + 120000, receivedAt, events: [event]
   }));
-  const editContext = { chatKey, triggerEntries: [{ senderId: owner, text: '把现有会议推迟一分钟' }] };
+  const editContext = { chatKey, triggerEntries: [{ senderId: owner, text: '行，就照刚才说的改' }] };
   const edit = await dispatchTool(defs, editContext, 'phone_calendar_write', JSON.stringify({
     action: 'update', eventId: event.eventId, originalStart: start, start: start + 60000
   }));
@@ -83,6 +83,12 @@ test('personal briefing reads only matching synced phone notifications in the ow
   assert.equal(job.operation, 'update');
   assert.equal(job.end, start + 120000);
   assert.equal(job.expected.start, start);
+  editContext.triggerEntries[0].text = '好，帮我加一下';
+  const createArgs = JSON.stringify({ action: 'create', title: '新增事项', start, end: start + 60000 });
+  assert.equal((await dispatchTool(defs, editContext, 'phone_calendar_write', createArgs)).isError, undefined);
+  const denied = await dispatchTool(defs, { ...editContext, chatKey: 'group:1' }, 'phone_calendar_write', createArgs);
+  assert.equal(denied.isError, true);
+  assert.equal(denied.reportIncident, false);
 });
 
 test('技能 manifest 校验：坏 id、超长正文、缺 SKILL.md 都会被拒绝', () => {

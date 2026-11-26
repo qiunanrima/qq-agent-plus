@@ -344,15 +344,14 @@ function syncCalendarCommands(dataDir, payload, json, res) {
 }
 
 export function ownerCalendarWrite(ctx, args, dataDir = DATA_DIR) {
-  if (!isOwnerRequest(ctx, /日程|日历|会议|行程|的会/)) return null;
+  if (!isOwnerRequest(ctx)) return null;
   const jobs = readStored(dataDir, 'calendar-writes.json', []);
   if (args.action === 'status') {
     return { jobs: jobs.slice(-10).reverse().map(({ id, title, status, start, updatedAt }) =>
       ({ id, title, status, start, updatedAt })) };
   }
   const updating = args.action === 'update';
-  if (updating ? !isOwnerRequest(ctx, /改|调整|提前|推迟|延后|挪|移到|换到/) :
-    args.action !== 'create' || !isOwnerRequest(ctx, /(?:新建|添加|加到|加进|记到|记进|定|建|排|创建).{0,16}(?:日程|日历|会议|行程)|(?:日程|日历).{0,12}(?:添加|新建|创建)/)) return null;
+  if (!updating && args.action !== 'create') return { error: '未知的日程操作' };
   let expected;
   if (updating) {
     const regular = readStored(dataDir, 'calendar.json', null);
