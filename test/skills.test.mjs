@@ -69,6 +69,7 @@ test('personal briefing reads only matching synced phone notifications in the ow
   const ctx = { chatKey, session: {}, triggerEntries: [{ senderId: owner, text: '汇总手机通知，看看微信' }] };
   const active = await dispatchTool(defs, ctx, 'skill_use', '{"id":"personal-briefing"}');
   assert.equal(active.isError, undefined);
+  assert.match(active.content, /fallbackQuery/);
   const read = await dispatchTool(defs, ctx, 'phone_notifications', '{}');
   assert.equal(read.isError, undefined);
   const parsed = JSON.parse(read.content);
