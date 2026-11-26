@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR, getConfig } from '../core/config.js';
+import { sendCalendarWake } from './calendar-wake.js';
 
 const endpoint = '/api/phone-bridge/notifications';
 const calendarReadFile = 'calendar-reads.json';
@@ -142,7 +143,7 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
       snapshot = {
         from, to, timeZone, receivedAt: new Date().toISOString(),
         ...(requestId !== undefined && payload.truncated === true ? { truncated: true } : {}),
-        ...(['manual', 'periodic', 'notification', 'scheduled', 'calendar_change', 'live'].includes(payload.syncTrigger)
+        ...(['manual', 'periodic', 'notification', 'scheduled', 'calendar_change', 'live', 'push'].includes(payload.syncTrigger)
           ? { syncTrigger: payload.syncTrigger } : {}),
         events: events.map(({ start, end, title, location, allDay, eventId }) => ({
           start, end, title, location, allDay,
@@ -293,6 +294,7 @@ export function requestPhoneCalendar(dataDir, range, now = Date.now(), maxEvents
   if (requests.filter(item => !item.snapshot).length >= 12) return { ...ordinary, requestedSync: 'queue_full' };
   const request = { id: randomUUID(), from, to, createdAt: now };
   writeStored(dataDir, calendarReadFile, [...requests.slice(-35), request]);
+  if (dataDir === DATA_DIR) void sendCalendarWake();
   return { ...ordinary, requestedSync: 'pending', requestId: request.id };
 }
 
@@ -313,6 +315,7 @@ function requestCalendarChunks(dataDir, ordinary, requests, now, total, maxEvent
     const kept = requests.filter(item => (item.to > from && item.from < to) || !item.snapshot);
     const spare = requests.filter(item => !kept.includes(item));
     writeStored(dataDir, calendarReadFile, [...spare, ...kept, ...additions].slice(-36));
+    if (dataDir === DATA_DIR) void sendCalendarWake();
   }
   if (snapshots.length < total) return {
     ...ordinary, requestedSync: 'pending', completedSegments: snapshots.length, totalSegments: total
@@ -429,5 +432,6 @@ export function ownerCalendarWrite(ctx, args, dataDir = DATA_DIR) {
   const job = { id: randomUUID(), title, location, start, end, createdAt: now, updatedAt: now, status: 'queued',
     ...(expected ? { operation: 'update', expected } : {}) };
   writeStored(dataDir, 'calendar-writes.json', [...last, ...pending, job]);
+  if (dataDir === DATA_DIR) void sendCalendarWake();
   return { id: job.id, status: job.status, note: '待手机领取并确认写入，当前尚未写入日历。' };
 }
