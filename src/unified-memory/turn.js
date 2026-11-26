@@ -28,6 +28,12 @@ function selectContext(rows, entries) {
 export function memoryTurn({ filename, scope, entries, enabled, personas = {} }) {
   const sources = new Map(entries.filter(entry => !entry.self && entry.id != null &&
     entry.senderId && entry.eventKind !== 'game-secret').map(entry => [String(entry.id), entry]));
+  const platformSources = new Map();
+  for (const entry of sources.values()) {
+    if (entry.mid == null || entry.mid === '') continue;
+    const key = String(entry.mid);
+    platformSources.set(key, platformSources.has(key) ? null : entry);
+  }
   const access = operation => {
     const store = new UnifiedMemoryStore(filename);
     try { return operation(store); } finally { store.close(); }
@@ -54,16 +60,19 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
     parameters: { type: 'object', properties: {
       kind: { type: 'string', enum: ['agreement', 'preference', 'relationship', 'task', 'experience'] },
       topic: { type: 'string', maxLength: 100 }, summary: { type: 'string', maxLength: 800 },
-      messageId: { type: 'string' }, closed: { type: 'boolean' }
+      messageId: { type: 'string', description: '优先使用本轮列出的本地消息编号，也支持本轮的 QQ 消息 ID' },
+      closed: { type: 'boolean' }
     }, required: ['kind', 'topic', 'summary', 'messageId'] },
     execute(ctx, args) {
-      const entry = sources.get(args.messageId);
+      const entry = sources.get(args.messageId) || platformSources.get(args.messageId);
       const topic = String(args.topic || '').trim();
       const summary = String(args.summary || '').trim();
-      if (ctx.signal?.aborted || !enabled() || ctx.chatKey !== scope || !entry ||
+      if (ctx.signal?.aborted || !enabled() || ctx.chatKey !== scope ||
           !topic || topic.length > 100 || !summary || summary.length > 800) {
         return { content: '当前会话缺少有效来源或内容', isError: true, reportIncident: false };
       }
+      if (!entry) return { content: '消息编号不属于本轮。请使用本地编号：' + [...sources.keys()].join('、'),
+        isError: true, reportIncident: false };
       const speaker = String(entry.senderId);
       const reviewed = visible.find(row => row.subject.startsWith('reviewed:') && row.kind === args.kind &&
         row.body.speaker === speaker && row.body.topic === topic);

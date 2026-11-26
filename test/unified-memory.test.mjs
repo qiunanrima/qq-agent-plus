@@ -42,9 +42,9 @@ test('a persona change preserves separate revisions for the same speaker and top
     filename, scope, entries, enabled: () => true, personas: { memory: persona }
   });
   for (const [persona, summary] of [['first', '周三提交'], ['second', '周五提交']]) {
-    const { tools } = turn(persona, [{ id: 1, ts: 1, senderId: '123' }]);
+    const { tools } = turn(persona, [{ id: 1, mid: 143871333, ts: 1, senderId: '123' }]);
     const result = tools.find(tool => tool.name === 'record_memory').execute({ chatKey: scope },
-      { messageId: '1', kind: 'agreement', topic: '周报', summary });
+      { messageId: '143871333', kind: 'agreement', topic: '周报', summary });
     assert.equal(result.content, '已记录');
   }
   assert.match(turn('first').prompt, /周三提交/);
