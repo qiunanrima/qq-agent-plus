@@ -46,11 +46,14 @@ async function gmailToken(env, fetchImpl, signal) {
   return token;
 }
 
-function walkParts(root) {
+function walkParts(root, include = () => true) {
   const queue = root ? [root] : [];
   const parts = [];
-  while (queue.length && parts.length < 100) {
+  let visited = 0;
+  while (queue.length && visited < 100) {
     const part = queue.shift();
+    visited += 1;
+    if (!include(part)) continue;
     parts.push(part);
     queue.push(...(part.parts ?? part.childNodes ?? []).slice(0, 100));
   }
@@ -117,9 +120,10 @@ async function readGmailMessage(args, { env, fetchImpl = fetch, signal }) {
       return { provider: Gmail, status: 'not_found' };
     }
     const header = (part, name) => part?.headers?.find(item => item.name?.toLowerCase() === name)?.value;
-    const part = walkParts(message.payload).find(candidate => candidate.mimeType === 'text/plain' &&
-      !candidate.filename && !candidate.body?.attachmentId && typeof candidate.body?.data === 'string' &&
-      !/^attachment\b/i.test(header(candidate, 'content-disposition') ?? ''));
+    const parts = walkParts(message.payload, candidate => !candidate.filename && !candidate.body?.attachmentId &&
+      candidate.mimeType !== 'message/rfc822' &&
+      !/^attachment\b/i.test(header(candidate, 'content-disposition')?.trim() ?? ''));
+    const part = parts.find(candidate => candidate.mimeType === 'text/plain' && candidate.body?.data);
     const source = /^[a-z0-9]+$/i.test(message.threadId ?? '') ? 'https://mail.google.com/mail/u/0/#all/' + message.threadId : '';
     const maxBytes = 4096;
     const encoded = part?.body.data ?? '';

@@ -60,7 +60,12 @@ test('Gmail exact message reads bounded plain text and skips attachment content'
     assert.equal(url.pathname, '/gmail/v1/users/me/messages/message123');
     return Response.json({ threadId: 'thread123', payload: { parts: [
       { mimeType: 'text/plain', filename: 'attachment.txt', body: { data: 'QUJD' } },
-      { mimeType: 'text/plain', body: { data: Buffer.from(text).toString('base64url'), size: Buffer.byteLength(text) } }
+      { mimeType: 'message/rfc822', filename: 'forwarded.eml', parts: [
+        { mimeType: 'text/plain', body: { data: 'QUJD' } }
+      ] },
+      { mimeType: 'multipart/alternative', parts: [
+        { mimeType: 'text/plain', body: { data: Buffer.from(text).toString('base64url'), size: Buffer.byteLength(text) } }
+      ] }
     ] } });
   };
   const result = await runPersonalMailRequest({ action: 'message', messageId: 'message123' }, { env, fetchImpl });
