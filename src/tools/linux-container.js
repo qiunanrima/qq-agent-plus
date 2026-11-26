@@ -148,43 +148,56 @@ export function containerTools(getConfig, turn) {
   });
   if (privateOwner) tools.push({
     name: 'linux_read_workspace_material',
-    description: '读取管理员指定目录里的文本资料、PDF 或 PNG/JPEG。最多返回 8 KiB，PDF 先提取前 8 页文字，无文字时识别第一页。OCR 可能误读金额和编号，引用时附文件路径。',
-    parameters: { type: 'object', required: ['directory', 'file'], properties: {
-      directory: { type: 'string' }, file: { type: 'string' }
+    description: '读取管理员指定目录里的文本资料、PDF 或 PNG/JPEG。用 file 读一份，或用 files 同时比较至多两份。每份最多返回 8 KiB。OCR 可能误读金额和编号，引用时附文件路径。',
+    parameters: { type: 'object', required: ['directory'], properties: {
+      directory: { type: 'string' }, file: { type: 'string' },
+      files: { type: 'array', minItems: 1, maxItems: 2, items: { type: 'string' } }
     } },
-    execute: async (ctx, { directory, file }) => {
+    execute: async (ctx, { directory, file, files }) => {
       if (!containerAllowed(getConfig(), turn)) return { content: '容器访问已关闭', isError: true };
-      const request = ctx.triggerEntries?.filter((entry) => !entry.self).at(-1);
-      const command = workspaceMaterialCommand(directory, file, request?.text);
-      if (!command) return { content: '请使用本轮明确指定的 /workspace 子目录及其中支持的资料', isError: true };
-      try {
-        let result = await containerRequest({ action: 'exec', command }, ctx.signal);
-        const pdf = /\.pdf$/i.test(file);
-        const image = imageMaterial.test(file);
-        if (pdf && result.code === 69) return { content: '容器未安装 PDF 文字提取工具', isError: true, reportIncident: false };
-        if (pdf && result.code !== 0) return { content: 'PDF 无法提取文字或超过读取限制', isError: true, reportIncident: false };
-        const scan = pdf && !result.output.trim();
-        if (scan) {
-          const scanCommand = workspaceMaterialCommand(directory, file, request?.text, { scanPdf: true });
-          result = await containerRequest({ action: 'exec', command: scanCommand }, ctx.signal);
-        }
-        const ocr = scan || image;
-        if (ocr && result.code === 69) return { content: '容器缺少 OCR 所需工具', isError: true, reportIncident: false };
-        if (ocr && result.code !== 0) return { content: 'OCR 失败或超过读取限制', isError: true, reportIncident: false };
-        if (result.code !== 0 || result.output.includes('\0')) {
-          return { content: '文件不可读取或不是文本资料', isError: true };
-        }
-        const text = Buffer.from(result.output);
-        const truncated = text.length > MATERIAL_LIMIT;
-        const excerpt = text.subarray(0, MATERIAL_LIMIT).toString('utf8').replace(/\uFFFD$/u, '');
-        if (ocr && !excerpt.trim()) return { content: 'OCR 未识别到可读文字', isError: true, reportIncident: false };
-        return { content: JSON.stringify({ file, excerpt, truncated, ...(pdf ? { pagesReadUpTo: scan ? 1 : 8 } : {}),
-          ...(ocr ? { extraction: 'ocr', needsVerification: true } : {}) }) };
-      } catch {
-        return { content: '容器资料读取未完成', isError: true };
-      }
+      const request = ctx.triggerEntries?.filter((entry) => !entry?.self).at(-1);
+      const validBatch = Array.isArray(files) && files.length >= 1 && files.length <= 2 && file === undefined;
+      if (files !== undefined && !validBatch) return { content: '请提供一份文件，或提交最多两份候选文件', isError: true, reportIncident: false };
+      const paths = Array.isArray(files) ? [...new Set(files)] : [file];
+      const reads = paths.map(path => ({ path, command: workspaceMaterialCommand(directory, path, request?.text) }));
+      if (reads.some(item => !item.command)) return {
+        content: '请使用本轮明确指定的 /workspace 子目录及其中支持的资料', isError: true, reportIncident: false
+      };
+      const results = await Promise.all(reads.map(({ path, command }) => readMaterial(ctx, directory, path, request?.text, command)));
+      if (files === undefined) return results[0];
+      return { content: JSON.stringify({ files: results.map((result, index) => result.isError
+        ? { file: paths[index], error: result.content }
+        : JSON.parse(result.content)) }) };
     }
   });
+  async function readMaterial(ctx, directory, file, request, command) {
+  try {
+    let result = await containerRequest({ action: 'exec', command }, ctx.signal);
+    const pdf = /\.pdf$/i.test(file);
+    const image = imageMaterial.test(file);
+    if (pdf && result.code === 69) return { content: '容器未安装 PDF 文字提取工具', isError: true, reportIncident: false };
+    if (pdf && result.code !== 0) return { content: 'PDF 无法提取文字或超过读取限制', isError: true, reportIncident: false };
+    const scan = pdf && !result.output.trim();
+    if (scan) {
+      const scanCommand = workspaceMaterialCommand(directory, file, request, { scanPdf: true });
+      result = await containerRequest({ action: 'exec', command: scanCommand }, ctx.signal);
+    }
+    const ocr = scan || image;
+    if (ocr && result.code === 69) return { content: '容器缺少 OCR 所需工具', isError: true, reportIncident: false };
+    if (ocr && result.code !== 0) return { content: 'OCR 失败或超过读取限制', isError: true, reportIncident: false };
+    if (result.code !== 0 || result.output.includes('\0')) {
+      return { content: '文件不可读取或不是文本资料', isError: true };
+    }
+    const text = Buffer.from(result.output);
+    const truncated = text.length > MATERIAL_LIMIT;
+    const excerpt = text.subarray(0, MATERIAL_LIMIT).toString('utf8').replace(/\uFFFD$/u, '');
+    if (ocr && !excerpt.trim()) return { content: 'OCR 未识别到可读文字', isError: true, reportIncident: false };
+    return { content: JSON.stringify({ file, excerpt, truncated, ...(pdf ? { pagesReadUpTo: scan ? 1 : 8 } : {}),
+      ...(ocr ? { extraction: 'ocr', needsVerification: true } : {}) }) };
+  } catch {
+    return { content: '容器资料读取未完成', isError: true };
+  }
+  }
   if (turn.attachments?.length) tools.push({
     name: 'linux_import_qq_file',
     description: '把本轮 QQ 附件下载到容器 /workspace/inbox，单个文件最多 16 MiB。参数为附件序号，从 1 开始。可选附件：'

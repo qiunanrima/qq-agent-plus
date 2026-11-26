@@ -67,6 +67,8 @@ test('workspace material reads stay within the authorized folder and bound the e
     .find(({ name }) => name === 'linux_read_workspace_material');
   assert.ok((await tool.execute({ triggerEntries: [{ text: request }] },
     { directory: folder, file: folder + '/../q.csv' })).isError);
+  assert.ok((await tool.execute({ triggerEntries: [{ text: request }] },
+    { directory: folder, files: [folder + '/quote.csv', '/workspace/other/quote.csv'] })).isError);
 });
 test('workspace search returns version evidence and preserves the paths field', () => {
   const output = ['100\t30\t/workspace/project/quote.csv', '101.250\t40\t/workspace/project/quote2.csv', ''].join('\0');
