@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { triageAccountKey } from './triage-store.js';
 
 const interval = 10 * 60000;
+const verificationGrace = 2 * interval;
 const fileName = 'personal-mail-follow-ups.json';
 
 function readJobs(dataDir) {
@@ -64,9 +65,15 @@ export async function checkMailFollowUp({ dataDir, env, readThread, notify, now 
       ? messages.slice(sent + 1).findLast(message => message.direction === 'incoming' && !message.automatic)
       : null;
     if (reply) current.outcome = { status: 'replied', text: reply.excerpt || reply.subject };
-    else if (now >= job.deadline) current.outcome = thread.status === 'ok' && sent >= 0
-      ? { status: 'due', text: messages[sent].subject }
-      : { status: 'unverified', text: '' };
+    else if (now >= job.deadline) {
+      if (thread.status === 'ok' && sent >= 0) {
+        current.outcome = { status: 'due', text: messages[sent].subject };
+      } else if (thread.status === 'unavailable' && now < job.deadline + verificationGrace) {
+        current.nextCheckAt = Math.min(now + interval, job.deadline + verificationGrace);
+      } else {
+        current.outcome = { status: 'unverified', text: '' };
+      }
+    }
     else current.nextCheckAt = Math.min(now + interval, job.deadline);
     saveJobs(dataDir, jobs);
     job.outcome = current.outcome;
