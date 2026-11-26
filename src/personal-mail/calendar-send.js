@@ -23,10 +23,12 @@ export async function sendGmailCalendarInvitation(event, { dataDir, accessToken,
   if (segment) subject.push(segment);
   const recipients = [...new Set(event.attendees.map(address => address.toLowerCase()))];
   const calendar = Buffer.from(invitation.content).toString('base64').match(/.{1,76}/g).join('\r\n');
+  const internetMessageId = '<' + invitation.uid + '.invalid>';
   const message = [
     'From: ' + event.organizer,
     'To: ' + recipients.join(',\r\n '),
     'Subject: ' + subject.map(word => '=?UTF-8?B?' + Buffer.from(word).toString('base64') + '?=').join('\r\n '),
+    'Message-ID: ' + internetMessageId,
     'MIME-Version: 1.0',
     'Content-Type: text/calendar; charset=UTF-8; method=REQUEST',
     'Content-Transfer-Encoding: base64',
@@ -37,7 +39,7 @@ export async function sendGmailCalendarInvitation(event, { dataDir, accessToken,
   ])).digest('hex');
   const directory = join(dataDir, 'calendar-invitations');
   const file = join(directory, key + '.json');
-  const uncertain = { status: 'unknown', uid: invitation.uid };
+  const uncertain = { status: 'unknown', uid: invitation.uid, internetMessageId };
   try {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     writeFileSync(file, JSON.stringify(uncertain), { flag: 'wx', mode: 0o600, flush: true });
@@ -67,7 +69,7 @@ export async function sendGmailCalendarInvitation(event, { dataDir, accessToken,
     if (response.ok) {
       const { id } = await response.json();
       if (typeof id === 'string' && id) {
-        const sent = { status: 'sent', messageId: id, uid: invitation.uid };
+        const sent = { status: 'sent', messageId: id, uid: invitation.uid, internetMessageId };
         writeFileSync(file + '.tmp', JSON.stringify(sent), { mode: 0o600, flush: true });
         renameSync(file + '.tmp', file);
         return sent;
