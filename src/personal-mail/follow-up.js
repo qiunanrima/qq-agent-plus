@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { triageAccountKey } from './triage-store.js';
+import { MAX_REMINDER_TEXT } from '../core/reminders.js';
 
 const interval = 10 * 60000;
 const verificationGrace = 2 * interval;
@@ -99,4 +100,16 @@ export async function checkMailFollowUp({ dataDir, env, readThread, notify, now 
     current.status = job.outcome.status;
     saveJobs(dataDir, jobs);
   }
+}
+
+export function formatMailFollowUpReminder(job) {
+  const { status, text } = job.outcome;
+  const fullLead = status === 'replied' ? 'Gmail 收到回复，请转述明确的报价、交期或其他关键信息。摘录：' :
+    status === 'due' ? 'Gmail 到期未回，请在私聊拟催办草稿。原主题：' :
+      'Gmail 跟进到期，无法核实是否收到回复。';
+  const source = ' 来源：https://mail.google.com/mail/u/0/#all/' + job.threadId;
+  const lead = fullLead.length + source.length <= MAX_REMINDER_TEXT ? fullLead :
+    status === 'replied' ? 'Gmail 回复：' : status === 'due' ? '到期未回，请拟催办草稿：' : '无法核实回复。';
+  const excerpt = String(text ?? '').replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim();
+  return lead + excerpt.slice(0, Math.max(0, MAX_REMINDER_TEXT - lead.length - source.length)) + source;
 }

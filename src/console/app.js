@@ -67,7 +67,7 @@ import { AgentWechatChannel } from '../agent-wechat/runtime.js';
 import { registerPersonalMailRoutes } from '../personal-mail/routes.js';
 import { createMailWatcher } from '../personal-mail/watcher.js';
 import { readGmailThread } from '../personal-mail/index.js';
-import { checkMailFollowUp } from '../personal-mail/follow-up.js';
+import { checkMailFollowUp, formatMailFollowUpReminder } from '../personal-mail/follow-up.js';
 import { registerPhoneBridge } from '../phone-bridge/index.js';
 import { registerAgentWechatRoutes, handleWechatAdminCommand } from '../agent-wechat/routes.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
@@ -753,12 +753,8 @@ function buildApp({
       return checkMailFollowUp({
         dataDir: DATA_DIR, env, signal, readThread: readGmailThread,
         notify(job) {
-          const { status, text } = job.outcome;
-          const lead = status === 'replied' ? 'Gmail 跟进收到回复，请向用户转述以下邮件摘录：' :
-            status === 'due' ? 'Gmail 跟进到期仍未收到回复，请在私聊拟一封催办草稿供用户查看。邮件主题：' :
-              'Gmail 跟进到期，但无法核实是否收到回复，请告知用户。';
           enqueueOwnerMailReminder('mail-fu-' + job.id.replaceAll('-', ''),
-            lead + text.slice(0, 60) + '。来源：https://mail.google.com/mail/u/0/#all/' + job.threadId);
+            formatMailFollowUpReminder(job));
         }
       });
     }

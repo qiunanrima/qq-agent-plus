@@ -3,7 +3,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { checkMailFollowUp, manageMailFollowUp } from '../src/personal-mail/follow-up.js';
+import { checkMailFollowUp, formatMailFollowUpReminder, manageMailFollowUp } from '../src/personal-mail/follow-up.js';
+
+test('follow-up handoff keeps the source and uses the remaining space for reply details', () => {
+  const text = formatMailFollowUpReminder({ threadId: 'quoted', outcome: {
+    status: 'replied', text: '答'.repeat(65) + '报价 120 元，周五交付。' + '尾'.repeat(200)
+  } });
+  assert.ok(text.length <= 200);
+  assert.match(text, /报价 120 元，周五交付/);
+  assert.match(text, /https:\/\/mail.google.com\/mail\/u\/0\/#all\/quoted$/);
+});
 
 test('follow-up reports replies before the deadline and hands off a due outcome once', async t => {
   const dataDir = await mkdtemp(join(tmpdir(), 'mail-follow-up-'));
