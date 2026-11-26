@@ -23,6 +23,7 @@ test('workspace search requires the exact private request directory and literal 
   const root = '/workspace/client-project';
   assert.match(workspaceSearchCommand(root, ['报价', 'Meeting notes'], '在 /workspace/client-project 找会前资料'), /find -P/);
   assert.match(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project 找'), /-name "\.\*" -prune/);
+  assert.match(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project 找'), /sort -z -k1,1nr.*head -z -n 26/);
   assert.match(workspaceSearchCommand('/workspace/client project', ['报价'],
     '在「/workspace/client project」找会前资料'), /find -P/);
   assert.equal(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project-archive 找'), null);
@@ -68,7 +69,7 @@ test('workspace material reads stay within the authorized folder and bound the e
     { directory: folder, file: folder + '/../q.csv' })).isError);
 });
 test('workspace search returns version evidence and preserves the paths field', () => {
-  const output = ['/workspace/project/quote.csv', '100', '30', '/workspace/project/quote2.csv', '101.250', '40', ''].join('\0');
+  const output = ['100\t30\t/workspace/project/quote.csv', '101.250\t40\t/workspace/project/quote2.csv', ''].join('\0');
   const result = parseWorkspaceSearch(output);
   assert.deepEqual(result.paths, ['/workspace/project/quote2.csv', '/workspace/project/quote.csv']);
   assert.deepEqual(result.files[0], { path: result.paths[0], modifiedAt: '1970-01-01T00:01:41.250Z', bytes: 40 });

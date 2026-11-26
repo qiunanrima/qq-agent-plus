@@ -57,15 +57,17 @@ export function workspaceSearchCommand(directory, keywords, requestText) {
   return 'set -eu; dir=$(realpath -e -- ' + quoteShell(directory) + '); '
     + 'test "$dir" = ' + quoteShell(directory) + '; test -d "$dir"; '
     + 'find -P "$dir" -maxdepth 3 -mindepth 1 \\( -type d -name ".*" -prune \\) -o '
-    + '\\( -type f ! -name ".*" \\( ' + filters + ' \\) -printf "%p\\0%T@\\0%s\\0" \\) | head -z -n 78';
+    + '\\( -type f ! -name ".*" \\( ' + filters + ' \\) -printf "%T@\\t%s\\t%p\\0" \\) '
+    + '| LC_ALL=C sort -z -k1,1nr --buffer-size=8M | head -z -n 26';
 }
 
 export function parseWorkspaceSearch(output) {
-  const records = output.split('\0');
+  const records = output.split('\0').slice(0, -1);
   const candidates = [];
-  for (let i = 0; i + 3 < records.length; i += 3) {
-    const [path, modified, bytes] = records.slice(i, i + 3);
-    if (!path.startsWith('/workspace/') || !/^-?\d+(?:\.\d+)?$/.test(modified) || !/^\d+$/.test(bytes)) continue;
+  for (const record of records) {
+    const match = /^(-?\d+(?:\.\d+)?)\t(\d+)\t(\/workspace\/[\s\S]+)$/.exec(record);
+    if (!match) continue;
+    const [, modified, bytes, path] = match;
     const date = new Date(Number(modified) * 1000);
     const size = Number(bytes);
     if (!Number.isFinite(date.getTime()) || !Number.isSafeInteger(size)) continue;
