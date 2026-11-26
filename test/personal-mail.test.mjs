@@ -204,3 +204,18 @@ test('mail search falls back to a project keyword only after an empty result', a
   await searchPersonalMail({ ...args, query: 'Orchid', fallbackQuery: 'client' }, options);
   assert.deepEqual(queries, ['"Orchid" newer_than:14d']);
 });
+
+
+test('calendar send uses its separate refresh token and rejects a read-only grant', async () => {
+  const calls = [];
+  const options = { env: { ...env, QQ_AGENT_GMAIL_SEND_REFRESH_TOKEN: 'send-refresh' },
+    fetchImpl: async (url, request) => {
+      calls.push(new URL(url).pathname);
+      assert.equal(request.body.get('refresh_token'), 'send-refresh');
+      return Response.json({ access_token: 'test-access', scope: 'https://www.googleapis.com/auth/gmail.readonly' });
+    }
+  };
+  const result = await runPersonalMailRequest({ action: 'send_calendar_invitation' }, options);
+  assert.deepEqual(result, { status: 'not_authorized' });
+  assert.deepEqual(calls, ['/token']);
+});

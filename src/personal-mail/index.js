@@ -29,7 +29,7 @@ function withDeadline(signal, timeout) {
   return signal ? AbortSignal.any([signal, deadline]) : deadline;
 }
 
-async function gmailToken(env, fetchImpl, signal) {
+async function gmailToken(env, fetchImpl, signal, requiredScope) {
   const response = await fetchImpl('https://oauth2.googleapis.com/token', {
     method: 'POST',
     redirect: 'error',
@@ -42,7 +42,10 @@ async function gmailToken(env, fetchImpl, signal) {
     signal
   });
   if (!response.ok) throw new Error('Gmail authorization failed');
-  const { access_token: token } = await response.json();
+  const { access_token: token, scope } = await response.json();
+  if (requiredScope && typeof scope === 'string' && !scope.split(/\s+/u).includes(requiredScope)) {
+    throw new Error('Gmail authorization scope missing');
+  }
   if (typeof token !== 'string' || !token) throw new Error('Gmail authorization failed');
   return token;
 }
@@ -319,7 +322,8 @@ export async function runPersonalMailRequest(args, options) {
     }
     let accessToken;
     try {
-      accessToken = await gmailToken({ ...env, QQ_AGENT_GMAIL_REFRESH_TOKEN: refreshToken }, fetchImpl, withDeadline(signal, 12000));
+      accessToken = await gmailToken({ ...env, QQ_AGENT_GMAIL_REFRESH_TOKEN: refreshToken },
+        fetchImpl, withDeadline(signal, 12000), 'https://www.googleapis.com/auth/gmail.send');
     } catch {
       return { status: 'not_authorized' };
     }
