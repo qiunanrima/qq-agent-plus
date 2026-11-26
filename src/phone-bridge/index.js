@@ -7,6 +7,7 @@ const endpoint = '/api/phone-bridge/notifications';
 const calendarReadFile = 'calendar-reads.json';
 const calendarReadMaxSpan = 45 * 86400000;
 const calendarReadLifetime = 86400000;
+const calendarWaiters = new Map();
 const digest = (value) => createHash('sha256').update(value).digest();
 
 export function phoneBridgeEnabled() {
@@ -28,6 +29,45 @@ function writeStored(dataDir, file, data) {
   const target = join(dir, file);
   writeFileSync(target + '.tmp', JSON.stringify(data), { mode: 0o600 });
   renameSync(target + '.tmp', target);
+  if (file === calendarReadFile || file === 'calendar-writes.json') calendarWaiters.get(dataDir)?.();
+}
+
+function calendarWorkReady(dataDir, canWrite) {
+  const now = Date.now();
+  return readStored(dataDir, calendarReadFile, []).some(item =>
+    !item.snapshot && now - item.createdAt < calendarReadLifetime) ||
+    (canWrite && readStored(dataDir, 'calendar-writes.json', []).some(item =>
+      item.status === 'queued' && item.start > now && now - item.createdAt < calendarReadLifetime));
+}
+
+function waitForCalendarWork(dataDir, canWrite, res, json, timeout) {
+  if (calendarWorkReady(dataDir, canWrite)) return json(res, 200, { pending: true });
+  if (calendarWaiters.has(dataDir)) return json(res, 409, { error: '已有手机等待日程任务' });
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      res.off('close', close);
+      calendarWaiters.delete(dataDir);
+    };
+    const finish = pending => {
+      cleanup();
+      resolve(json(res, 200, { pending }));
+    };
+    const close = () => {
+      cleanup();
+      resolve();
+    };
+    const timer = setTimeout(() => finish(false), timeout);
+    res.once('close', close);
+    calendarWaiters.set(dataDir, () => {
+      try {
+        if (calendarWorkReady(dataDir, canWrite)) finish(true);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  });
 }
 
 function authorize(req) {
@@ -37,7 +77,7 @@ function authorize(req) {
   );
 }
 
-export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR }) {
+export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR, calendarWaitMs = 20000 }) {
   router.add('POST', endpoint, async (req, res) => {
     let events;
     try {
@@ -77,6 +117,10 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
     let requestId;
     try {
       const payload = await readBody(req, 256 * 1024);
+      if (payload?.mode === 'wait') {
+        if (typeof payload.canWrite !== 'boolean') return json(res, 400, { error: '日程等待参数无效' });
+        return await waitForCalendarWork(dataDir, payload.canWrite, res, json, calendarWaitMs);
+      }
       if (payload?.mode === 'commands') return syncCalendarCommands(dataDir, payload, json, res);
       if (payload?.mode === 'read-request') {
         const request = readStored(dataDir, calendarReadFile, []).find(item =>

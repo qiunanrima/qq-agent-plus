@@ -17,7 +17,7 @@ test('phone upload uses its own credential and stores a retried event only once'
   const router = createRouter({ json, authorize: (req) => req.headers.authorization === 'Bearer console' });
   router.add('GET', '/api/console-test', (_, res) => json(res, 200, {}));
   registerPhoneBridge(router, {
-    dataDir, json,
+    dataDir, json, calendarWaitMs: 350,
     async readBody(req) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -71,6 +71,12 @@ test('phone upload uses its own credential and stores a retried event only once'
   });
   const meeting = { start: from + 10000, end: from + 20000, allDay: false, title: 'Meeting', location: '' };
   assert.equal((await calendar('console', [meeting])).status, 401);
+  const wait = credential => fetch(base + '/api/phone-bridge/calendar', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + credential },
+    body: JSON.stringify({ mode: 'wait', canWrite: false })
+  });
+  assert.equal((await wait('console')).status, 401);
+  assert.deepEqual(await (await wait(token)).json(), { pending: false });
   assert.equal((await calendar(token, [{ ...meeting, end: from }])).status, 400);
   assert.deepEqual(await (await calendar(token, [meeting])).json(), { accepted: 1 });
   assert.deepEqual(await (await calendar(token, [])).json(), { accepted: 0 });
@@ -79,7 +85,10 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.deepEqual(snapshot.events, []);
   assert.equal(snapshot.syncTrigger, 'calendar_change');
   const distant = { from: to + 86400000, to: to + 2 * 86400000 };
+  const waiter = wait(token);
+  await new Promise(resolve => setTimeout(resolve, 50));
   const pending = requestPhoneCalendar(dataDir, distant);
+  assert.deepEqual(await (await waiter).json(), { pending: true });
   assert.equal(pending.requestedSync, 'pending');
   assert.equal(requestPhoneCalendar(dataDir, distant).requestId, pending.requestId);
   const readRequest = await fetch(base + '/api/phone-bridge/calendar', {
