@@ -67,7 +67,7 @@ test('phone upload uses its own credential and stores a retried event only once'
   const to = from + 86400000;
   const calendar = (credential, events) => fetch(base + '/api/phone-bridge/calendar', {
     method: 'POST', headers: { Authorization: 'Bearer ' + credential },
-    body: JSON.stringify({ from, to, timeZone: 'Asia/Shanghai', events })
+    body: JSON.stringify({ from, to, timeZone: 'Asia/Shanghai', events, syncTrigger: 'calendar_change' })
   });
   const meeting = { start: from + 10000, end: from + 20000, allDay: false, title: 'Meeting', location: '' };
   assert.equal((await calendar('console', [meeting])).status, 401);
@@ -77,6 +77,7 @@ test('phone upload uses its own credential and stores a retried event only once'
   const snapshot = JSON.parse(await readFile(join(dataDir, 'phone-bridge', 'calendar.json'), 'utf8'));
   assert.equal(snapshot.from, from);
   assert.deepEqual(snapshot.events, []);
+  assert.equal(snapshot.syncTrigger, 'calendar_change');
   const distant = { from: to + 86400000, to: to + 2 * 86400000 };
   const pending = requestPhoneCalendar(dataDir, distant);
   assert.equal(pending.requestedSync, 'pending');
