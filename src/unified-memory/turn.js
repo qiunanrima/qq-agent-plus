@@ -63,8 +63,9 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
         return { content: '当前会话缺少有效来源或内容', isError: true, reportIncident: false };
       }
       const changed = access(store => store.record({ scope, kind: args.kind,
-        subject: JSON.stringify([String(entry.senderId), topic]), source: 'message:' + entry.id,
-        timestamp: entry.ts, body: { topic, summary, speaker: String(entry.senderId) },
+        subject: JSON.stringify([personas.memory || '', String(entry.senderId), topic]), source: 'message:' + entry.id,
+        timestamp: entry.ts, body: { topic, summary, speaker: String(entry.senderId),
+          persona: personas.memory, personaType: 'memory' },
         closed: args.closed === true }));
       return { content: changed ? '已记录' : '此来源已记录' };
     }
