@@ -2456,7 +2456,15 @@ function buildApp({
   registerCodexRoutes(router, { json, getConfig });
   registerAntigravityRoutes(router, { json, getConfig, readBody, auditWrite });
   const agentWechat = new AgentWechatChannel({ dataDir: DATA_DIR, getConfig, store, orchestrator, emit, log: moduleLog('agent-wechat') });
-  registerPhoneBridge(router, { json, readBody });
+  registerPhoneBridge(router, {
+    json, readBody,
+    async wakeThroughQq(hint) {
+      const owner = readOwnerUin(getConfig());
+      if (!/^\d{5,15}$/.test(owner)) throw new Error('Calendar wake owner is not configured');
+      const result = await sender.sendTextBatch('private:' + owner, [hint], {});
+      if (!result?.sent?.length) throw new Error('Calendar wake was not confirmed');
+    }
+  });
   registerPersonalMailRoutes(router, { json, readBody, auditWrite });
   registerAgentWechatRoutes(router, { runtime: agentWechat, getConfig, updateConfig, json, readBody, auditWrite });
   const bilibiliChannel = new BilibiliChannel({ registry: pluginRegistry, store, orchestrator, getConfig, emit, log });

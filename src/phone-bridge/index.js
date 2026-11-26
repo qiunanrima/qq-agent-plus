@@ -2,13 +2,15 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR, getConfig } from '../core/config.js';
-import { sendCalendarWake } from './calendar-wake.js';
+import { calendarWakeHint, sendCalendarWake } from './calendar-wake.js';
 
 const endpoint = '/api/phone-bridge/notifications';
 const calendarReadFile = 'calendar-reads.json';
 const calendarReadMaxSpan = 45 * 86400000;
 const calendarReadLifetime = 86400000;
 const calendarWaiters = new Map();
+let qqCalendarWake;
+let lastQqWake = 0;
 const digest = (value) => createHash('sha256').update(value).digest();
 
 export function phoneBridgeEnabled() {
@@ -80,7 +82,23 @@ function authorize(req) {
   );
 }
 
-export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR, calendarWaitMs = 20000 }) {
+function signalCalendarWork(dataDir) {
+  if (dataDir !== DATA_DIR) return;
+  if (process.env.QQ_AGENT_QQ_CALENDAR_WAKE !== '1' || !qqCalendarWake) {
+    void sendCalendarWake();
+    return;
+  }
+  const now = Date.now();
+  if (!phoneBridgeEnabled() || now - lastQqWake < 30_000) return;
+  lastQqWake = now;
+  const hint = 'Agent 日程唤醒 ' + calendarWakeHint(process.env.QQ_AGENT_PHONE_TOKEN, now);
+  void Promise.resolve().then(() => qqCalendarWake(hint)).catch(() => {
+    console.warn('[phone-bridge] QQ 日程唤醒发送未确认');
+  });
+}
+
+export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR, calendarWaitMs = 20000, wakeThroughQq }) {
+  if (dataDir === DATA_DIR) qqCalendarWake = wakeThroughQq;
   router.add('POST', endpoint, async (req, res) => {
     let events;
     try {
@@ -294,7 +312,7 @@ export function requestPhoneCalendar(dataDir, range, now = Date.now(), maxEvents
   if (requests.filter(item => !item.snapshot).length >= 12) return { ...ordinary, requestedSync: 'queue_full' };
   const request = { id: randomUUID(), from, to, createdAt: now };
   writeStored(dataDir, calendarReadFile, [...requests.slice(-35), request]);
-  if (dataDir === DATA_DIR) void sendCalendarWake();
+  signalCalendarWork(dataDir);
   return { ...ordinary, requestedSync: 'pending', requestId: request.id };
 }
 
@@ -315,7 +333,7 @@ function requestCalendarChunks(dataDir, ordinary, requests, now, total, maxEvent
     const kept = requests.filter(item => (item.to > from && item.from < to) || !item.snapshot);
     const spare = requests.filter(item => !kept.includes(item));
     writeStored(dataDir, calendarReadFile, [...spare, ...kept, ...additions].slice(-36));
-    if (dataDir === DATA_DIR) void sendCalendarWake();
+    signalCalendarWork(dataDir);
   }
   if (snapshots.length < total) return {
     ...ordinary, requestedSync: 'pending', completedSegments: snapshots.length, totalSegments: total
@@ -432,6 +450,6 @@ export function ownerCalendarWrite(ctx, args, dataDir = DATA_DIR) {
   const job = { id: randomUUID(), title, location, start, end, createdAt: now, updatedAt: now, status: 'queued',
     ...(expected ? { operation: 'update', expected } : {}) };
   writeStored(dataDir, 'calendar-writes.json', [...last, ...pending, job]);
-  if (dataDir === DATA_DIR) void sendCalendarWake();
+  signalCalendarWork(dataDir);
   return { id: job.id, status: job.status, note: '待手机领取并确认写入，当前尚未写入日历。' };
 }
