@@ -60,7 +60,9 @@ export async function checkMailFollowUp({ dataDir, env, readThread, notify, now 
     if (!current) return;
     const messages = thread.messages ?? [];
     const sent = messages.findLastIndex(message => message.direction === 'outgoing');
-    const reply = sent >= 0 ? messages.slice(sent + 1).findLast(message => message.direction === 'incoming') : null;
+    const reply = sent >= 0
+      ? messages.slice(sent + 1).findLast(message => message.direction === 'incoming' && !message.automatic)
+      : null;
     if (reply) current.outcome = { status: 'replied', text: reply.excerpt || reply.subject };
     else if (now >= job.deadline) current.outcome = thread.status === 'ok' && sent >= 0
       ? { status: 'due', text: messages[sent].subject }

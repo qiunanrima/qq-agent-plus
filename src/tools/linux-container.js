@@ -56,7 +56,8 @@ export function workspaceSearchCommand(directory, keywords, requestText) {
   const filters = keywords.map((word) => '-iname ' + quoteShell('*' + word.trim() + '*')).join(' -o ');
   return 'set -eu; dir=$(realpath -e -- ' + quoteShell(directory) + '); '
     + 'test "$dir" = ' + quoteShell(directory) + '; test -d "$dir"; '
-    + 'find -P "$dir" -maxdepth 3 -type f \\( ' + filters + ' \\) -printf "%p\\0" | head -z -n 26';
+    + 'find -P "$dir" -maxdepth 3 -mindepth 1 \\( -type d -name ".*" -prune \\) -o '
+    + '\\( -type f ! -name ".*" \\( ' + filters + ' \\) -printf "%p\\0" \\) | head -z -n 26';
 }
 
 export function workspaceMaterialCommand(directory, file, requestText, { scanPdf = false } = {}) {

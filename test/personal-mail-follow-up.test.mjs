@@ -7,7 +7,7 @@ import { checkMailFollowUp, manageMailFollowUp } from '../src/personal-mail/foll
 
 test('follow-up reports replies before the deadline and hands off a due outcome once', async t => {
   const dataDir = await mkdtemp(join(tmpdir(), 'mail-follow-up-'));
-  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  t.after(() => rm(dataDir, { recursive: true, force: true, maxRetries: 3 }));
   const env = { QQ_AGENT_GMAIL_REFRESH_TOKEN: 'test' };
   const options = { dataDir, env, now: 100 };
   const add = (threadId, deadline) => manageMailFollowUp({ threadId, deadline }, options);
@@ -17,6 +17,7 @@ test('follow-up reports replies before the deadline and hands off a due outcome 
   const calls = [];
   const readThread = async ({ threadId }) => ({ status: 'ok', messages: [
     { direction: 'outgoing', subject: 'Request' },
+    { direction: 'incoming', automatic: true, excerpt: 'Out of office' },
     ...(threadId === 'quoted' ? [{ direction: 'incoming', excerpt: 'Quote is ready' }] : [])
   ] });
   const check = (now, notify = job => calls.push(job)) => checkMailFollowUp({ dataDir, env, readThread, notify, now });

@@ -40,6 +40,7 @@ test('Gmail follow-up reads an exact thread and distinguishes incoming replies f
     assert.equal(url.pathname, '/gmail/v1/users/me/threads/thread123');
     return Response.json({ messages: [
       { id: 'sent', labelIds: ['SENT'], snippet: 'Request for quote', internalDate: '1' },
+      { id: 'automatic', labelIds: ['INBOX'], payload: { headers: [{ name: 'Auto-Submitted', value: 'auto-replied' }] } },
       { id: 'reply', labelIds: ['INBOX'], snippet: 'Quote is ready', internalDate: '2' },
       { id: 'draft', labelIds: ['DRAFT'], snippet: 'Unsent draft', internalDate: '3' }
     ] });
@@ -47,7 +48,8 @@ test('Gmail follow-up reads an exact thread and distinguishes incoming replies f
   const result = await runPersonalMailRequest({ action: 'thread', threadId: 'thread123' }, { env, fetchImpl });
   assert.equal(result.status, 'ok');
   assert.deepEqual(result.messages.map(({ id, direction }) => [id, direction]),
-    [['sent', 'outgoing'], ['reply', 'incoming']]);
+    [['sent', 'outgoing'], ['automatic', 'incoming'], ['reply', 'incoming']]);
+  assert.equal(result.messages[1].automatic, true);
 });
 
 test('search returns separate source references from Gmail and read-only QQ IMAP', async () => {

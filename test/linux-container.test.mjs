@@ -22,6 +22,7 @@ test('container requires an owner-only inbound turn and explicit group opt-in', 
 test('workspace search requires the exact private request directory and literal keywords', async () => {
   const root = '/workspace/client-project';
   assert.match(workspaceSearchCommand(root, ['报价', 'Meeting notes'], '在 /workspace/client-project 找会前资料'), /find -P/);
+  assert.match(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project 找'), /-name "\.\*" -prune/);
   assert.match(workspaceSearchCommand('/workspace/client project', ['报价'],
     '在「/workspace/client project」找会前资料'), /find -P/);
   assert.equal(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project-archive 找'), null);

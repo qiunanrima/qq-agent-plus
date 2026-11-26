@@ -116,9 +116,12 @@ export async function readGmailThread(args, { env, fetchImpl = fetch, signal }) 
       ['DRAFT', 'SPAM', 'TRASH'].includes(label)));
     const messages = visible.slice(-limit).map(message => {
       const header = name => message.payload?.headers?.find(item => item.name?.toLowerCase() === name)?.value;
+      const automatic = Boolean(header('auto-submitted') && !/^no(?:\s*;|$)/i.test(header('auto-submitted').trim())) ||
+        Boolean(header('x-autoreply') || header('x-autorespond'));
       return {
         id: message.id,
         direction: message.labelIds?.includes('SENT') ? 'outgoing' : 'incoming',
+        ...(automatic ? { automatic: true } : {}),
         from: limitText(header('from'), 200), subject: limitText(header('subject'), 200),
         receivedAt: timestamp(Number(message.internalDate)), excerpt: limitText(message.snippet)
       };
