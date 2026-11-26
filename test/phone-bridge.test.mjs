@@ -222,7 +222,9 @@ test('availability uses bookings beyond the display limit and rejects a truncate
   await writeFile(file, JSON.stringify(snapshot));
   const range = { from: snapshot.from, to: snapshot.to, durationMinutes: 5 };
   assert.equal(requestPhoneCalendar(dataDir, range).events.length, 30);
-  assert.deepEqual(requestCalendarAvailability(dataDir, range).available, [{ from: 31 * minute, to: 40 * minute }]);
+  const availability = requestCalendarAvailability(dataDir, range);
+  assert.deepEqual(availability.available, [{ from: 31 * minute, to: 40 * minute }]);
+  assert.deepEqual(availability.startRanges, [{ earliest: 31 * minute, latest: 35 * minute }]);
   await writeFile(file, JSON.stringify({ ...snapshot, truncated: true }));
   assert.equal(requestCalendarAvailability(dataDir, range).available, undefined);
 });

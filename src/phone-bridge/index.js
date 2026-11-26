@@ -272,7 +272,12 @@ export function requestCalendarAvailability(dataDir, range, now = Date.now()) {
   const result = { requested: { from, to }, coverage, truncated, requestedSync, timeZone, receivedAt, completedSegments, totalSegments };
   if (coverage !== 'full' || truncated) return result;
   const available = findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude });
-  return { ...result, available: available.slice(0, 30), availableTruncated: available.length > 30 };
+  const duration = durationMinutes * 60000;
+  return {
+    ...result, durationMinutes, bufferMinutes,
+    available: available.slice(0, 30), availableTruncated: available.length > 30,
+    startRanges: available.slice(0, 30).map(window => ({ earliest: window.from, latest: window.to - duration }))
+  };
 }
 
 export function findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude = [] }) {
