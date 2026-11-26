@@ -1669,6 +1669,7 @@ export class Orchestrator {
 
   #commitSessionHandoff(session, { chatKey, triggerEntries }) {
     const cfg = getConfig();
+    if (cfg.memory?.unifiedEnabled === true) return null;
     if (cfg.memory?.handoffEnabled === false || typeof this.memory?.setHandoff !== 'function') return null;
 
     let draft = session.handoffDraft;
@@ -2025,7 +2026,7 @@ export class Orchestrator {
     // 人类化状态：有真实互动才轻微抬心情/掉精力；关闭时整条链路不碰。
     if (!channel && cfg.humanize?.enabled === true && triggerEntries?.length) {
       notePersonaInteraction(persona, { kind: 'incoming' });
-      if (cfg.humanize?.relationship?.enabled !== false) {
+      if (cfg.memory?.unifiedEnabled !== true && cfg.humanize?.relationship?.enabled !== false) {
         try {
           for (const userId of handoffParticipantIds(triggerEntries)) {
             this.memory.noteInteraction?.(userId, { at: Date.now() });
