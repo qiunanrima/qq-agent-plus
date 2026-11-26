@@ -69,6 +69,20 @@ test('personal briefing reads only matching synced phone notifications in the ow
   assert.deepEqual(multiple.events.map(event => event.source).sort(), ['com.tencent.mm', 'com.tencent.mobileqq']);
   const group = await dispatchTool(defs, { ...ctx, chatKey: 'group:1' }, 'phone_notifications', '{}');
   assert.equal(group.isError, true);
+  const start = Date.now() + 600000;
+  const event = { eventId: '42', title: '现有会议', start, end: start + 60000, allDay: false, location: '' };
+  fs.writeFileSync(path.join(dir, 'calendar.json'), JSON.stringify({
+    from: start - 60000, to: start + 120000, receivedAt, events: [event]
+  }));
+  const editContext = { chatKey, triggerEntries: [{ senderId: owner, text: '把现有会议推迟一分钟' }] };
+  const edit = await dispatchTool(defs, editContext, 'phone_calendar_write', JSON.stringify({
+    action: 'update', eventId: event.eventId, originalStart: start, start: start + 60000
+  }));
+  assert.equal(edit.isError, undefined);
+  const [job] = JSON.parse(fs.readFileSync(path.join(dir, 'calendar-writes.json'), 'utf8'));
+  assert.equal(job.operation, 'update');
+  assert.equal(job.end, start + 120000);
+  assert.equal(job.expected.start, start);
 });
 
 test('技能 manifest 校验：坏 id、超长正文、缺 SKILL.md 都会被拒绝', () => {

@@ -98,7 +98,10 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
         ...(requestId !== undefined && payload.truncated === true ? { truncated: true } : {}),
         ...(['manual', 'periodic', 'notification', 'scheduled', 'calendar_change'].includes(payload.syncTrigger)
           ? { syncTrigger: payload.syncTrigger } : {}),
-        events: events.map(({ start, end, title, location, allDay }) => ({ start, end, title, location, allDay }))
+        events: events.map(({ start, end, title, location, allDay, eventId }) => ({
+          start, end, title, location, allDay,
+          ...(typeof eventId === 'string' && /^[1-9]\d{0,18}$/.test(eventId) ? { eventId } : {})
+        }))
       };
     } catch {
       return json(res, 400, { error: '日程快照格式无效' });
@@ -271,7 +274,7 @@ function requestCalendarChunks(dataDir, ordinary, requests, now, total, maxEvent
   const events = new Map();
   for (const snapshot of snapshots) {
     for (const event of snapshot.events) {
-      const key = JSON.stringify([event.start, event.end, event.title, event.location, event.allDay]);
+      const key = JSON.stringify([event.eventId, event.start, event.end, event.title, event.location, event.allDay]);
       events.set(key, event);
     }
   }
@@ -307,7 +310,7 @@ function syncCalendarCommands(dataDir, payload, json, res) {
   const { ready, results } = payload;
   if (typeof ready !== 'boolean' || !Array.isArray(results) || results.length > 20 ||
       results.some((item) => !item || !/^[a-f0-9-]{36}$/i.test(item.id ?? '') ||
-        !['written', 'failed', 'unknown'].includes(item.status))) {
+        !['written', 'failed', 'unknown', 'conflict'].includes(item.status))) {
     return json(res, 400, { error: '日程回执格式无效' });
   }
   const jobs = readStored(dataDir, 'calendar-writes.json', []);
@@ -330,7 +333,7 @@ function syncCalendarCommands(dataDir, payload, json, res) {
       changed = true;
     }
   }
-  const next = ready ? jobs.find((job) => job.status === 'queued') : null;
+  const next = ready ? jobs.find((job) => job.status === 'queued' && (job.operation !== 'update' || payload.canUpdate === true)) : null;
   if (next) {
     next.status = 'dispatched';
     next.updatedAt = now;
@@ -341,29 +344,45 @@ function syncCalendarCommands(dataDir, payload, json, res) {
 }
 
 export function ownerCalendarWrite(ctx, args, dataDir = DATA_DIR) {
-  if (!isOwnerRequest(ctx, /日程|日历|会议|行程/)) return null;
+  if (!isOwnerRequest(ctx, /日程|日历|会议|行程|的会/)) return null;
   const jobs = readStored(dataDir, 'calendar-writes.json', []);
   if (args.action === 'status') {
     return { jobs: jobs.slice(-10).reverse().map(({ id, title, status, start, updatedAt }) =>
       ({ id, title, status, start, updatedAt })) };
   }
-  if (args.action !== 'create' || !isOwnerRequest(ctx, /(?:新建|添加|加到|加进|记到|记进|定|建|排|创建).{0,16}(?:日程|日历|会议|行程)|(?:日程|日历).{0,12}(?:添加|新建|创建)/)) return null;
-  const title = typeof args.title === 'string' ? args.title.trim() : '';
-  const location = typeof args.location === 'string' ? args.location.trim() : '';
-  const { start, end } = args;
+  const updating = args.action === 'update';
+  if (updating ? !isOwnerRequest(ctx, /改|调整|提前|推迟|延后|挪|移到|换到/) :
+    args.action !== 'create' || !isOwnerRequest(ctx, /(?:新建|添加|加到|加进|记到|记进|定|建|排|创建).{0,16}(?:日程|日历|会议|行程)|(?:日程|日历).{0,12}(?:添加|新建|创建)/)) return null;
+  let expected;
+  if (updating) {
+    const regular = readStored(dataDir, 'calendar.json', null);
+    const requested = readStored(dataDir, calendarReadFile, []).map(item => item.snapshot);
+    const snapshots = [regular, ...requested].filter(Boolean).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    const event = snapshots.flatMap(snapshot => snapshot.events)
+      .find(item => item.eventId && item.eventId === args.eventId && item.start === args.originalStart);
+    if (!event || event.allDay) return { error: '请先查到要修改的单次非全天日程，再使用返回的编号和原开始时间' };
+    const { eventId, start, end, title, location } = event;
+    expected = { eventId, start, end, title, location };
+  }
+  const title = typeof args.title === 'string' ? args.title.trim() : expected?.title ?? '';
+  const location = typeof args.location === 'string' ? args.location.trim() : expected?.location ?? '';
+  const start = args.start ?? expected?.start;
+  const end = args.end ?? (expected && start + (expected.end - expected.start));
   const now = Date.now();
   if (!title || title.length > 160 || location.length > 100 ||
       !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
       start <= now || end <= start || end - start > 86400000 || end > 8.64e15) {
     return { error: '请提供准确的标题、未来开始时间和结束时间，日程最长 24 小时' };
   }
-  const duplicate = jobs.find((job) => job.title === title && job.location === location &&
-    job.start === start && job.end === end && !['failed', 'expired'].includes(job.status));
+  const duplicate = jobs.find((job) => job.expected?.eventId === expected?.eventId &&
+    job.expected?.start === expected?.start && job.title === title && job.location === location &&
+    job.start === start && job.end === end && !['failed', 'expired', 'conflict'].includes(job.status));
   if (duplicate) return { id: duplicate.id, status: duplicate.status };
   const pending = jobs.filter((job) => job.status === 'queued' && job.start > now && now - job.createdAt < 86400000);
   if (pending.length >= 20) return { error: '手机待处理日程队列已满' };
   const last = jobs.filter((job) => !pending.includes(job)).slice(-100);
-  const job = { id: randomUUID(), title, location, start, end, createdAt: now, updatedAt: now, status: 'queued' };
+  const job = { id: randomUUID(), title, location, start, end, createdAt: now, updatedAt: now, status: 'queued',
+    ...(expected ? { operation: 'update', expected } : {}) };
   writeStored(dataDir, 'calendar-writes.json', [...last, ...pending, job]);
   return { id: job.id, status: job.status, note: '待手机领取并确认写入，当前尚未写入日历。' };
 }

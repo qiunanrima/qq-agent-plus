@@ -115,10 +115,10 @@ test('phone upload uses its own credential and stores a retried event only once'
   const command = { id: randomUUID(), title: 'Queued meeting', location: '',
     start: Date.now() + 60000, end: Date.now() + 120000, createdAt: Date.now(), status: 'queued' };
   await writeFile(join(dataDir, 'phone-bridge', 'calendar-writes.json'), JSON.stringify([command]));
-  const commands = async (ready, results = []) => {
+  const commands = async (ready, results = [], canUpdate = false) => {
     const reply = await fetch(base + '/api/phone-bridge/calendar', {
       method: 'POST', headers: { Authorization: 'Bearer ' + token },
-      body: JSON.stringify({ mode: 'commands', ready, results })
+      body: JSON.stringify({ mode: 'commands', ready, results, canUpdate })
     });
     assert.equal(reply.status, 200);
     return reply.json();
@@ -137,6 +137,13 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.equal(combined.command.id, next.id);
   assert.deepEqual((await commands(false, [result])).acknowledged, [command.id]);
   assert.equal((await commands(true)).command, null);
+  const update = { ...command, id: randomUUID(), operation: 'update',
+    expected: { eventId: '42', title: 'Old title', location: '', start: command.start, end: command.end } };
+  await writeFile(jobsFile, JSON.stringify([update]));
+  assert.equal((await commands(true)).command, null);
+  assert.equal((await commands(true, [], true)).command.id, update.id);
+  assert.deepEqual((await commands(false, [{ id: update.id, status: 'conflict' }])).acknowledged, [update.id]);
+  assert.equal((await commands(true, [], true)).command, null);
 });
 
 test('phone notification results filter by app, keyword and half-open time range before limiting', () => {

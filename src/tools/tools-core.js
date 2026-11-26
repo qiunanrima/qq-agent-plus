@@ -3085,9 +3085,11 @@ export function buildToolDefs() {
       }
     }, {
       name: 'phone_calendar_write',
-      description: '管理员 QQ 私聊明确要求新增日程时，把指定标题、地点、开始与结束时间下发给手机；或查询下发状态。仅 written 表示手机回读确认，queued/dispatched/unknown 都不能答复已经添加。',
+      description: '管理员 QQ 私聊可新增日程，或先查 phone_calendar 再修改已有的单次非全天日程。修改使用返回的 eventId 和原 start，只传要改的字段。仅 written 表示手机已回读确认，conflict 表示手机原记录不匹配，请重新查询。',
       parameters: { type: 'object', required: ['action'], properties: {
-        action: { type: 'string', enum: ['create', 'status'] },
+        action: { type: 'string', enum: ['create', 'update', 'status'] },
+        eventId: { type: 'string', description: '修改时使用日历查询返回的日程编号' },
+        originalStart: { type: 'integer', description: '修改前的开始时间，Unix 毫秒' },
         title: { type: 'string' }, location: { type: 'string' },
         start: { type: 'integer', description: '开始时间，Unix 毫秒' },
         end: { type: 'integer', description: '结束时间，Unix 毫秒' }
