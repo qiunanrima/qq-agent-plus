@@ -44,7 +44,7 @@ const quoteShell = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 function workspaceDirectoryAllowed(directory, requestText) {
   if (typeof directory !== 'string' || directory.length > 180 ||
       !/^\/workspace\/(?:[\p{L}\p{N}_-][\p{L}\p{N}_. -]*\/)*[\p{L}\p{N}_-][\p{L}\p{N}_. -]*$/u.test(directory)) return false;
-  const requestedPaths = String(requestText ?? '').match(/\/workspace\/[^\s"'，。；、）)]+/gu) ?? [];
+  const requestedPaths = String(requestText ?? '').match(/\/workspace\/[^\s"'，。；、！？：」』】）)]+/gu) ?? [];
   return requestedPaths.includes(directory) ||
     String(requestText ?? '').includes('"' + directory + '"') ||
     String(requestText ?? '').includes('「' + directory + '」');

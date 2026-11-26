@@ -26,6 +26,8 @@ test('workspace search requires the exact private request directory and literal 
   assert.match(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project 找'), /sort -z -k1,1nr.*head -z -n 26/);
   assert.match(workspaceSearchCommand('/workspace/client project', ['报价'],
     '在「/workspace/client project」找会前资料'), /find -P/);
+  assert.match(workspaceSearchCommand(root, ['报价'], '会前资料在 /workspace/client-project？'), /find -P/);
+  assert.match(workspaceSearchCommand(root, ['报价'], '目录：/workspace/client-project：查报价'), /find -P/);
   assert.equal(workspaceSearchCommand(root, ['报价'], '在 /workspace/client-project-archive 找'), null);
   assert.equal(workspaceSearchCommand('/workspace/../etc', ['报价'], '用 /workspace/../etc'), null);
   assert.equal(workspaceSearchCommand(root, ['*.pdf'], '在 /workspace/client-project 找'), null);
