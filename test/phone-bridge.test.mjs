@@ -120,6 +120,15 @@ test('phone upload uses its own credential and stores a retried event only once'
     if (segment === 0) assert.equal(requestPhoneCalendar(dataDir, longRange).completedSegments, 1);
   }
   assert.equal(requestPhoneCalendar(dataDir, longRange).coverage, 'full');
+  const readJobsFile = join(dataDir, 'phone-bridge', 'calendar-reads.json');
+  const readJobs = JSON.parse(await readFile(readJobsFile, 'utf8'));
+  const waitingWithoutEvent = wait(token);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  // A separate process can update the persisted queue without the server's in-process signal.
+  await writeFile(readJobsFile, JSON.stringify([...readJobs, {
+    id: randomUUID(), from: to + day, to: to + 2 * day, createdAt: Date.now()
+  }]));
+  assert.deepEqual(await (await waitingWithoutEvent).json(), { pending: true });
 
   const command = { id: randomUUID(), title: 'Queued meeting', location: '',
     start: Date.now() + 60000, end: Date.now() + 120000, createdAt: Date.now(), status: 'queued' };

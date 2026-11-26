@@ -57,16 +57,18 @@ function waitForCalendarWork(dataDir, canWrite, res, json, timeout) {
       cleanup();
       resolve();
     };
-    const timer = setTimeout(() => finish(false), timeout);
-    res.once('close', close);
-    calendarWaiters.set(dataDir, () => {
+    const check = expired => {
       try {
-        if (calendarWorkReady(dataDir, canWrite)) finish(true);
+        const pending = calendarWorkReady(dataDir, canWrite);
+        if (pending || expired) finish(pending);
       } catch (error) {
         cleanup();
         reject(error);
       }
-    });
+    };
+    const timer = setTimeout(() => check(true), timeout);
+    res.once('close', close);
+    calendarWaiters.set(dataDir, () => check(false));
   });
 }
 
