@@ -3,6 +3,6 @@
   "name": "每日秘书与会前准备",
   "version": "1.0.0",
   "description": "在管理员私聊汇总通知、准备会议、协调日程、跟进邮件或核对报销票据。",
-  "allowedTools": ["phone_notifications", "phone_calendar", "phone_calendar_write", "personal_mail_search", "linux_find_workspace_files", "linux_read_workspace_material", "expense_reconcile", "send_message"],
+  "allowedTools": ["phone_notifications", "phone_calendar", "phone_calendar_write", "personal_mail_search", "linux_find_workspace_files", "linux_read_workspace_material", "linux_export_calendar_invitation", "expense_reconcile", "send_message"],
   "triggers": ["每日秘书", "会前准备", "会要准备什么", "会议要准备什么", "汇总手机通知", "日程协调", "约个时间", "报销", "整理票据", "邮件跟进", "还没回就", "要提前处理", "需要我提前处理", "今晚要准备什么"]
 }

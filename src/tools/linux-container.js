@@ -1,4 +1,5 @@
 import net from 'node:net';
+import { createCalendarInvitation } from '../phone-bridge/calendar-invitation.js';
 import { safeFetchBinary } from '../llm/safe-fetch.js';
 import { resolveFileSegmentUrl } from './audio-transcribe.js';
 
@@ -126,6 +127,36 @@ export function containerTools(getConfig, turn) {
     }
   }];
   const privateOwner = turn.chatKey === 'private:' + String(getConfig().admin?.ownerUin ?? '').trim();
+  if (privateOwner) tools.push({
+    name: 'linux_export_calendar_invitation',
+    description: '把已确认的会议和收件人生成 .ics 邀约文件，保存到独立工作区。仅在用户要求生成邀约附件时调用；返回工作区路径。',
+    parameters: {
+      type: 'object', required: ['title', 'start', 'end', 'organizer', 'attendees'], properties: {
+        title: { type: 'string' },
+        start: { type: 'integer', description: '会议开始时间，Unix 毫秒' },
+        end: { type: 'integer', description: '会议结束时间，Unix 毫秒' },
+        organizer: { type: 'string', description: '已确认的组织者邮箱' },
+        attendees: { type: 'array', items: { type: 'string' }, description: '已确认的受邀者邮箱' },
+        location: { type: 'string' }
+      }
+    },
+    async execute(ctx, args) {
+      const request = ctx.triggerEntries?.filter(entry => entry && !entry.self).at(-1);
+      if (!containerAllowed(getConfig(), turn) || String(request?.senderId ?? '') !== String(turn.senders[0]) ||
+          !/\.ics\b|(?:生成|导出|制作).{0,12}(?:邀约|邀请).{0,4}(?:附件|文件)/iu.test(String(request.text ?? ''))) {
+        return { content: '请在管理员私聊明确要求生成邀约附件', isError: true, reportIncident: false };
+      }
+      const invitation = createCalendarInvitation(args);
+      if (!invitation) return { content: '请核对会议时间和邮箱地址', isError: true, reportIncident: false };
+      const data = Buffer.from(invitation.content);
+      try {
+        const file = await containerRequest({ action: 'import', name: 'meeting-invitation.ics', size: data.length }, ctx.signal, data);
+        return { content: JSON.stringify({ file: file.path, uid: invitation.uid, status: 'exported' }) };
+      } catch {
+        return { content: '邀约附件保存结果未知，请先检查工作区', isError: true, reportIncident: false };
+      }
+    }
+  });
   if (privateOwner) tools.push({
     name: 'linux_find_workspace_files',
     description: '在管理员私聊本轮明确指定的 /workspace 子目录里按文件名查资料。输入原话里的目录和 1–5 个关键词。返回候选路径、大小和修改时间。修改时间可用来排序候选，文件内容须另行读取。',
