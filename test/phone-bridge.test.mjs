@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRouter } from '../src/console/router.js';
-import { findCalendarWindows, registerPhoneBridge, requestPhoneCalendar, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
+import { findCalendarWindows, registerPhoneBridge, requestCalendarAvailability, requestPhoneCalendar, selectPhoneCalendar, selectPhoneNotifications } from '../src/phone-bridge/index.js';
 
 test('phone upload uses its own credential and stores a retried event only once', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-phone-bridge-'));
@@ -183,4 +183,20 @@ test('availability merges overlapping bookings and accounts for buffers outside 
     from: 60 * minute, to: 220 * minute, durationMinutes: 20, bufferMinutes: 10,
     exclude: [{ from: 160 * minute, to: 180 * minute }]
   }), [{ from: 65 * minute, to: 85 * minute }, { from: 180 * minute, to: 220 * minute }]);
+});
+
+test('availability uses bookings beyond the display limit and rejects a truncated phone snapshot', async t => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'calendar-availability-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  await mkdir(join(dataDir, 'phone-bridge'));
+  const file = join(dataDir, 'phone-bridge', 'calendar.json');
+  const minute = 60000;
+  const snapshot = { from: 0, to: 40 * minute, events: Array.from({ length: 31 },
+    (_, i) => ({ start: i * minute, end: (i + 1) * minute })) };
+  await writeFile(file, JSON.stringify(snapshot));
+  const range = { from: snapshot.from, to: snapshot.to, durationMinutes: 5 };
+  assert.equal(requestPhoneCalendar(dataDir, range).events.length, 30);
+  assert.deepEqual(requestCalendarAvailability(dataDir, range).available, [{ from: 31 * minute, to: 40 * minute }]);
+  await writeFile(file, JSON.stringify({ ...snapshot, truncated: true }));
+  assert.equal(requestCalendarAvailability(dataDir, range).available, undefined);
 });

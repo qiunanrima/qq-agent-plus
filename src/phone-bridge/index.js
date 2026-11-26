@@ -181,8 +181,12 @@ export function readOwnerPhoneNotifications(ctx, args = {}) {
 export function readOwnerCalendar(ctx, range) {
   if (!isOwnerRequest(ctx, /日程|日历|安排|会议|会前|有空|准备|行程|空档|约|空闲/)) return null;
   if (range.durationMinutes === undefined) return requestPhoneCalendar(DATA_DIR, range);
+  return requestCalendarAvailability(DATA_DIR, range);
+}
+
+export function requestCalendarAvailability(dataDir, range, now = Date.now()) {
   const { durationMinutes, bufferMinutes = 0, exclude = [] } = range;
-  const from = range.from ?? Date.now();
+  const from = range.from ?? now;
   const to = range.to ?? from + 7 * 86400000;
   if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440 ||
       !Number.isSafeInteger(bufferMinutes) || bufferMinutes < 0 || bufferMinutes > 1440 ||
@@ -194,15 +198,13 @@ export function readOwnerCalendar(ctx, range) {
     return { error: '请提供有效的避开时段，最多 60 段' };
   }
   const buffer = bufferMinutes * 60000;
-  const calendar = requestPhoneCalendar(DATA_DIR, { from: from - buffer, to: to + buffer });
+  const calendar = requestPhoneCalendar(dataDir, { from: from - buffer, to: to + buffer }, now, Infinity);
   if (calendar.error) return calendar;
   const { coverage, truncated, requestedSync, timeZone, receivedAt, events, completedSegments, totalSegments } = calendar;
-  return {
-    requested: { from, to }, coverage, truncated, requestedSync, timeZone, receivedAt, completedSegments, totalSegments,
-    ...(coverage === 'full' && !truncated ? {
-      available: findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude })
-    } : {})
-  };
+  const result = { requested: { from, to }, coverage, truncated, requestedSync, timeZone, receivedAt, completedSegments, totalSegments };
+  if (coverage !== 'full' || truncated) return result;
+  const available = findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude });
+  return { ...result, available: available.slice(0, 30), availableTruncated: available.length > 30 };
 }
 
 export function findCalendarWindows(events, { from, to, durationMinutes, bufferMinutes, exclude = [] }) {
@@ -224,28 +226,28 @@ export function findCalendarWindows(events, { from, to, durationMinutes, bufferM
   return windows;
 }
 
-export function requestPhoneCalendar(dataDir, range, now = Date.now()) {
-  const ordinary = selectPhoneCalendar(readStored(dataDir, 'calendar.json', null), range, now);
+export function requestPhoneCalendar(dataDir, range, now = Date.now(), maxEvents = 30) {
+  const ordinary = selectPhoneCalendar(readStored(dataDir, 'calendar.json', null), range, now, maxEvents);
   if (ordinary.error || ordinary.coverage === 'full') return ordinary;
   const { from, to } = ordinary.requested;
   const total = Math.ceil((to - from) / calendarReadMaxSpan);
   if (total > 12) return { ...ordinary, requestedSync: 'range_too_wide' };
   const requests = readStored(dataDir, calendarReadFile, [])
     .filter(item => now - item.createdAt < calendarReadLifetime);
-  if (total > 1) return requestCalendarChunks(dataDir, ordinary, requests, now, total);
+  if (total > 1) return requestCalendarChunks(dataDir, ordinary, requests, now, total, maxEvents);
   const same = requests.find(item => item.from === from && item.to === to);
   if (same) return same.snapshot
-    ? selectPhoneCalendar(same.snapshot, range, now)
+    ? selectPhoneCalendar(same.snapshot, range, now, maxEvents)
     : { ...ordinary, requestedSync: 'pending', requestId: same.id };
   const covering = requests.find(item => item.snapshot && item.from <= from && item.to >= to);
-  if (covering) return selectPhoneCalendar(covering.snapshot, range, now);
+  if (covering) return selectPhoneCalendar(covering.snapshot, range, now, maxEvents);
   if (requests.filter(item => !item.snapshot).length >= 12) return { ...ordinary, requestedSync: 'queue_full' };
   const request = { id: randomUUID(), from, to, createdAt: now };
   writeStored(dataDir, calendarReadFile, [...requests.slice(-35), request]);
   return { ...ordinary, requestedSync: 'pending', requestId: request.id };
 }
 
-function requestCalendarChunks(dataDir, ordinary, requests, now, total) {
+function requestCalendarChunks(dataDir, ordinary, requests, now, total, maxEvents) {
   const { from, to } = ordinary.requested;
   const snapshots = [];
   const additions = [];
@@ -279,10 +281,10 @@ function requestCalendarChunks(dataDir, ordinary, requests, now, total) {
     syncTriggers: [...new Set(snapshots.map(item => item.syncTrigger ?? 'unknown'))],
     events: [...events.values()].sort((a, b) => a.start - b.start),
     truncated: snapshots.some(item => item.truncated)
-  }, { from, to }, now);
+  }, { from, to }, now, maxEvents);
 }
 
-export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now()) {
+export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now(), maxEvents = 30) {
   const start = from ?? now;
   const end = to ?? (start + 7 * 86400000);
   if (![start, end].every(time => Number.isSafeInteger(time) && Math.abs(time) <= 8.64e15) || end <= start) {
@@ -297,8 +299,8 @@ export function selectPhoneCalendar(snapshot, { from, to }, now = Date.now()) {
   const events = coverage === 'none' ? [] : snapshot.events.filter(event =>
     event.start < overlapTo && (event.end > overlapFrom || (event.end === event.start && event.start >= overlapFrom))
   );
-  return { ...snapshot, synced: true, requested, coverage, events: events.slice(0, 30),
-    truncated: Boolean(snapshot.truncated) || events.length > 30 };
+  return { ...snapshot, synced: true, requested, coverage, events: events.slice(0, maxEvents),
+    truncated: Boolean(snapshot.truncated) || events.length > maxEvents };
 }
 
 function syncCalendarCommands(dataDir, payload, json, res) {
