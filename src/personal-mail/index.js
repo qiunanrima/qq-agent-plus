@@ -264,6 +264,10 @@ export async function searchPersonalMail(args, {
   if ((!query && args.action !== 'recent') || query.length > 100 || /[\u0000-\u001f\u007f]/u.test(query)) {
     return { error: '请输入 1–100 字的邮件搜索关键词' };
   }
+  const fallback = typeof args.fallbackQuery === 'string' ? args.fallbackQuery.trim() : '';
+  if (fallback && (!query || fallback.length > 100 || /[\u0000-\u001f\u007f]/u.test(fallback))) {
+    return { error: '备选关键词须用于搜索，且最多 100 字' };
+  }
   const configured = mailProviders(env);
   const providers = args.provider && args.provider !== 'all' ? [args.provider] : configured;
   const days = Math.max(1, Math.min(90, Math.trunc(Number(args.days)) || 14));
@@ -272,8 +276,10 @@ export async function searchPersonalMail(args, {
     if (!configured.includes(provider)) return { provider, status: 'not_configured', messages: [] };
     const options = { env, fetchImpl, makeImap, signal: withDeadline(signal, 18000) };
     try {
-      const messages = await (provider === Gmail ? searchGmail : searchQQ)(query, days, limit, options);
-      return { provider, status: 'ok', messages };
+      const search = provider === Gmail ? searchGmail : searchQQ;
+      const messages = await search(query, days, limit, options);
+      if (messages.length || !fallback || fallback === query) return { provider, status: 'ok', messages };
+      return { provider, status: 'ok', matchedQuery: fallback, messages: await search(fallback, days, limit, options) };
     } catch {
       return { provider, status: 'unavailable', messages: [] };
     }
@@ -344,6 +350,7 @@ export function personalMailTool() {
       threadId: { type: 'string', description: 'thread 模式使用 Gmail 搜索结果中的线程编号' },
       importantOnly: { type: 'boolean', description: 'triage 模式只显示被标为重要的邮件' },
       query: { type: 'string', description: '项目名、客户名、主题或发件人关键词' },
+      fallbackQuery: { type: 'string', description: '搜索结果为空时再用的简短关键词，例如完整会议标题找不到时用项目名' },
       provider: { type: 'string', enum: ['all', Gmail, QQ] },
       days: { type: 'integer', minimum: 1, maximum: 90 },
       limit: { type: 'integer', minimum: 1, maximum: 20, description: '普通查询最多 6 条，线程最多 20 条' }

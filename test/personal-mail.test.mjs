@@ -180,3 +180,27 @@ test('panel stores encrypted credentials and keeps legacy environment configurat
   assert.equal(legacy.update('qq', { enabled: false, values: {} }), null);
   assert.equal(legacy.runtimeEnv().QQ_AGENT_QQ_MAIL_AUTH_CODE, undefined);
 });
+
+
+test('mail search falls back to a project keyword only after an empty result', async () => {
+  const queries = [];
+  const fetchImpl = async request => {
+    const url = new URL(request);
+    if (url.pathname === '/token') return Response.json({ access_token: 'test-access' });
+    if (url.pathname.endsWith('/messages')) {
+      const query = url.searchParams.get('q');
+      queries.push(query);
+      return Response.json({ messages: query.startsWith('"Orchid"') ? [{ id: 'mail123' }] : [] });
+    }
+    return Response.json({ threadId: 'thread123', snippet: 'Freight is separate' });
+  };
+  const options = { env, fetchImpl };
+  const args = { provider: 'gmail', query: 'Orchid weekly meeting', fallbackQuery: 'Orchid' };
+  const { results: [result] } = await searchPersonalMail(args, options);
+  assert.deepEqual(queries, ['"Orchid weekly meeting" newer_than:14d', '"Orchid" newer_than:14d']);
+  assert.equal(result.matchedQuery, 'Orchid');
+  assert.equal(result.messages[0].threadId, 'thread123');
+  queries.length = 0;
+  await searchPersonalMail({ ...args, query: 'Orchid', fallbackQuery: 'client' }, options);
+  assert.deepEqual(queries, ['"Orchid" newer_than:14d']);
+});
