@@ -52,6 +52,25 @@ test('Gmail follow-up reads an exact thread and distinguishes incoming replies f
   assert.equal(result.messages[1].automatic, true);
 });
 
+test('Gmail exact message reads bounded plain text and skips attachment content', async () => {
+  const text = '报价 120 元，周五交付。' + 'x'.repeat(5000);
+  const fetchImpl = async request => {
+    const url = new URL(request);
+    if (url.pathname === '/token') return Response.json({ access_token: 'test-access' });
+    assert.equal(url.pathname, '/gmail/v1/users/me/messages/message123');
+    return Response.json({ threadId: 'thread123', payload: { parts: [
+      { mimeType: 'text/plain', filename: 'attachment.txt', body: { data: 'QUJD' } },
+      { mimeType: 'text/plain', body: { data: Buffer.from(text).toString('base64url'), size: Buffer.byteLength(text) } }
+    ] } });
+  };
+  const result = await runPersonalMailRequest({ action: 'message', messageId: 'message123' }, { env, fetchImpl });
+  assert.equal(result.contentSource, 'plain_text');
+  assert.match(result.excerpt, /^报价 120 元，周五交付。/);
+  assert.equal(result.truncated, true);
+  assert.ok(Buffer.byteLength(result.excerpt) <= 4096);
+  assert.match(result.source, /thread123$/);
+});
+
 test('search returns separate source references from Gmail and read-only QQ IMAP', async () => {
   assert.deepEqual(mailProviders({}), []);
   assert.deepEqual(mailProviders(env), ['gmail', 'qq']);
