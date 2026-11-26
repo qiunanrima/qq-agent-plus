@@ -73,11 +73,15 @@ test('saved triage survives an unavailable reminder queue without classifying ma
   assert.equal(classificationCalls, 1);
   assert.deepEqual(attempts, [attempts[0], attempts[0]]);
   const args = { action: 'triage', importantOnly: true };
-  const { results } = await runPersonalMailRequest(args, { dataDir, env: runtimeEnv() });
+  const { results, coverage } = await runPersonalMailRequest(args, { dataDir, env: runtimeEnv() });
+  assert.equal(coverage[0].initialized, true);
+  assert.ok(Date.parse(coverage[0].checkedAt) >= Date.parse(coverage[0].baselineAt));
   assert.deepEqual(results, [{
     provider: 'qq', category: 'deadline', summary: '今天需确认',
     source: '<deadline@example.invalid>', receivedAt: '2026-11-26T00:00:00.000Z'
   }]);
   const anotherAccount = { ...runtimeEnv(), QQ_AGENT_QQ_MAIL_USER: 'another' };
-  assert.deepEqual((await runPersonalMailRequest(args, { dataDir, env: anotherAccount })).results, []);
+  const uninitialized = await runPersonalMailRequest(args, { dataDir, env: anotherAccount });
+  assert.deepEqual(uninitialized.results, []);
+  assert.deepEqual(uninitialized.coverage, [{ provider: 'qq', initialized: false, checkedAt: null, baselineAt: null }]);
 });

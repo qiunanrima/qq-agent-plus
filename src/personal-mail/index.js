@@ -319,6 +319,10 @@ export async function runPersonalMailRequest(args, options) {
     const { env, dataDir = DATA_DIR } = options;
     const providers = mailProviders(env).filter(provider => !args.provider || args.provider === 'all' || provider === args.provider);
     const state = readTriageState(dataDir);
+    const coverage = providers.map(provider => {
+      const item = state[triageAccountKey(provider, env)];
+      return { provider, initialized: Boolean(item), checkedAt: item?.checkedAt ?? null, baselineAt: item?.baselineAt ?? null };
+    });
     const results = providers.flatMap(provider => {
       const item = state[triageAccountKey(provider, env)];
       return (item?.summaries ?? [])
@@ -327,7 +331,7 @@ export async function runPersonalMailRequest(args, options) {
     });
     results.sort((a, b) => (b.receivedAt ?? '').localeCompare(a.receivedAt ?? ''));
     const limit = Math.max(1, Math.min(6, Math.trunc(Number(args.limit)) || 3));
-    return { results: results.slice(0, limit), available: providers, truncated: results.length > limit };
+    return { results: results.slice(0, limit), available: providers, coverage, truncated: results.length > limit };
   }
   if (args.action !== 'status' && (['search', 'recent'].includes(args.action) || (typeof args.query === 'string' && args.query.trim()))) {
     return searchPersonalMail(args, options);
@@ -348,7 +352,7 @@ export function personalMailTool() {
       deadline: { type: 'integer', description: '跟进期限，Unix 毫秒' },
       followUpId: { type: 'string', description: '待改期或取消的跟进编号' },
       threadId: { type: 'string', description: 'thread 模式使用 Gmail 搜索结果中的线程编号' },
-      importantOnly: { type: 'boolean', description: 'triage 模式只显示被标为重要的邮件' },
+      importantOnly: { type: 'boolean', description: 'triage 模式只显示被标为重要的邮件。coverage 中 checkedAt 是上次成功整理时间；无记录或未初始化时，不能据此判断邮箱没有待办' },
       query: { type: 'string', description: '项目名、客户名、主题或发件人关键词' },
       fallbackQuery: { type: 'string', description: '搜索结果为空时再用的简短关键词，例如完整会议标题找不到时用项目名' },
       provider: { type: 'string', enum: ['all', Gmail, QQ] },

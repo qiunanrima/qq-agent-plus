@@ -59,13 +59,16 @@ export function createMailWatcher({ dataDir, complete, notify, followUp, log, po
         await enqueuePending(state, key, provider);
         const previous = state[key];
         const messages = await poll(provider, env, { baseline: !previous, seen: new Set(previous?.seen) }, signal);
-        if (!messages.length && previous) continue;
+
         const rows = previous && messages.length
           ? await summarizeInbox(messages, complete, AbortSignal.any([signal, AbortSignal.timeout(35_000)]))
           : [];
         signal.throwIfAborted();
         const important = rows.filter(row => row.category !== 'routine');
+        const checkedAt = new Date().toISOString();
         state[key] = {
+          checkedAt,
+          ...(previous?.baselineAt ? { baselineAt: previous.baselineAt } : !previous ? { baselineAt: checkedAt } : {}),
           seen: [...new Set([...messages.map(message => message.id), ...(previous?.seen ?? [])])].slice(0, 256),
           summaries: [...rows.map((row, index) => ({
             ...row, receivedAt: messages[index].receivedAt, source: messages[index].source
