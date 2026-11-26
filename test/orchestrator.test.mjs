@@ -2112,15 +2112,27 @@ describe('Orchestrator', () => {
       }
     } finally { db.close(); }
     let request;
+    let calls = 0;
     globalThis.fetch = async (_url, options) => {
       request = JSON.parse(options.body);
+      if (++calls === 1) {
+        const source = JSON.stringify(request.messages).match(/本轮可引用的消息编号：(\d+)/)?.[1];
+        assert.ok(source);
+        return Response.json({ choices: [{ message: { tool_calls: [{ id: 'record-unified', type: 'function',
+          function: { name: 'record_memory', arguments: JSON.stringify({
+            kind: 'agreement', topic: '新版周报', summary: '周三提交新版周报', messageId: source
+          }) } }] } }], usage: { total_tokens: 10 } });
+      }
       return Response.json({ choices: [{ message: { tool_calls: [{ id: 'finish-unified', type: 'function',
         function: { name: 'finish', arguments: '{}' } }] } }], usage: { total_tokens: 10 } });
     };
-    append(1, '周报什么时候交');
+    append(1, '记一下，新版周报周三提交');
+    await runner.wake('group:1');
+    append(2, '新版周报什么时候交');
     await runner.wake('group:1');
     const messages = JSON.stringify(request.messages);
     assert.match(messages, /UNIFIED_AGREEMENT_FIXTURE/);
+    assert.match(messages, /周三提交新版周报/);
     assert.doesNotMatch(messages, /LEGACY_IMPRESSION_FIXTURE|PRIVATE_MEMORY_FIXTURE/);
     const tools = request.tools.map(tool => tool.function.name);
     assert.ok(tools.includes('lookup_memory'));
