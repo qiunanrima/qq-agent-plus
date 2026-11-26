@@ -23,7 +23,7 @@ function workResult(name, args, result) {
   if (name === 'linux_import_qq_file' || name === 'linux_export_calendar_invitation') {
     const file = data.file || data.path;
     if (typeof file !== 'string' || !file.startsWith('/workspace/') || file.length > 1024) return null;
-    return { key: file, topic: '工作区文件', summary: '文件已保存到 ' + file, file };
+    return { key: file, topic: '工作区文件', summary: '文件已保存到工作区', file };
   }
   if (name !== 'personal_mail_search') return null;
   if (['follow_up_create', 'follow_up_cancel', 'follow_up_reschedule'].includes(args.action)

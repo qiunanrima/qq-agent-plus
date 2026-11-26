@@ -49,7 +49,7 @@ export class UnifiedMemoryStore {
   }
 
   current(scope) {
-    const rows = this.db.prepare(`SELECT kind, subject, source, timestamp, body FROM (
+    const rows = this.db.prepare(`SELECT id, kind, subject, source, timestamp, body FROM (
       SELECT *, row_number() OVER (
         PARTITION BY kind, subject ORDER BY timestamp DESC, id DESC
       ) AS position FROM revisions WHERE scope = ?

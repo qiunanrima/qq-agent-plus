@@ -6,6 +6,25 @@ import os from 'node:os';
 import { memoryTurn } from '../src/unified-memory/turn.js';
 import { UnifiedMemoryStore } from '../src/unified-memory/store.js';
 
+test('full memory is available only through a scoped read', t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'memory-detail-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, 'memory.sqlite');
+  const scope = 'private:123';
+  const turn = memoryTurn({ filename, scope, enabled: () => true, entries: [{ id: 1, ts: 1, senderId: '123' }] });
+  const ctx = { chatKey: scope };
+  const detail = 'A203 周三 08:00';
+  const find = name => turn.tools.find(tool => tool.name === name);
+  assert.equal(find('record_memory').execute(ctx, { kind: 'agreement', topic: '课表', summary: '本学期课表',
+    detail, messageId: '1' }).content, '已记录');
+  const search = find('lookup_memory').execute(ctx, { query: 'A203' });
+  assert.doesNotMatch(search.content, /A203/);
+  const [{ id }] = JSON.parse(search.content);
+  assert.equal(JSON.parse(find('read_memory').execute(ctx, { id }).content).detail, detail);
+  assert.equal(find('read_memory').execute({ chatKey: 'group:123' }, { id }).isError, true);
+  assert.doesNotMatch(memoryTurn({ filename, scope, entries: [], enabled: () => true }).prompt, /A203/);
+});
+
 test('bulk imports remain archived while reviewed records enter recall', t => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'reviewed-memory-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
