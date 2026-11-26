@@ -110,6 +110,46 @@ test('personal briefing reads only matching synced phone notifications in the ow
   assert.equal(denied.reportIncident, false);
 });
 
+test('meeting preparation tools preserve matching calendar, mail and workspace evidence', async () => {
+  const { selectPhoneCalendar } = await import('../src/phone-bridge/index.js');
+  const { runPersonalMailRequest } = await import('../src/personal-mail/index.js');
+  const { parseWorkspaceSearch, workspaceSearchCommand } = await import('../src/tools/linux-container.js');
+  const start = Date.parse('2026-11-27T06:00:00Z');
+  const meeting = { eventId: '42', title: 'Orchid quote review', start, end: start + 3600000 };
+  const range = { from: start - 3600000, to: start + 7200000 };
+  const calendar = selectPhoneCalendar({ ...range, events: [meeting] }, range, range.from);
+  assert.equal(calendar.coverage, 'full');
+  assert.equal(calendar.events[0].title, meeting.title);
+
+  const env = { QQ_AGENT_GMAIL_CLIENT_ID: 'test', QQ_AGENT_GMAIL_CLIENT_SECRET: 'test', QQ_AGENT_GMAIL_REFRESH_TOKEN: 'test' };
+  const fetchImpl = async request => {
+    const url = new URL(request);
+    if (url.pathname === '/token') return Response.json({ access_token: 'test' });
+    if (url.pathname.endsWith('/messages')) {
+      return Response.json({ messages: url.searchParams.get('q').startsWith('"Orchid"') ? [{ id: 'mail42' }] : [] });
+    }
+    return Response.json({ threadId: 'orchid42', snippet: 'New quote request', payload: {
+      mimeType: 'text/plain', body: { data: Buffer.from('List freight as a separate line before the meeting.').toString('base64url') }
+    } });
+  };
+  const options = { env, fetchImpl };
+  const { results: [mail] } = await runPersonalMailRequest({
+    action: 'search', provider: 'gmail', query: calendar.events[0].title, fallbackQuery: 'Orchid'
+  }, options);
+  const { excerpt, source } = await runPersonalMailRequest({ action: 'message', messageId: mail.messages[0].messageId }, options);
+  assert.match(excerpt, /freight as a separate line/);
+  assert.match(source, /orchid42$/);
+
+  const directory = '/workspace/Orchid';
+  assert.ok(workspaceSearchCommand(directory, ['quote'], '会前查 /workspace/Orchid'));
+  const { files } = parseWorkspaceSearch([
+    '1700000000\t120\t' + directory + '/quote-v1.csv',
+    '1700000010\t182\t' + directory + '/quote-v2.csv',
+    ''
+  ].join('\0'));
+  assert.deepEqual(files.map(file => file.path), [directory + '/quote-v2.csv', directory + '/quote-v1.csv']);
+});
+
 test('技能 manifest 校验：坏 id、超长正文、缺 SKILL.md 都会被拒绝', () => {
   const userDir = fs.mkdtempSync(path.join(__dir, 'bad-skills-'));
   writeSkill(userDir, 'bad-id', { id: 'Bad ID', name: '坏 id' });
