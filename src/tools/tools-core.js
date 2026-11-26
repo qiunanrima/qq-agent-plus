@@ -622,11 +622,6 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         try {
-          if (ctx.kind === 'private' && ctx.latestTriggerId > 0 && !ctx.session.sent.length
-            && ctx.store.peekUnread(ctx.chatKey, 1, ctx.latestTriggerId + 1).length) {
-            ctx.session.deferredForNewInput = true;
-            return ok({ deferred: true, message: '收到更新的私聊消息，本轮正文未发送。请 finish，由下一轮结合补充作答。' });
-          }
           const messages = normalizeMessageList(args.messages);
           if (!messages.length) return err('消息内容为空');
           // 正文优先：非法引用/@ 只降级目标，不让整条回复消失。

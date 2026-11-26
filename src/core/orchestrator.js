@@ -1853,7 +1853,7 @@ export class Orchestrator {
     if (session.sent.length > 0 || session.visibleReply === true) return;
     // A confirmed MCP finish is an intentional host-level close. Internal CLI
     // commentary is not an unsent reply and must never trigger a fallback send.
-    if (hostFinished || session.intentionalSilence || session.deferredForNewInput) {
+    if (hostFinished || session.intentionalSilence) {
       session.replyCorrection = 'skipped';
       return;
     }
@@ -2522,7 +2522,6 @@ export class Orchestrator {
 
     const ctx = {
       chatKey, kind, chatId,
-      latestTriggerId: Math.max(0, ...(triggerEntries || []).map(row => Number(row.id) || 0)),
       selfId: this.onebot.selfId,
       selfNickname,
       botName: persona.botName,
