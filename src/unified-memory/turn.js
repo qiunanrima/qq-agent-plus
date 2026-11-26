@@ -63,8 +63,11 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
           !topic || topic.length > 100 || !summary || summary.length > 800) {
         return { content: '当前会话缺少有效来源或内容', isError: true, reportIncident: false };
       }
+      const speaker = String(entry.senderId);
+      const reviewed = visible.find(row => row.subject.startsWith('reviewed:') && row.kind === args.kind &&
+        row.body.speaker === speaker && row.body.topic === topic);
       const changed = access(store => store.record({ scope, kind: args.kind,
-        subject: JSON.stringify([personas.memory || '', String(entry.senderId), topic]), source: 'message:' + entry.id,
+        subject: reviewed?.subject || JSON.stringify([personas.memory || '', speaker, topic]), source: 'message:' + entry.id,
         timestamp: entry.ts, body: { topic, summary, speaker: String(entry.senderId),
           persona: personas.memory, personaType: 'memory' },
         closed: args.closed === true }));

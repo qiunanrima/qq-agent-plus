@@ -14,7 +14,8 @@ test('bulk imports remain archived while reviewed records enter recall', t => {
   const store = new UnifiedMemoryStore(filename);
   try {
     for (const [source, summary] of [['hippocampus:old', '周报旧摘要'], ['reviewed:hippocampus:old', '周报周三提交']]) {
-      store.record({ scope, kind: 'agreement', subject: source, source, timestamp: 1, body: { summary } });
+      store.record({ scope, kind: 'agreement', subject: source, source, timestamp: 1,
+        body: { topic: '周报', speaker: '123', summary } });
     }
   } finally { store.close(); }
   const { prompt, tools } = memoryTurn({ filename, scope, entries: [], enabled: () => true });
@@ -22,6 +23,14 @@ test('bulk imports remain archived while reviewed records enter recall', t => {
   assert.doesNotMatch(prompt, /周报旧摘要/);
   const result = tools.find(tool => tool.name === 'lookup_memory').execute({ chatKey: scope }, { query: '周报' });
   assert.deepEqual(JSON.parse(result.content).map(row => row.summary), ['周报周三提交']);
+  for (const [id, summary] of [[2, '周四提交'], [3, '周五提交']]) {
+    const update = memoryTurn({ filename, scope, enabled: () => true, entries: [{ id, ts: id, senderId: '123' }] });
+    assert.equal(update.tools.find(tool => tool.name === 'record_memory').execute({ chatKey: scope },
+      { kind: 'agreement', topic: '周报', summary, messageId: String(id) }).content, '已记录');
+  }
+  const updated = memoryTurn({ filename, scope, entries: [], enabled: () => true }).prompt;
+  assert.match(updated, /周五提交/);
+  assert.doesNotMatch(updated, /周[三四]提交/);
 });
 
 test('a persona change preserves separate revisions for the same speaker and topic', t => {
