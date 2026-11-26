@@ -6,6 +6,24 @@ import os from 'node:os';
 import { memoryTurn } from '../src/unified-memory/turn.js';
 import { UnifiedMemoryStore } from '../src/unified-memory/store.js';
 
+test('bulk imports remain archived while reviewed records enter recall', t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'reviewed-memory-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, 'memory.sqlite');
+  const scope = 'private:123';
+  const store = new UnifiedMemoryStore(filename);
+  try {
+    for (const [source, summary] of [['hippocampus:old', '周报旧摘要'], ['reviewed:hippocampus:old', '周报周三提交']]) {
+      store.record({ scope, kind: 'agreement', subject: source, source, timestamp: 1, body: { summary } });
+    }
+  } finally { store.close(); }
+  const { prompt, tools } = memoryTurn({ filename, scope, entries: [], enabled: () => true });
+  assert.match(prompt, /周报周三提交/);
+  assert.doesNotMatch(prompt, /周报旧摘要/);
+  const result = tools.find(tool => tool.name === 'lookup_memory').execute({ chatKey: scope }, { query: '周报' });
+  assert.deepEqual(JSON.parse(result.content).map(row => row.summary), ['周报周三提交']);
+});
+
 test('a persona change preserves separate revisions for the same speaker and topic', t => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'memory-personas-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
