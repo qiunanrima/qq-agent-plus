@@ -34,8 +34,17 @@ export function manageMailFollowUp(args, { env, dataDir, now = Date.now() }) {
     return { id: job.id, status: job.status };
   }
   const { threadId, deadline } = args;
+  if (args.action === 'follow_up_reschedule') {
+    const job = own.find(item => item.id === args.followUpId && item.status === 'pending' && !item.outcome);
+    if (!job) return { error: '找不到可改期的跟进' };
+    if (!validDeadline(deadline, now)) return { error: '请提供未来 30 天内的新跟进期限' };
+    job.deadline = deadline;
+    job.nextCheckAt = Math.min(job.nextCheckAt, deadline);
+    saveJobs(dataDir, jobs);
+    return { id: job.id, status: job.status, deadline };
+  }
   if (typeof threadId !== 'string' || !/^[a-z0-9]{1,128}$/i.test(threadId) ||
-      !Number.isSafeInteger(deadline) || deadline <= now || deadline - now > 30 * 86400000) {
+      !validDeadline(deadline, now)) {
     return { error: '请提供 Gmail 线程编号和未来 30 天内的跟进期限' };
   }
   const duplicate = own.find(job => job.threadId === threadId && job.status === 'pending');
@@ -45,6 +54,10 @@ export function manageMailFollowUp(args, { env, dataDir, now = Date.now() }) {
   const history = jobs.filter(item => item.status !== 'pending').slice(-80);
   saveJobs(dataDir, [...history, ...jobs.filter(item => item.status === 'pending'), job]);
   return { id: job.id, status: job.status, deadline };
+}
+
+function validDeadline(deadline, now) {
+  return Number.isSafeInteger(deadline) && deadline > now && deadline - now <= 30 * 86400000;
 }
 
 export async function checkMailFollowUp({ dataDir, env, readThread, notify, now = Date.now(), signal }) {
@@ -65,16 +78,16 @@ export async function checkMailFollowUp({ dataDir, env, readThread, notify, now 
       ? messages.slice(sent + 1).findLast(message => message.direction === 'incoming' && !message.automatic)
       : null;
     if (reply) current.outcome = { status: 'replied', text: reply.excerpt || reply.subject };
-    else if (now >= job.deadline) {
+    else if (now >= current.deadline) {
       if (thread.status === 'ok' && sent >= 0) {
         current.outcome = { status: 'due', text: messages[sent].subject };
-      } else if (thread.status === 'unavailable' && now < job.deadline + verificationGrace) {
-        current.nextCheckAt = Math.min(now + interval, job.deadline + verificationGrace);
+      } else if (thread.status === 'unavailable' && now < current.deadline + verificationGrace) {
+        current.nextCheckAt = Math.min(now + interval, current.deadline + verificationGrace);
       } else {
         current.outcome = { status: 'unverified', text: '' };
       }
     }
-    else current.nextCheckAt = Math.min(now + interval, job.deadline);
+    else current.nextCheckAt = Math.min(now + interval, current.deadline);
     saveJobs(dataDir, jobs);
     job.outcome = current.outcome;
   }

@@ -49,3 +49,23 @@ test('a transient deadline failure can recover without sending an unverified rem
   await check(deadline + 600_000);
   assert.deepEqual(outcomes, ['due']);
 });
+
+test('changing the deadline while Gmail is being read prevents an obsolete deadline reminder', async t => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'mail-follow-up-reschedule-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true, maxRetries: 3 }));
+  const env = { QQ_AGENT_GMAIL_REFRESH_TOKEN: 'test' };
+  const job = manageMailFollowUp({ threadId: 'quote', deadline: 100 }, { dataDir, env, now: 1 });
+  const reschedule = manageMailFollowUp;
+  const outcomes = [];
+  const readThread = async () => ({ status: 'ok', messages: [{ direction: 'outgoing', subject: 'Quote' }] });
+  const notify = item => outcomes.push(item.outcome.status);
+  await checkMailFollowUp({ dataDir, env, now: 100, notify, readThread: async () => {
+    const changed = reschedule({ action: 'follow_up_reschedule', followUpId: job.id, deadline: 200 },
+      { dataDir, env, now: 100 });
+    assert.equal(changed.id, job.id);
+    return readThread();
+  } });
+  assert.deepEqual(outcomes, []);
+  await checkMailFollowUp({ dataDir, env, now: 200, notify, readThread });
+  assert.deepEqual(outcomes, ['due']);
+});
