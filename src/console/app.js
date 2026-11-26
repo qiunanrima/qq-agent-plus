@@ -68,7 +68,8 @@ import { AgentWechatChannel } from '../agent-wechat/runtime.js';
 import { registerPersonalMailRoutes } from '../personal-mail/routes.js';
 import { createMailWatcher } from '../personal-mail/watcher.js';
 import { readGmailThread } from '../personal-mail/index.js';
-import { checkMailFollowUp, formatMailFollowUpReminder } from '../personal-mail/follow-up.js';
+import { checkMailFollowUp, formatMailFollowUpReminder, settledMailFollowUps } from '../personal-mail/follow-up.js';
+import { recordSettledMailFollowUps } from '../unified-memory/work-results.js';
 import { registerPhoneBridge } from '../phone-bridge/index.js';
 import { registerAgentWechatRoutes, handleWechatAdminCommand } from '../agent-wechat/routes.js';
 import { registerAntigravityRoutes } from '../antigravity-cli/routes.js';
@@ -750,14 +751,20 @@ function buildApp({
       enqueueOwnerMailReminder('mail-triage-' + batch,
         mailbox + '有 ' + important.length + ' 封重要新邮件，请提醒用户查看。以下仅为邮件摘要：' + summary);
     },
-    followUp(env, signal) {
-      return checkMailFollowUp({
+    async followUp(env, signal) {
+      await checkMailFollowUp({
         dataDir: DATA_DIR, env, signal, readThread: readGmailThread,
         notify(job) {
           enqueueOwnerMailReminder('mail-fu-' + job.id.replaceAll('-', ''),
             formatMailFollowUpReminder(job));
         }
       });
+      const cfg = getConfig();
+      const owner = readOwnerUin(cfg);
+      if (cfg.memory?.unifiedEnabled === true && owner && env.QQ_AGENT_GMAIL_REFRESH_TOKEN && !signal?.aborted) {
+        recordSettledMailFollowUps(path.join(DATA_DIR, 'unified-memory.sqlite'),
+          'private:' + owner, settledMailFollowUps(DATA_DIR, env));
+      }
     }
   });
   // 周期提醒的启动对账：错过多次只补最近一次（12h 窗内留作晚触发，超窗跳到下一期）

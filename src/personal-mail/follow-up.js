@@ -14,6 +14,13 @@ function readJobs(dataDir) {
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
 }
 
+export function settledMailFollowUps(dataDir, env) {
+  const account = triageAccountKey('gmail', env);
+  return readJobs(dataDir).filter(job => job.key === account &&
+    ['replied', 'due', 'unverified'].includes(job.status))
+    .map(({ id, status, deadline }) => ({ id, status, deadline }));
+}
+
 function saveJobs(dataDir, jobs) {
   const target = join(dataDir, fileName);
   writeFileSync(target + '.tmp', JSON.stringify(jobs), { mode: 0o600, flush: true });

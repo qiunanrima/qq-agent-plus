@@ -1,6 +1,20 @@
 import { createHash } from 'node:crypto';
 import { UnifiedMemoryStore } from './store.js';
 
+export function recordSettledMailFollowUps(filename, scope, jobs) {
+  if (!jobs.length) return;
+  const summaries = { replied: '邮件已收到回复', due: '邮件到期未回，已进入跟进流程', unverified: '到期时无法核实邮件回复' };
+  const store = new UnifiedMemoryStore(filename);
+  try {
+    for (const { id, status, deadline } of jobs) {
+      store.record({ scope, kind: 'task', subject: 'mail-followup:' + id,
+        source: 'mail-followup:' + id + ':' + status, timestamp: Date.now(),
+        body: { topic: '邮件跟进', summary: summaries[status], status, deadline, followUpId: id },
+        closed: status === 'replied' });
+    }
+  } finally { store.close(); }
+}
+
 function workResult(name, args, result) {
   if (result.isError || typeof result.content !== 'string') return null;
   let data;
