@@ -105,6 +105,19 @@ test('personal briefing reads only matching synced phone notifications in the ow
   editContext.triggerEntries[0].text = '好，帮我加一下';
   const createArgs = JSON.stringify({ action: 'create', title: '新增事项', start, end: start + 60000 });
   assert.equal((await dispatchTool(defs, editContext, 'phone_calendar_write', createArgs)).isError, undefined);
+  const invite = JSON.stringify({ action: 'send_calendar_invitation', attendees: ['person@example.invalid'] });
+  for (const text of ['不要发送日历邀请给 person@example.invalid', '请发送日历邀请给 other@example.invalid']) {
+    const result = await dispatchTool(defs, {
+      chatKey, triggerEntries: [{ senderId: owner, text }]
+    }, 'personal_mail_search', invite);
+    assert.equal(result.isError, true);
+    assert.match(result.content, /提供每位收件人的邮箱/);
+  }
+  const groupInvite = await dispatchTool(defs, {
+    chatKey: 'group:1', triggerEntries: [{ senderId: owner, text: '发送日历邀请给 person@example.invalid' }]
+  }, 'personal_mail_search', invite);
+  assert.equal(groupInvite.isError, true);
+  assert.match(groupInvite.content, /管理员 QQ 私聊/);
   const denied = await dispatchTool(defs, { ...editContext, chatKey: 'group:1' }, 'phone_calendar_write', createArgs);
   assert.equal(denied.isError, true);
   assert.equal(denied.reportIncident, false);
