@@ -81,3 +81,22 @@ test('changing the deadline while Gmail is being read prevents an obsolete deadl
   await checkMailFollowUp({ dataDir, env, now: 200, notify, readThread });
   assert.deepEqual(outcomes, ['due']);
 });
+
+
+test('listing follow-ups keeps pending jobs visible ahead of recent history', async t => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'mail-follow-up-list-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const options = { dataDir, env: { QQ_AGENT_GMAIL_REFRESH_TOKEN: 'test' }, now: 1 };
+  const run = args => manageMailFollowUp(args, options);
+  run({ action: 'follow_up_create', threadId: 'later', deadline: 200 });
+  run({ action: 'follow_up_create', threadId: 'sooner', deadline: 100 });
+  for (let index = 0; index < 21; index += 1) {
+    const job = run({ action: 'follow_up_create', threadId: 'old' + index, deadline: 50 });
+    run({ action: 'follow_up_cancel', followUpId: job.id });
+  }
+  const { jobs } = run({ action: 'follow_up_list' });
+  assert.equal(jobs.length, 20);
+  assert.deepEqual(jobs.slice(0, 2).map(job => job.threadId), ['sooner', 'later']);
+  assert.equal(jobs[0].source, 'https://mail.google.com/mail/u/0/#all/sooner');
+  assert.equal(jobs[2].threadId, 'old20');
+});

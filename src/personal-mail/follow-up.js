@@ -25,9 +25,15 @@ export function manageMailFollowUp(args, { env, dataDir, now = Date.now() }) {
   const key = triageAccountKey('gmail', env);
   const jobs = readJobs(dataDir);
   const own = jobs.filter(job => job.key === key);
-  if (args.action === 'follow_up_list') return {
-    jobs: own.slice(-20).reverse().map(({ key: _, ...job }) => job)
-  };
+  if (args.action === 'follow_up_list') {
+    const pending = own.filter(job => job.status === 'pending').sort((a, b) => a.deadline - b.deadline);
+    const history = own.filter(job => job.status !== 'pending').reverse();
+    return {
+      jobs: [...pending, ...history].slice(0, 20).map(({ key: _, ...job }) => ({
+        ...job, source: gmailThreadSource(job.threadId)
+      }))
+    };
+  }
   if (args.action === 'follow_up_cancel') {
     const job = own.find(item => item.id === args.followUpId && item.status === 'pending' && !item.outcome);
     if (!job) return { error: '找不到可取消的跟进' };
@@ -57,6 +63,8 @@ export function manageMailFollowUp(args, { env, dataDir, now = Date.now() }) {
   saveJobs(dataDir, [...history, ...jobs.filter(item => item.status === 'pending'), job]);
   return { id: job.id, status: job.status, deadline };
 }
+
+const gmailThreadSource = threadId => 'https://mail.google.com/mail/u/0/#all/' + threadId;
 
 function validDeadline(deadline, now) {
   return Number.isSafeInteger(deadline) && deadline > now && deadline - now <= 30 * 86400000;
