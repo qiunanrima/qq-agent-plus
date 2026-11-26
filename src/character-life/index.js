@@ -11,6 +11,11 @@ import { agreementTime, commitmentEvidence, initMotiveEvidence, saveRecognizedMo
 const file = path.join(DATA_DIR, 'character-life.sqlite');
 const hour = 3600000;
 const day = 24 * hour;
+function lifeEnabled() {
+  const cfg = getConfig();
+  return cfg.memory?.unifiedEnabled !== true && cfg.characterLife?.enabled === true;
+}
+
 function rhythmSchedule(cfg = getConfig()) {
   const life = cfg.characterLife || {};
   const existing = cfg.humanize?.personaState || {};
@@ -120,7 +125,7 @@ function changeAgreement(db, role, chat, entry, text, id, now) {
 }
 
 export function agreementHistory(persona, chat, actor) {
-  if (!getConfig().characterLife?.enabled || !actor || !fs.existsSync(file)) return [];
+  if (!lifeEnabled() || !actor || !fs.existsSync(file)) return [];
   const db = openDatabase(file, { readOnly: true });
   try {
     if (!hasTable(db, 'motive_evidence')) return [];
@@ -135,7 +140,7 @@ export function agreementHistory(persona, chat, actor) {
 }
 
 export function syncAgreementReminders(store) {
-  if (!store?.linkedPending || !getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  if (!store?.linkedPending || !lifeEnabled() || !fs.existsSync(file)) return;
   const items = store.linkedPending();
   if (!items.length) return;
   const db = openDatabase(file, { readOnly: true });
@@ -174,7 +179,7 @@ function isPersonalInteraction(chat, entry, selfId) {
 }
 
 export function observeLife({ selfId, persona, chatKey, triggerEntries = [], recalled = [], summaries = [], reminders = [], now = Date.now() }) {
-  if (!getConfig().characterLife?.enabled || !triggerEntries?.length) return '';
+  if (!lifeEnabled() || !triggerEntries?.length) return '';
   const role = personaKeyOf(persona);
   const db = openDatabase(file);
   try {
@@ -250,7 +255,7 @@ export function lifeStatus(now = Date.now(), defaultPersona = null) {
   } finally { db?.close(); }
 }
 export function linkedMemories(persona, chat, ids) {
-  if (!ids.length || !fs.existsSync(file) || !getConfig().characterLife?.enabled) return [];
+  if (!ids.length || !fs.existsSync(file) || !lifeEnabled()) return [];
   const db = openDatabase(file,{readOnly:true});
   try {
     const seed = ids.slice(0,12);
@@ -261,7 +266,7 @@ export function linkedMemories(persona, chat, ids) {
 }
 
 export function claimInitiative(persona, chat, now = Date.now(), summaries = [], reminders = [], pending = null) {
-  if (!getConfig().characterLife?.enabled || !fs.existsSync(file) || lifeWillingness(persona, now) < 30) return '';
+  if (!lifeEnabled() || !fs.existsSync(file) || lifeWillingness(persona, now) < 30) return '';
   const db = openDatabase(file);
   try {
     const claimed = db.prepare('SELECT 1 FROM initiatives WHERE event=?');
@@ -278,7 +283,7 @@ export function claimInitiative(persona, chat, now = Date.now(), summaries = [],
 
 export function recordSentAgreements(persona, chat, session, now = Date.now()) {
   const peer = /^private:(\d+)$/.exec(chat)?.[1];
-  if (!peer || !getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  if (!peer || !lifeEnabled() || !fs.existsSync(file)) return;
   const role = personaKeyOf(persona);
   const db = openDatabase(file);
   try {
@@ -305,7 +310,7 @@ export function confirmInitiative(id) {
 }
 
 export function recordReflectionRun(chat, { merged, reinforced, analyzed = 0 }, at = Date.now()) {
-  if (!getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  if (!lifeEnabled() || !fs.existsSync(file)) return;
   const db = openDatabase(file);
   try {
     db.exec('CREATE TABLE IF NOT EXISTS reflection_runs(chat TEXT PRIMARY KEY, at INTEGER NOT NULL, merged INTEGER NOT NULL, reinforced INTEGER NOT NULL)');
@@ -320,7 +325,7 @@ export function recordReflectionRun(chat, { merged, reinforced, analyzed = 0 }, 
 }
 
 export function reflectionChats(now = Date.now()) {
-  if (!getConfig().characterLife?.enabled || !fs.existsSync(file)) return [];
+  if (!lifeEnabled() || !fs.existsSync(file)) return [];
   const db = openDatabase(file, { readOnly: true });
   try {
     const recentChats = db.prepare('SELECT chat, MAX(at) AS lastAt FROM events WHERE at>=? GROUP BY chat ORDER BY lastAt DESC, chat')
@@ -332,7 +337,7 @@ export function reflectionChats(now = Date.now()) {
 }
 
 export function reflectLife(now = Date.now()) {
-  if (!getConfig().characterLife?.enabled || !fs.existsSync(file)) return;
+  if (!lifeEnabled() || !fs.existsSync(file)) return;
   const db = openDatabase(file);
   try {
     db.exec('BEGIN IMMEDIATE');

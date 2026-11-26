@@ -149,7 +149,11 @@ export class LivingMemoryRuntime {
     this.activeFlushes = 0;
   }
 
-  config() { return normalizeLivingMemoryConfig(this.getConfig()?.livingMemory); }
+  config() {
+    const cfg = this.getConfig();
+    const legacy = normalizeLivingMemoryConfig(cfg?.livingMemory);
+    return cfg?.memory?.unifiedEnabled === true ? { ...legacy, enabled: false } : legacy;
+  }
 
   applies(chatKey) { return livingMemoryScopeAllowed(this.config(), chatKey); }
 

@@ -912,6 +912,7 @@ export const DEFAULT_CONFIG = {
   // 记忆自动整理：条数超阈值且距上次超过冷却时间时，在运行结束后后台合并/去重/删过时
   memory: {
     // 核心两层记忆：全局今日/昨日海马 + 长期记忆按索引取正文。
+    unifiedEnabled: false,
     hippocampusEnabled: true,
     forgettingEnabled: true,
     consolidateEnabled: true,
@@ -1464,7 +1465,7 @@ function migrateConfig(parsed) {
   out.skills.allowPrivateIndex = out.skills.allowPrivateIndex === true;
   // 记忆容量/保留期：夹在可解释范围内；手写条目不受影响。
   if (isPlainObject(out.memory)) {
-    for (const key of ['hippocampusEnabled', 'forgettingEnabled']) {
+    for (const key of ['unifiedEnabled', 'hippocampusEnabled', 'forgettingEnabled']) {
       if (out.memory[key] !== undefined && typeof out.memory[key] !== 'boolean') throw new Error(`memory.${key} 必须是布尔值`);
     }
     const max = Math.round(Number(out.memory.maxImpressionsPerPerson));

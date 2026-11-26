@@ -26,7 +26,10 @@ export class Hippocampus {
     this.active = false;
     this.retryAfter = 0;
   }
-  enabled() { return this.getConfig().memory?.hippocampusEnabled === true; }
+  enabled() {
+    const memory = this.getConfig().memory;
+    return memory?.unifiedEnabled !== true && memory?.hippocampusEnabled === true;
+  }
   withDb(write, fn) {
     if (!write && !fs.existsSync(this.file)) return fn(null);
     if (write) fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });

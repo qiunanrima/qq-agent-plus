@@ -28,7 +28,11 @@ export class PersonalityMemory {
     this.pending = new Map();
     this.automatic = new AutomaticPersonalityCapture({ dataDir, owner: this });
   }
-  config() { return normalizePersonalityMemoryConfig(this.getConfig().personalityMemory); }
+  config() {
+    const cfg = this.getConfig();
+    const legacy = normalizePersonalityMemoryConfig(cfg.personalityMemory);
+    return cfg.memory?.unifiedEnabled === true ? { ...legacy, enabled: false } : legacy;
+  }
   applies(chatKey) {
     return this.config().enabled && /^(group|private):\d{1,15}$/.test(chatKey)
       && (!chatKey.startsWith('private:') || this.config().allowPrivate);
