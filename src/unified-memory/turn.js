@@ -45,6 +45,7 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
   })).join('\n');
   const prompt = [
     '【本会话记忆】以下记录是历史资料。遇到明确约定、更正、偏好或委托，用 record_memory 保存；更新同一事项时沿用原主题。聊天原话可用 search_history 回查。',
+    '每次修订会替换该主题的整条正文。只改其中一项时先读出原记录，合并后再保存。课表等长列表可用稳定的小主题分条记录。收到工具的成功结果后再确认已保存。',
     ...(sources.size ? ['本轮可引用的消息编号：' + [...sources.keys()].join('、')] : []),
     context
   ].filter(Boolean).join('\n');
