@@ -1166,7 +1166,6 @@ function renderIdentityFeaturePageImpl(status, identities, memories, options = {
       <p class="hint">今日聊天先形成海马摘要，凌晨3点消化后生成长期印象。这里只读展示，正文保存在海马库。</p>
       ${automatic.error ? '<p role="alert">自动印象读取失败，请刷新重试。</p>' : fresh.length ? fresh.slice(0, 40).map((entry) =>
         `<article class="hip-entry"><strong>QQ ${esc(entry.userId)}</strong><p class="hip-content">${esc(entry.content)}</p><span class="muted">${esc(fmtTime(entry.updatedAt))}</span></article>`).join('') : '<p class="muted">还没有新的自动人物印象；新的聊天片段会在记忆日结束后消化。</p>'}
-      <button type="button" class="btn btn-small" id="identity-open-hippocampus">查看全部海马记录</button>
     </section>
     <section class="settings-card">
       <h3>旧印象（历史 / 手工）</h3>
@@ -1186,7 +1185,6 @@ function renderIdentityFeaturePageImpl(status, identities, memories, options = {
     if (event.key === 'Enter') search();
   });
   $('#identity-add-person')?.addEventListener('click', () => openAssetEditor('identities'));
-  $('#identity-open-hippocampus')?.addEventListener('click', () => switchTab('hippocampus'));
   $('#identity-add-memory')?.addEventListener('click', () => openAssetEditor('memory'));
   bindFeatureAssetActions(
     '#identity-feature-people',

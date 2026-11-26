@@ -11,7 +11,7 @@ test('统一记忆固化后收起旧记忆导航', async ({ page }) => {
   await page.route('**/api/config', route => route.fulfill({ json: config }));
   await page.goto('/');
   await expect(page.locator('[data-tab="unified-memory"]')).not.toHaveClass(/\bhidden\b/);
-  for (const tab of ['memory', 'hippocampus', 'living-memory', 'character-life', 'personality-memory']) {
+  for (const tab of ['memory', 'living-memory', 'character-life', 'personality-memory']) {
     await expect(page.locator(`[data-tab="${tab}"]`)).toHaveClass(/\bhidden\b/);
   }
 });

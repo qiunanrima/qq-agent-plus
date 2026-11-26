@@ -49,7 +49,6 @@ import { loadLivingMemoryPage } from './pages/living-memory.js';
 import { loadCharacterLife } from './pages/character-life.js';
 import { loadPersonalMailPage } from './pages/personal-mail.js';
 import { loadPersonalityMemoryPage, loadSharedExperiences } from './pages/personality-memory.js';
-import { loadHippocampusPage } from './pages/hippocampus.js';
 import { loadPluginsPage } from './pages/plugins.js';
 import { stopQrPoll } from './pages/plugin-settings.js';
 import { refreshPendingBadge } from './pages/plugin-pending.js';
@@ -303,7 +302,6 @@ function switchTab(name) {
   if (name === 'sessions') loadSessions();
   if (name === 'chats') loadChats();
   if (name === 'memory') { loadMemoryView(); void loadSharedExperiences(); }
-  if (name === 'hippocampus') loadHippocampusPage();
   if (name === 'unified-memory') loadUnifiedMemoryPage();
   if (name === 'living-memory') loadLivingMemoryPage({ force: true });
   if (name === 'character-life') void loadCharacterLife();

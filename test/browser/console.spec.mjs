@@ -88,7 +88,7 @@ test('配置冲突保存：弹出三选一，取消后不写盘', async ({ page 
   await page.unroute('**/api/config');
 });
 
-test('20 个页签逐一切换，且没有 console error / pageerror', async ({ page }) => {
+test('19 个页签逐一切换，且没有 console error / pageerror', async ({ page }) => {
   const errors = collectPageErrors(page);
   await login(page);
   await page.goto('/');
@@ -97,7 +97,7 @@ test('20 个页签逐一切换，且没有 console error / pageerror', async ({ 
   const tabs = await tabNames(page);
   expect(tabs).toContain('character-life');
   expect(tabs).toContain('personal-mail');
-  expect(tabs).toHaveLength(20);
+  expect(tabs).toHaveLength(19);
 
   for (const tab of tabs) {
     await switchTo(page, tab);
@@ -796,14 +796,14 @@ test('窄屏设置：切到屏外分区后当前项仍在可视范围内', async
   expect(visible).toBe(true);
 });
 
-test('窄屏 390×844：20 个页签都没有横向溢出', async ({ page }) => {
+test('窄屏 390×844：19 个页签都没有横向溢出', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   await page.goto('/');
   const tabs = await tabNames(page);
   expect(tabs).toContain('character-life');
   expect(tabs).toContain('personal-mail');
-  expect(tabs).toHaveLength(20);
+  expect(tabs).toHaveLength(19);
 
   for (const tab of tabs) {
     await switchTo(page, tab);

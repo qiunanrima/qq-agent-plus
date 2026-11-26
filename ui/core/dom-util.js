@@ -38,7 +38,6 @@ function graduatedFeatureState(c = state.config || {}) {
     incidents: c.incidentPilot?.graduated === true,
     'unified-memory': c.memory?.unifiedGraduated === true,
     memory: !unified,
-    hippocampus: !unified,
     'living-memory': !unified && c.livingMemory?.graduated === true,
     'character-life': !unified && c.characterLife?.graduated === true,
     'personality-memory': !unified && c.personalityMemory?.graduated === true
