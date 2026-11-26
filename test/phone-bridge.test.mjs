@@ -46,6 +46,9 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.equal((await send('console')).status, 401);
   assert.equal((await fetch(base + '/api/console-test', { headers: { Authorization: 'Bearer ' + token } })).status, 401);
   assert.equal((await send(token, [{ ...event, body: 'x'.repeat(2049) }])).status, 400);
+  const { postedAt: _, ...legacy } = event;
+  assert.equal((await send(token, [legacy])).status, 200);
+  const before = JSON.parse(await readFile(join(dataDir, 'phone-bridge', 'inbox.json'), 'utf8'))[0];
   const replies = await Promise.all([send(token), send(token)]);
   for (const reply of replies) {
     assert.equal(reply.status, 200);
@@ -55,6 +58,7 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.equal(stored.length, 1);
   assert.equal(stored[0].body, event.body);
   assert.equal(stored[0].postedAt, new Date(postedAt).toISOString());
+  assert.equal(stored[0].receivedAt, before.receivedAt);
   assert.deepEqual(await (await send(token, [])).json(), { accepted: [] });
   const sync = JSON.parse(await readFile(join(dataDir, 'phone-bridge', 'notification-sync.json'), 'utf8'));
   assert.ok(Date.parse(sync.lastSyncAt) >= Date.parse(stored[0].receivedAt));

@@ -56,10 +56,15 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
     if (events.length) {
       const inbox = new Map(readStored(dataDir, 'inbox.json', []).map((event) => [event.id, event]));
       for (const { id, source, title, body, postedAt } of events) {
-        if (!inbox.has(id)) inbox.set(id, {
+        const previous = inbox.get(id);
+        if (!previous) inbox.set(id, {
           id, source, title, body, receivedAt: new Date().toISOString(),
           ...(postedAt === undefined ? {} : { postedAt: new Date(postedAt).toISOString() })
         });
+        else if (postedAt !== undefined && !previous.postedAt &&
+          previous.source === source && previous.title === title && previous.body === body) {
+          previous.postedAt = new Date(postedAt).toISOString();
+        }
       }
       writeStored(dataDir, 'inbox.json', [...inbox.values()].slice(-200));
     }
