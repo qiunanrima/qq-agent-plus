@@ -6,6 +6,26 @@ import os from 'node:os';
 import { memoryTurn } from '../src/unified-memory/turn.js';
 import { UnifiedMemoryStore } from '../src/unified-memory/store.js';
 
+test('a persona change preserves separate revisions for the same speaker and topic', t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'memory-personas-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, 'memory.sqlite');
+  const scope = 'private:123';
+  const turn = (persona, entries = []) => memoryTurn({
+    filename, scope, entries, enabled: () => true, personas: { memory: persona }
+  });
+  for (const [persona, summary] of [['first', '周三提交'], ['second', '周五提交']]) {
+    const { tools } = turn(persona, [{ id: 1, ts: 1, senderId: '123' }]);
+    const result = tools.find(tool => tool.name === 'record_memory').execute({ chatKey: scope },
+      { messageId: '1', kind: 'agreement', topic: '周报', summary });
+    assert.equal(result.content, '已记录');
+  }
+  assert.match(turn('first').prompt, /周三提交/);
+  assert.doesNotMatch(turn('first').prompt, /周五提交/);
+  assert.match(turn('second').prompt, /周五提交/);
+  assert.doesNotMatch(turn('second').prompt, /周三提交/);
+});
+
 test('corrections survive reopen and replay without crossing chat boundaries', t => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'unified-memory-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
