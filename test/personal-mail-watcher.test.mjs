@@ -80,6 +80,11 @@ test('saved triage survives an unavailable reminder queue without classifying ma
     provider: 'qq', category: 'deadline', summary: '今天需确认',
     source: '<deadline@example.invalid>', receivedAt: '2026-11-26T00:00:00.000Z'
   }]);
+  const query = range => runPersonalMailRequest({ ...args, ...range }, { dataDir, env: runtimeEnv() });
+  const receivedAt = Date.parse(results[0].receivedAt);
+  assert.deepEqual((await query({ receivedTo: receivedAt })).results, []);
+  assert.deepEqual((await query({ receivedFrom: receivedAt })).results, results);
+  assert.ok((await query({ receivedFrom: receivedAt, receivedTo: receivedAt })).error);
   const anotherAccount = { ...runtimeEnv(), QQ_AGENT_QQ_MAIL_USER: 'another' };
   const uninitialized = await runPersonalMailRequest(args, { dataDir, env: anotherAccount });
   assert.deepEqual(uninitialized.results, []);

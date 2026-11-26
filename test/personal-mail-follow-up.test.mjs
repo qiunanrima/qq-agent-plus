@@ -88,7 +88,7 @@ test('changing the deadline while Gmail is being read prevents an obsolete deadl
 
 test('listing follow-ups keeps pending jobs visible ahead of recent history', async t => {
   const dataDir = await mkdtemp(join(tmpdir(), 'mail-follow-up-list-'));
-  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  t.after(() => rm(dataDir, { recursive: true, force: true, maxRetries: 3 }));
   const options = { dataDir, env: { QQ_AGENT_GMAIL_REFRESH_TOKEN: 'test' }, now: 1 };
   const run = args => manageMailFollowUp(args, options);
   run({ action: 'follow_up_create', threadId: 'later', deadline: 200 });

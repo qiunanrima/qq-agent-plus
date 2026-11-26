@@ -316,6 +316,12 @@ export async function runPersonalMailRequest(args, options) {
     return manageMailFollowUp(args, { dataDir: DATA_DIR, ...options });
   }
   if (args.action === 'triage') {
+    const { receivedFrom, receivedTo } = args;
+    const bounds = [receivedFrom, receivedTo].filter(value => value !== undefined);
+    if (bounds.some(value => !Number.isSafeInteger(value) || value < 0) ||
+        (receivedFrom !== undefined && receivedTo !== undefined && receivedFrom >= receivedTo)) {
+      return { error: '请提供有效的邮件收件时间范围' };
+    }
     const { env, dataDir = DATA_DIR } = options;
     const providers = mailProviders(env).filter(provider => !args.provider || args.provider === 'all' || provider === args.provider);
     const state = readTriageState(dataDir);
@@ -327,6 +333,11 @@ export async function runPersonalMailRequest(args, options) {
       const item = state[triageAccountKey(provider, env)];
       return (item?.summaries ?? [])
         .filter(row => !args.importantOnly || row.category !== 'routine')
+        .filter(row => {
+          if (!bounds.length) return true;
+          const received = Date.parse(row.receivedAt);
+          return received >= (receivedFrom ?? 0) && received < (receivedTo ?? Infinity);
+        })
         .map(({ category, summary, receivedAt, source }) => ({ provider, category, summary, receivedAt, source }));
     });
     results.sort((a, b) => (b.receivedAt ?? '').localeCompare(a.receivedAt ?? ''));
@@ -353,6 +364,8 @@ export function personalMailTool() {
       followUpId: { type: 'string', description: '待改期或取消的跟进编号' },
       threadId: { type: 'string', description: 'thread 模式使用 Gmail 搜索结果中的线程编号' },
       importantOnly: { type: 'boolean', description: 'triage 模式只显示被标为重要的邮件。coverage 中 checkedAt 是上次成功整理时间；无记录或未初始化时，不能据此判断邮箱没有待办' },
+      receivedFrom: { type: 'integer', minimum: 0, description: 'triage 收件时间起点（含），Unix 毫秒；与事项截止时间无关' },
+      receivedTo: { type: 'integer', minimum: 0, description: 'triage 收件时间终点（不含），Unix 毫秒' },
       query: { type: 'string', description: '项目名、客户名、主题或发件人关键词' },
       fallbackQuery: { type: 'string', description: '搜索结果为空时再用的简短关键词，例如完整会议标题找不到时用项目名' },
       provider: { type: 'string', enum: ['all', Gmail, QQ] },
