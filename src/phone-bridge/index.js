@@ -140,7 +140,7 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
       snapshot = {
         from, to, timeZone, receivedAt: new Date().toISOString(),
         ...(requestId !== undefined && payload.truncated === true ? { truncated: true } : {}),
-        ...(['manual', 'periodic', 'notification', 'scheduled', 'calendar_change'].includes(payload.syncTrigger)
+        ...(['manual', 'periodic', 'notification', 'scheduled', 'calendar_change', 'live'].includes(payload.syncTrigger)
           ? { syncTrigger: payload.syncTrigger } : {}),
         events: events.map(({ start, end, title, location, allDay, eventId }) => ({
           start, end, title, location, allDay,
