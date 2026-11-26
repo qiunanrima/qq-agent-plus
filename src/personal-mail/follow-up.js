@@ -49,19 +49,22 @@ export function manageMailFollowUp(args, { env, dataDir, now = Date.now() }) {
     job.deadline = deadline;
     job.nextCheckAt = Math.min(job.nextCheckAt, deadline);
     saveJobs(dataDir, jobs);
-    return { id: job.id, status: job.status, deadline };
+    return { id: job.id, status: job.status, deadline, source: gmailThreadSource(job.threadId) };
   }
   if (typeof threadId !== 'string' || !/^[a-z0-9]{1,128}$/i.test(threadId) ||
       !validDeadline(deadline, now)) {
     return { error: '请提供 Gmail 线程编号和未来 30 天内的跟进期限' };
   }
   const duplicate = own.find(job => job.threadId === threadId && job.status === 'pending');
-  if (duplicate) return { id: duplicate.id, status: duplicate.status, deadline: duplicate.deadline };
+  if (duplicate) return {
+    id: duplicate.id, status: duplicate.status, deadline: duplicate.deadline,
+    alreadyScheduled: true, source: gmailThreadSource(duplicate.threadId)
+  };
   if (jobs.filter(job => job.status === 'pending').length >= 12) return { error: '邮件跟进队列已满' };
   const job = { id: randomUUID(), key, threadId, deadline, nextCheckAt: now, status: 'pending' };
   const history = jobs.filter(item => item.status !== 'pending').slice(-80);
   saveJobs(dataDir, [...history, ...jobs.filter(item => item.status === 'pending'), job]);
-  return { id: job.id, status: job.status, deadline };
+  return { id: job.id, status: job.status, deadline, source: gmailThreadSource(job.threadId) };
 }
 
 const gmailThreadSource = threadId => 'https://mail.google.com/mail/u/0/#all/' + threadId;

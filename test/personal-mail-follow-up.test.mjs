@@ -23,7 +23,10 @@ test('follow-up reports replies before the deadline and hands off a due outcome 
   const first = add('quoted', 500);
   const second = add('waiting', 600);
   const third = add('another', 601);
-  assert.equal(add('quoted', 1000).id, first.id);
+  assert.deepEqual(add('quoted', 1000), {
+    id: first.id, status: 'pending', deadline: 500, alreadyScheduled: true,
+    source: 'https://mail.google.com/mail/u/0/#all/quoted'
+  });
   const calls = [];
   const readThread = async ({ threadId }) => ({ status: 'ok', messages: [
     { direction: 'outgoing', subject: 'Request' },
