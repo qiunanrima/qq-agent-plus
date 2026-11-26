@@ -22,6 +22,7 @@ test('follow-up reports replies before the deadline and hands off a due outcome 
   const add = (threadId, deadline) => manageMailFollowUp({ threadId, deadline }, options);
   const first = add('quoted', 500);
   const second = add('waiting', 600);
+  const third = add('another', 601);
   assert.equal(add('quoted', 1000).id, first.id);
   const calls = [];
   const readThread = async ({ threadId }) => ({ status: 'ok', messages: [
@@ -37,7 +38,9 @@ test('follow-up reports replies before the deadline and hands off a due outcome 
   await assert.rejects(check(600, () => { throw new Error('temporary queue failure'); }), /queue failure/);
   await check(601);
   await check(602);
-  assert.deepEqual(calls.map(job => [job.id, job.outcome.status]), [[first.id, 'replied'], [second.id, 'due']]);
+  await check(600 + 180000);
+  assert.deepEqual(calls.map(job => [job.id, job.outcome.status]),
+    [[first.id, 'replied'], [third.id, 'due'], [second.id, 'due']]);
 });
 
 test('a transient deadline failure can recover without sending an unverified reminder', async t => {

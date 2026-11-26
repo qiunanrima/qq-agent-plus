@@ -6,6 +6,7 @@ import { MAX_REMINDER_TEXT } from '../core/reminders.js';
 
 const interval = 10 * 60000;
 const verificationGrace = 2 * interval;
+const notifyRetryDelay = 3 * 60000;
 const fileName = 'personal-mail-follow-ups.json';
 
 function readJobs(dataDir) {
@@ -64,8 +65,9 @@ function validDeadline(deadline, now) {
 export async function checkMailFollowUp({ dataDir, env, readThread, notify, now = Date.now(), signal }) {
   if (!env.QQ_AGENT_GMAIL_REFRESH_TOKEN || signal?.aborted) return;
   const key = triageAccountKey('gmail', env);
-  const job = readJobs(dataDir).find(item => item.key === key && item.status === 'pending' &&
-    (item.outcome || item.nextCheckAt <= now));
+  const [job] = readJobs(dataDir).filter(item => item.key === key && item.status === 'pending' &&
+    (item.outcome ? (item.nextNotifyAt ?? 0) <= now : item.nextCheckAt <= now))
+    .sort((a, b) => a.deadline - b.deadline);
   if (!job) return;
   if (!job.outcome) {
     const thread = await readThread({ threadId: job.threadId, limit: 20 }, { env, signal });
@@ -93,11 +95,22 @@ export async function checkMailFollowUp({ dataDir, env, readThread, notify, now 
     job.outcome = current.outcome;
   }
   if (!job.outcome || signal?.aborted) return;
-  await notify(job);
+  try {
+    await notify(job);
+  } catch (error) {
+    const jobs = readJobs(dataDir);
+    const current = jobs.find(item => item.id === job.id && item.status === 'pending');
+    if (current) {
+      current.nextNotifyAt = now + notifyRetryDelay;
+      saveJobs(dataDir, jobs);
+    }
+    throw error;
+  }
   const jobs = readJobs(dataDir);
   const current = jobs.find(item => item.id === job.id && item.status === 'pending');
   if (current) {
     current.status = job.outcome.status;
+    delete current.nextNotifyAt;
     saveJobs(dataDir, jobs);
   }
 }
