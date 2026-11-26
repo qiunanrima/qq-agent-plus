@@ -10,6 +10,7 @@ process.on('exit', () => { try { fs.rmSync(__dir, { recursive: true, force: true
 
 const { DEFAULT_CONFIG, updateConfig } = await import('../src/core/config.js');
 const { SkillRegistry, resetSkillRegistryForTests, skillBlocksTool, skillGateMessage } = await import('../src/skills/registry.js');
+const { buildUserPrompt } = await import('../src/llm/prompt.js');
 const { buildToolDefs, executeTool } = await import('../src/tools/tools-core.js');
 const { executeTool: dispatchTool } = await import('../src/tools/tools.js');
 
@@ -46,6 +47,15 @@ test('personal briefing reads only matching synced phone notifications in the ow
     admin: { ownerUin: owner },
     skills: { enabled: true, enabledIds: [], perChat: { __replace__: { [chatKey]: ['personal-briefing'] } } }
   });
+  for (const text of ['今天有什么需要我提前处理？', '周五还没回就帮我拟一封跟进']) {
+    const prompt = buildUserPrompt({
+      chatKey, chatId: owner, kind: 'private',
+      store: { recent: () => [] },
+      memory: { formatForPrompt: () => '' },
+      triggerEntries: [{ id: 1, senderId: owner, ts: Date.now(), text }]
+    });
+    assert.match(prompt, /本轮用户原话匹配已启用的工作流：personal-briefing/);
+  }
   const dir = path.join(__dir, 'phone-bridge');
   fs.mkdirSync(dir, { recursive: true });
   const receivedAt = '2026-11-26T01:00:00.000Z';
