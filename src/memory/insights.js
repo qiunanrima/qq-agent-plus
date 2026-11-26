@@ -31,6 +31,7 @@ export function memoryInsights({ memory, personalityMemory, config, chatKey, que
 
 export function registerMemoryInsightRoutes(router, { json, getConfig, memory, orchestrator }) {
   router.add('GET', '/api/memory/insights', (req, res, params, url) => {
+    if (getConfig().memory?.unifiedEnabled === true) return json(res, 410, { error: '旧记忆统计已退役' });
     const chatKey = String(url.searchParams.get('chatKey') || '');
     if (!/^(group|private):\d{1,15}$/.test(chatKey)) return json(res, 400, { error: '需要有效的QQ会话' });
     try { return json(res, 200, memoryInsights({ memory, personalityMemory: orchestrator.personalityMemory,

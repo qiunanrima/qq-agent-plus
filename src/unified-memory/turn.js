@@ -1,4 +1,4 @@
-import { UnifiedMemoryStore } from './store.js';
+import { isLiveMemorySource, UnifiedMemoryStore } from './store.js';
 
 // Store order is newest first. Reserve capacity for each use, then prefer
 // topics mentioned this turn and records about the current speakers.
@@ -32,8 +32,9 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
     const store = new UnifiedMemoryStore(filename);
     try { return operation(store); } finally { store.close(); }
   };
-  const visibleNow = () => access(store => store.current(scope)).filter(({ body }) =>
-    (!body.persona || body.persona === personas[body.personaType]) && (!body.expiresAt || body.expiresAt > Date.now()));
+  const visibleNow = () => access(store => store.current(scope)).filter(({ body, source }) =>
+    isLiveMemorySource(source)
+    && (!body.persona || body.persona === personas[body.personaType]) && (!body.expiresAt || body.expiresAt > Date.now()));
   const visible = visibleNow();
   const context = selectContext(visible, entries).map(row => JSON.stringify({
     kind: row.kind, topic: String(row.body.topic || '').slice(0, 150), source: row.source,

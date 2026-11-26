@@ -858,18 +858,22 @@ function buildApp({
   let lifeReflectionFirstTick;
   let lifeReflectionBusy = false;
   let lifeReflectionController;
+  const legacyLifeEnabled = () => {
+    const cfg = getConfig();
+    return cfg.memory?.unifiedEnabled !== true && cfg.characterLife?.enabled === true;
+  };
   function syncLifeReflection() {
-    if (getConfig().characterLife?.enabled && lifeReflectionTimer) return;
+    if (legacyLifeEnabled() && lifeReflectionTimer) return;
     clearInterval(lifeReflectionTimer);
     lifeReflectionTimer = undefined;
     clearTimeout(lifeReflectionFirstTick);
-    if (!getConfig().characterLife?.enabled) {
+    if (!legacyLifeEnabled()) {
       lifeReflectionController?.abort();
       if (lifeReflectionBusy) personalityMemory.cancelPending();
       return;
     }
     const runReflection = async () => {
-      if (lifeReflectionBusy || orchestrator.runningChats.size || orchestrator.paused || !getConfig().characterLife?.enabled) return;
+      if (lifeReflectionBusy || orchestrator.runningChats.size || orchestrator.paused || !legacyLifeEnabled()) return;
       lifeReflectionBusy = true;
       lifeReflectionController = new AbortController();
       try {

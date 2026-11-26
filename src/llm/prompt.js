@@ -840,7 +840,7 @@ export function buildUserPrompt(ctx) {
   }
 
   // 工作状态靠近最新消息，避免在长历史中间被模型忽略。
-  const handoffText = typeof ctx.memory?.formatHandoffForPrompt === 'function'
+  const handoffText = getConfig().memory?.unifiedEnabled !== true && typeof ctx.memory?.formatHandoffForPrompt === 'function'
     ? ctx.memory.formatHandoffForPrompt(ctx.chatKey)
     : '';
   const checkpointText = formatThreadCheckpoint(ctx.threadCheckpoint);

@@ -40,6 +40,7 @@ export function registerMemoryRoutes(router, deps = {}) {
   });
 
   router.add('GET', '/api/memory-files', async (req, res) => {
+    if (getConfig().memory?.unifiedEnabled === true) return json(res, 200, { files: [], consolidating: [] });
     const files = memory.listChats().map((chatKey) => {
       const members = memory.members(chatKey);
       const handoff = memory.getHandoff(chatKey);

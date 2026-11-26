@@ -2,6 +2,10 @@ import { DatabaseSync } from 'node:sqlite';
 
 const kinds = new Set(['agreement', 'preference', 'relationship', 'task', 'experience']);
 
+export function isLiveMemorySource(source) {
+  return !/^(legacy:|living:|hippocampus:|personality-memory:|character-life:)/.test(source);
+}
+
 function required(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError('Missing ' + name);
   return value;
