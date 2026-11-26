@@ -3017,7 +3017,7 @@ function buildApp({
     getAsrRunning: () => asrInstall.running, log
   });
 
-  registerMemoryManagementRoutes(router, { json, readBody, memory, livingMemory, personalityMemory, store, assets: assetObserver, orchestrator, dataDir: DATA_DIR, identityBusy: () => Boolean(identityPilot?.friendReviewTasks?.size), auditWrite, emit });
+  registerMemoryManagementRoutes(router, { json, readBody, getConfig, memory, livingMemory, personalityMemory, store, assets: assetObserver, orchestrator, dataDir: DATA_DIR, identityBusy: () => Boolean(identityPilot?.friendReviewTasks?.size), auditWrite, emit });
   registerPersonalityMemoryRoutes({ router, memory: personalityMemory, collect: (key, options) => orchestrator.collectPersonality(key, options), readBody, json, emit, auditWrite });
   router.add('POST', '/api/vision/scan', async (req, res) => {
     // 读体放在守卫**之前**：检查与置位之间有 await 时，两个并发请求会双双通过 409 守卫、

@@ -1,12 +1,14 @@
 import { resetAllMemory } from '../../memory/reset.js';
-export function registerMemoryManagementRoutes(router, { json, readBody, memory, livingMemory, personalityMemory, store, assets, orchestrator, dataDir, identityBusy, auditWrite, emit }) {
+export function registerMemoryManagementRoutes(router, { json, readBody, getConfig, memory, livingMemory, personalityMemory, store, assets, orchestrator, dataDir, identityBusy, auditWrite, emit }) {
   router.add('GET', '/api/memory/hippocampus', async (req, res) => {
+    if (getConfig?.().memory?.unifiedEnabled === true) return json(res, 410, { error: '海马记忆已退役' });
     const url = new URL(req.url, 'http://localhost');
     const offset = Math.max(0, Math.floor(Number(url.searchParams.get('offset')) || 0));
     return json(res, 200, memory.hippocampus.status({ offset }));
   });
   // 控制台管理视图；不加入模型工具表，正文仍以海马库为唯一来源。
   router.add('GET', '/api/memory/hippocampus/people', async (req, res) => {
+    if (getConfig?.().memory?.unifiedEnabled === true) return json(res, 200, { entries: [] });
     return json(res, 200, memory.hippocampus.inspectionPersonCards());
   });
   router.add('POST', '/api/memory/reset-all', async (req, res) => {
