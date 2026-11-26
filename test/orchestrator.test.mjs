@@ -2099,6 +2099,35 @@ describe('Orchestrator', () => {
     }
   });
 
+  it('injects scoped unified memory and keeps source history tools on the chat path', async (t) => {
+    const { cfg, runner, memory, append } = fixture(t);
+    cfg.memory.unifiedEnabled = true;
+    memory.formatIndexForPrompt = () => 'LEGACY_IMPRESSION_FIXTURE';
+    const { UnifiedMemoryStore } = await import('../src/unified-memory/store.js');
+    const db = new UnifiedMemoryStore(path.join(root, 'unified-memory.sqlite'));
+    try {
+      for (const [scope, summary] of [['group:1', 'UNIFIED_AGREEMENT_FIXTURE'], ['private:1', 'PRIVATE_MEMORY_FIXTURE']]) {
+        db.record({ scope, subject: 'report', kind: 'agreement', source: 'message:12',
+          timestamp: 12, body: { summary } });
+      }
+    } finally { db.close(); }
+    let request;
+    globalThis.fetch = async (_url, options) => {
+      request = JSON.parse(options.body);
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: 'finish-unified', type: 'function',
+        function: { name: 'finish', arguments: '{}' } }] } }], usage: { total_tokens: 10 } });
+    };
+    append(1, '周报什么时候交');
+    await runner.wake('group:1');
+    const messages = JSON.stringify(request.messages);
+    assert.match(messages, /UNIFIED_AGREEMENT_FIXTURE/);
+    assert.doesNotMatch(messages, /LEGACY_IMPRESSION_FIXTURE|PRIVATE_MEMORY_FIXTURE/);
+    const tools = request.tools.map(tool => tool.function.name);
+    assert.ok(tools.includes('lookup_memory'));
+    assert.ok(tools.includes('search_history'));
+    assert.ok(!tools.includes('memory_query'));
+  });
+
   it('rolls a lifecycle generation before the next request when actual input reaches 32K', async (t) => {
     const { cfg, runner, store, sessions, append } = fixture(t);
     cfg.conversation.mode = 'lifecycle';
