@@ -44,6 +44,7 @@ import {
   renderIdentityFeaturePageImpl, renderIncidentFeaturePageImpl
 } from './pages/features.js';
 import { loadMemoryView, renderMemoryList } from './pages/memory.js';
+import { loadUnifiedMemoryPage } from './pages/unified-memory.js';
 import { loadLivingMemoryPage } from './pages/living-memory.js';
 import { loadCharacterLife } from './pages/character-life.js';
 import { loadPersonalMailPage } from './pages/personal-mail.js';
@@ -303,6 +304,7 @@ function switchTab(name) {
   if (name === 'chats') loadChats();
   if (name === 'memory') { loadMemoryView(); void loadSharedExperiences(); }
   if (name === 'hippocampus') loadHippocampusPage();
+  if (name === 'unified-memory') loadUnifiedMemoryPage();
   if (name === 'living-memory') loadLivingMemoryPage({ force: true });
   if (name === 'character-life') void loadCharacterLife();
   if (name === 'personal-mail') void loadPersonalMailPage();

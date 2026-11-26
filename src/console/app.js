@@ -53,6 +53,7 @@ import { registerMemeRoutes } from './routes/memes.js';
 import { registerMcpRoutes } from './routes/mcp.js';
 import { registerSkillRoutes } from './routes/skills.js';
 import { registerLivingMemoryRoutes } from './routes/living-memory.js';
+import { registerUnifiedMemoryRoutes } from '../unified-memory/routes.js';
 import { registerLifeFeedRoutes } from './routes/life-feed.js';
 import { registerAutoUpdateRoutes } from './routes/auto-update.js';
 import { registerManagerRoutes } from './routes/managers.js';
@@ -2995,6 +2996,7 @@ function buildApp({
   registerMemoryRoutes(router, { json, readBody, getConfig, memory, orchestrator, emit });
 
   // 长期语义记忆（scope 归一化与路由都在模块内）
+  registerUnifiedMemoryRoutes(router, { filename: path.join(DATA_DIR, 'unified-memory.sqlite'), json, getConfig });
   registerLivingMemoryRoutes(router, { json, readBody, getConfig, livingMemory, emit, auditWrite });
 
   registerProviderRoutes(router, {

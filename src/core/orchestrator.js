@@ -37,6 +37,7 @@ import { RestrictedSubagents } from '../subagents/index.js';
 import { quietPrivateChat, selfWakeAllowed, proactiveScopeProbability } from './private-proactive-policy.js';
 import path from 'node:path';
 import { memoryTurn } from '../unified-memory/turn.js';
+import { withWorkResults } from '../unified-memory/work-results.js';
 import {
   DATA_DIR,
   asrAvailable,
@@ -2201,11 +2202,15 @@ export class Orchestrator {
     }
     let unifiedPrompt = '';
     if (cfg.memory?.unifiedEnabled === true) {
-      const turn = memoryTurn({ filename: path.join(DATA_DIR, 'unified-memory.sqlite'),
-        personas: { memory: personaKey(persona), life: personaKeyOf(persona) },
-        scope: chatKey, entries: triggerEntries || [], enabled: () => getConfig().memory?.unifiedEnabled === true });
-      toolDefs.push(...turn.tools);
-      unifiedPrompt = turn.prompt;
+      try {
+        const turn = memoryTurn({ filename: path.join(DATA_DIR, 'unified-memory.sqlite'),
+          personas: { memory: personaKey(persona), life: personaKeyOf(persona) },
+          scope: chatKey, entries: triggerEntries || [], enabled: () => getConfig().memory?.unifiedEnabled === true });
+        toolDefs.push(...turn.tools);
+        unifiedPrompt = turn.prompt;
+      } catch (error) {
+        log.warn('[unified-memory] 读取会话记忆失败：', error.message);
+      }
     }
     session.memoryRecallIds = [];
     const researchTools = toolDefs.slice();
@@ -2231,6 +2236,13 @@ export class Orchestrator {
       participantIds: (triggerEntries || []).map(row => row.senderId), memory: this.memory, persona }));
     if (this.memory.forgetting) toolDefs.splice(0, toolDefs.length, ...withMemoryRecall(toolDefs,
       { forgetting: this.memory.forgetting, personaScope: personaKey(persona) }));
+    if (cfg.memory?.unifiedEnabled === true) {
+      toolDefs.splice(0, toolDefs.length, ...withWorkResults(toolDefs, {
+        filename: path.join(DATA_DIR, 'unified-memory.sqlite'), scope: chatKey, sessionId: session.id,
+        enabled: () => getConfig().memory?.unifiedEnabled === true,
+        onError: error => log.warn('[unified-memory] 工作结果保存失败：', error.message)
+      }));
+    }
     toolDefs.splice(0, toolDefs.length, ...mountOnDemandTools(toolDefs, executeTool, def => {
       const current = getConfig();
       if (!platformToolAllowed(def.name, current.platform, chatKey)) return false;
@@ -2255,7 +2267,7 @@ export class Orchestrator {
     });
     // 状态行放本轮 user 消息，不拼进 system prompt：system 前缀参与 cacheKey/线程续接判定，
     // 每半小时变一次会让前缀缓存和 lifecycle 线程反复失效。
-    const useCharacterLife = cfg.characterLife?.enabled === true
+    const useCharacterLife = cfg.memory?.unifiedEnabled !== true && cfg.characterLife?.enabled === true
       && (!isExternalChat(chatKey) || (isWechatChat(chatKey) && channel?.allowed(chatKey)));
     let personaStateLine = personaStatePrompt(persona, Date.now(), { includeText: !useCharacterLife });
     // 长期语义记忆属于每轮临时上下文：放入 user 内容而非 system 前缀，避免检索结果变化让
@@ -3432,7 +3444,7 @@ export class Orchestrator {
       // 真要开口了，才把该范围这一轮用掉（另一个范围仍有自己的机会）
       writeProactiveAttempt(PROACTIVE_STATE_FILE, scope, nowTick);
       const chatKey = candidates[Math.floor(this.random() * candidates.length)];
-      if (cfg.characterLife?.enabled && this.random() >= this.#lifeProactiveFactor(cfg, chatKey, nowTick)) return;
+      if (cfg.memory?.unifiedEnabled !== true && cfg.characterLife?.enabled && this.random() >= this.#lifeProactiveFactor(cfg, chatKey, nowTick)) return;
       if (quietPrivateChat(chatKey, cfg) && !writePrivateInitiative(PROACTIVE_STATE_FILE, chatKey, nowTick)) {
         log.warn(`[proactive] 跳过 ${chatKey}：私聊冷却未能保存，未发起消息`);
         return;
@@ -3485,7 +3497,8 @@ export class Orchestrator {
 
   async reflectCharacterLife(chatKey, { signal } = {}) {
     const allowed = () => !signal?.aborted && !this.paused && !this.aborted && !this.runningChats.size
-      && getConfig().characterLife?.enabled && (!isExternalChat(chatKey) || isWechatChat(chatKey))
+      && getConfig().memory?.unifiedEnabled !== true && getConfig().characterLife?.enabled
+      && (!isExternalChat(chatKey) || isWechatChat(chatKey))
       && canRun(chatKey) && getConfig().runtime?.mode === 'active'
       && !budgetStatus(getConfig(), this.sessions?.todayUsage?.(todayKey()) || {}).exceeded;
     const complete = async messages => {

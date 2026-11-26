@@ -18,6 +18,7 @@ import { chatNameOf, fmtTime, formatChatTitle } from '../core/format.js';
 import { state } from '../core/state.js';
 import { saveConfig } from './settings-save.js';
 import { renderLifeExperiment } from './character-life.js';
+import { renderUnifiedExperiment } from './unified-memory.js';
 import { renderPersonalityMemoryExperiment } from './personality-memory.js';
 import { renderSubagentExperiment } from './subagents.js';
 import { renderPrivateCacheExperiment } from './private-cache.js';
@@ -93,6 +94,7 @@ function renderExperimentalSettingsSectionImpl(c) {
         </div>
       </div>
       ${renderLifeExperiment(c)}
+      ${renderUnifiedExperiment(c)}
       ${renderPersonalityMemoryExperiment(c)}
       ${renderSubagentExperiment(c)}
       ${renderPrivateCacheExperiment(c)}

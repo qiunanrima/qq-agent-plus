@@ -10,8 +10,9 @@ function required(value, name) {
 // Each row is a complete revision. The current state and its evidence therefore
 // become visible in the same commit, including after a crash.
 export class UnifiedMemoryStore {
-  constructor(filename) {
-    this.db = new DatabaseSync(filename);
+  constructor(filename, { readOnly = false } = {}) {
+    this.db = new DatabaseSync(filename, { readOnly });
+    if (readOnly) return;
     this.db.exec(`
       PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS revisions (

@@ -32,12 +32,14 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
     const store = new UnifiedMemoryStore(filename);
     try { return operation(store); } finally { store.close(); }
   };
-  const rows = access(store => store.current(scope));
-  const visible = rows.filter(({ body }) => (!body.persona || body.persona === personas[body.personaType])
-    && (!body.expiresAt || body.expiresAt > Date.now()));
+  const visibleNow = () => access(store => store.current(scope)).filter(({ body }) =>
+    (!body.persona || body.persona === personas[body.personaType]) && (!body.expiresAt || body.expiresAt > Date.now()));
+  const visible = visibleNow();
   const context = selectContext(visible, entries).map(row => JSON.stringify({
     kind: row.kind, topic: String(row.body.topic || '').slice(0, 150), source: row.source,
     speaker: row.body.speaker, summary: String(row.body.summary || '').slice(0, 800),
+    file: row.body.file, followUpId: row.body.followUpId, deadline: row.body.deadline,
+    messageId: row.body.messageId, status: row.body.status,
     nextStep: String(row.body.nextStep || '').slice(0, 400) || undefined
   })).join('\n');
   const prompt = [
@@ -67,5 +69,22 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
       return { content: changed ? '已记录' : '此来源已记录' };
     }
   };
-  return { prompt, tools: sources.size ? [tool] : [] };
+  const lookup = {
+    name: 'lookup_memory', description: '按主题、正文或产物位置查询本会话当前有效的记忆，返回记录来源。',
+    parameters: { type: 'object', properties: { query: { type: 'string', maxLength: 160 } }, required: ['query'] },
+    execute(ctx, args) {
+      const query = String(args.query || '').trim().toLowerCase();
+      if (!enabled() || ctx.signal?.aborted || ctx.chatKey !== scope || !query || query.length > 160) {
+        return { content: '无法执行本次记忆查询', isError: true, reportIncident: false };
+      }
+      const found = visibleNow().filter(({ body }) => [body.topic, body.summary, body.detail, body.file, body.nextStep]
+        .some(value => typeof value === 'string' && value.toLowerCase().includes(query)));
+      return { content: JSON.stringify(found.slice(0, 12).map(({ kind, source, body }) => ({
+        kind, source, topic: body.topic, summary: String(body.summary || '').slice(0, 800),
+        detail: String(body.detail || '').slice(0, 800) || undefined, nextStep: body.nextStep,
+        file: body.file, status: body.status, followUpId: body.followUpId, deadline: body.deadline
+      }))) };
+    }
+  };
+  return { prompt, tools: sources.size ? [tool, lookup] : [lookup] };
 }

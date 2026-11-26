@@ -28,6 +28,7 @@ import { bindHumanizePreset, bindHumanizeRecommend, bindProactiveWindowEditor, l
 import { bindSearchTest } from './search-test.js';
 import { hydrateExtensionStatus } from './settings-extensions.js';
 import { bindLifeExperiment } from './character-life.js';
+import { bindUnifiedExperiment } from './unified-memory.js';
 import { bindPersonalityMemoryExperiment } from './personality-memory.js';
 import {
   openBlocklistModal, openModelAddModal, openModelDeleteModal, openModelPicker, openPriceDialog,
@@ -302,6 +303,7 @@ function bindSettingsSaveAndSections() {
 
   if ((state.settingsSection || 'api') === 'experiments') {
     bindLifeExperiment();
+    bindUnifiedExperiment();
     bindPersonalityMemoryExperiment();
     loadExperimentalFeatureStatuses();
     $('#lm-open-console')?.addEventListener('click', () => switchTab('living-memory'));

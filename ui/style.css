@@ -6721,6 +6721,7 @@ html[data-side-rail='1'] .tab .pending-badge { top: 3px; right: 4px; min-width: 
 /* ── 长期语义记忆：页头 + KPI + 四页签（概览 / 记忆库 / 召回测试 / 设置）──
    通用 .view 为防双滚动而裁剪溢出；这个页面自己承接纵向滚动。 */
 #view-living-memory.view.active,
+#view-unified-memory.view.active,
 #view-personality-memory.view.active {
   display: block;
   overflow-x: hidden;
@@ -6728,6 +6729,7 @@ html[data-side-rail='1'] .tab .pending-badge { top: 3px; right: 4px; min-width: 
   scrollbar-gutter: stable;
 }
 .living-memory-page { width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 22px; }
+#unified-memory-page { box-sizing: border-box; overflow-wrap: anywhere; }
 #personality-memory-page { width: 100%; min-width: 0; padding: 22px; box-sizing: border-box; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
   #personality-memory-page { padding: 14px; }

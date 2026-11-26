@@ -141,6 +141,7 @@
         <button class="tab" data-icon="sliders" data-tab="control" data-page-node-id="qcontrolnav"><span class="tab-label"><b>控制</b><i>更新与运行开关</i></span></button>
         <button class="tab" data-icon="database" data-tab="memory" data-group-start data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ"><span class="tab-label"><b>会话记忆</b><i>每条会话记了什么</i></span></button>
         <button class="tab" data-icon="users" data-tab="people-memory" data-page-node-id="qpeoplememorynav"><span class="tab-label"><b>人物记忆</b><i>群友的长期画像</i></span></button>
+        <button class="tab hidden" data-icon="brain" data-tab="unified-memory" data-feature-nav="unified-memory"><span class="tab-label"><b>统一记忆</b><i>约定、任务与经历</i></span></button>
         <button class="tab hidden" data-icon="brain" data-tab="living-memory" data-feature-nav="living-memory"><span class="tab-label"><b>长期记忆</b><i>语义检索与知识图谱</i></span></button>
         <button class="tab" data-icon="brain" data-tab="hippocampus"><span class="tab-label"><b>海马记忆</b><i>今日昨日与消化状态</i></span></button>
         <button class="tab hidden" data-icon="activity" data-tab="character-life" data-feature-nav="character-life"><span class="tab-label"><b>角色生命系统</b><i>情绪、动机与节律</i></span></button>
@@ -322,6 +323,7 @@
       </div>
     </section>
 
+    <section id="view-unified-memory" class="view"><div id="unified-memory-page" class="living-memory-page"></div></section>
     <section id="view-living-memory" class="view">
       <div id="living-memory-page" class="living-memory-page"></div>
     </section>
@@ -469,6 +471,7 @@
   <script type="module" src="/pages/chat.js"></script>
   <script type="module" src="/pages/chat-decisions.js"></script>
   <script type="module" src="/pages/memory.js"></script>
+  <script type="module" src="/pages/unified-memory.js"></script>
   <script type="module" src="/pages/living-memory.js"></script>
   <script type="module" src="/pages/character-life.js"></script>
   <script type="module" src="/pages/personal-mail.js"></script>
