@@ -85,6 +85,14 @@ test('personal briefing reads only matching synced phone notifications in the ow
   fs.writeFileSync(path.join(dir, 'calendar.json'), JSON.stringify({
     from: start - 60000, to: start + 120000, receivedAt, events: [event]
   }));
+  ctx.triggerEntries[0].text = '接下来有什么会要准备？';
+  const calendar = await dispatchTool(defs, ctx, 'phone_calendar', JSON.stringify({
+    from: start + 60000, to: start + 120000
+  }));
+  assert.equal(calendar.isError, undefined);
+  const emptyCalendar = JSON.parse(calendar.content);
+  assert.equal(emptyCalendar.coverage, 'full');
+  assert.deepEqual(emptyCalendar.events, []);
   const editContext = { chatKey, triggerEntries: [{ senderId: owner, text: '行，就照刚才说的改' }] };
   const edit = await dispatchTool(defs, editContext, 'phone_calendar_write', JSON.stringify({
     action: 'update', eventId: event.eventId, originalStart: start, start: start + 60000
