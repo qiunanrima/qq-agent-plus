@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { containerAllowed, containerTools, workspaceMaterialCommand, workspaceSearchCommand } from '../src/tools/linux-container.js';
+import { containerAllowed, containerTools, parseWorkspaceSearch, workspaceMaterialCommand, workspaceSearchCommand } from '../src/tools/linux-container.js';
 
 test('container requires an owner-only inbound turn and explicit group opt-in', async () => {
   const cfg = { admin: { ownerUin: '123' }, linuxContainer: { enabled: true } };
@@ -66,4 +66,11 @@ test('workspace material reads stay within the authorized folder and bound the e
     .find(({ name }) => name === 'linux_read_workspace_material');
   assert.ok((await tool.execute({ triggerEntries: [{ text: request }] },
     { directory: folder, file: folder + '/../q.csv' })).isError);
+});
+test('workspace search returns version evidence and preserves the paths field', () => {
+  const output = ['/workspace/project/quote.csv', '100', '30', '/workspace/project/quote2.csv', '101.250', '40', ''].join('\0');
+  const result = parseWorkspaceSearch(output);
+  assert.deepEqual(result.paths, ['/workspace/project/quote2.csv', '/workspace/project/quote.csv']);
+  assert.deepEqual(result.files[0], { path: result.paths[0], modifiedAt: '1970-01-01T00:01:41.250Z', bytes: 40 });
+  assert.equal(result.truncated, false);
 });
