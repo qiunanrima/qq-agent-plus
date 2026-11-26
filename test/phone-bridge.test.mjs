@@ -87,10 +87,11 @@ test('phone upload uses its own credential and stores a retried event only once'
   assert.deepEqual(await readRequest.json(), { request: { id: pending.requestId, ...distant } });
   const readResult = await fetch(base + '/api/phone-bridge/calendar', {
     method: 'POST', headers: { Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ requestId: pending.requestId, ...distant, timeZone: 'Asia/Shanghai', events: [] })
+    body: JSON.stringify({ requestId: pending.requestId, ...distant, timeZone: 'Asia/Shanghai', events: [], syncTrigger: 'periodic' })
   });
   assert.equal(readResult.status, 200);
   assert.equal(requestPhoneCalendar(dataDir, distant).coverage, 'full');
+  assert.equal(requestPhoneCalendar(dataDir, distant).syncTrigger, 'periodic');
   assert.equal(requestPhoneCalendar(dataDir, { from, to }).from, from);
   const day = 86400000;
   const longRange = { from: to + 10 * day, to: to + 60 * day };

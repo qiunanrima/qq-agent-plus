@@ -96,6 +96,8 @@ export function registerPhoneBridge(router, { json, readBody, dataDir = DATA_DIR
       snapshot = {
         from, to, timeZone, receivedAt: new Date().toISOString(),
         ...(requestId !== undefined && payload.truncated === true ? { truncated: true } : {}),
+        ...(requestId !== undefined && ['manual', 'periodic', 'notification', 'scheduled'].includes(payload.syncTrigger)
+          ? { syncTrigger: payload.syncTrigger } : {}),
         events: events.map(({ start, end, title, location, allDay }) => ({ start, end, title, location, allDay }))
       };
     } catch {
@@ -274,6 +276,7 @@ function requestCalendarChunks(dataDir, ordinary, requests, now, total) {
   const first = snapshots[0];
   return selectPhoneCalendar({
     from, to, timeZone: first.timeZone, receivedAt: snapshots.map(item => item.receivedAt).sort()[0],
+    syncTriggers: [...new Set(snapshots.map(item => item.syncTrigger ?? 'unknown'))],
     events: [...events.values()].sort((a, b) => a.start - b.start),
     truncated: snapshots.some(item => item.truncated)
   }, { from, to }, now);
