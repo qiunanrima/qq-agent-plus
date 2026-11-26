@@ -1,6 +1,21 @@
 import { test, expect } from '@playwright/test';
 import { login, switchTo } from './helpers.mjs';
 
+test('统一记忆固化后收起旧记忆导航', async ({ page }) => {
+  await login(page);
+  const config = await (await page.request.get('/api/config')).json();
+  config.memory = { ...config.memory, unifiedEnabled: true, unifiedGraduated: true };
+  for (const key of ['livingMemory', 'characterLife', 'personalityMemory']) {
+    config[key] = { ...config[key], graduated: true };
+  }
+  await page.route('**/api/config', route => route.fulfill({ json: config }));
+  await page.goto('/');
+  await expect(page.locator('[data-tab="unified-memory"]')).not.toHaveClass(/\bhidden\b/);
+  for (const tab of ['memory', 'hippocampus', 'living-memory', 'character-life', 'personality-memory']) {
+    await expect(page.locator(`[data-tab="${tab}"]`)).toHaveClass(/\bhidden\b/);
+  }
+});
+
 test('统一记忆停用时仍可切换会话、查看修订和返回', async ({ page }) => {
   await login(page);
   const row = { kind: 'agreement', subject: 'report', source: 'message:12',

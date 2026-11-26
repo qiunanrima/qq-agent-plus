@@ -29,6 +29,7 @@ function renderExperimentalSettingsSectionImpl(c) {
   const enabled = c.identityPilot?.enabled === true;
   const incident = c.incidentPilot || {};
   const livingMemory = c.livingMemory || {};
+  const unified = c.memory?.unifiedEnabled === true || c.memory?.unifiedGraduated === true;
   return `
     <section class="experimental-settings">
       <h3 id="settings-experiments">实验功能</h3>
@@ -75,7 +76,7 @@ function renderExperimentalSettingsSectionImpl(c) {
           </span>
         </div>
       </div>
-      <div class="experiment-card" id="experiment-living-memory">
+      ${unified ? '' : `<div class="experiment-card" id="experiment-living-memory">
         <div class="experiment-card-main">
           <div class="experiment-card-title">
             <strong>长期语义记忆</strong>
@@ -92,10 +93,10 @@ function renderExperimentalSettingsSectionImpl(c) {
               : '<button type="button" class="btn btn-small btn-primary" id="launch-living-memory-feature">固化上线</button>'}
           </div>
         </div>
-      </div>
-      ${renderLifeExperiment(c)}
+      </div>`}
+      ${unified ? '' : renderLifeExperiment(c)}
       ${renderUnifiedExperiment(c)}
-      ${renderPersonalityMemoryExperiment(c)}
+      ${unified ? '' : renderPersonalityMemoryExperiment(c)}
       ${renderSubagentExperiment(c)}
       ${renderPrivateCacheExperiment(c)}
       ${renderWebFetchBrowserExperiment(c)}

@@ -29,6 +29,7 @@ function afterRender(name, impl, args) {
 }
 
 function graduatedFeatureState(c = state.config || {}) {
+  const unified = c.memory?.unifiedEnabled === true || c.memory?.unifiedGraduated === true;
   return {
     identity: c.identityPilot?.graduated === true,
     // 「好友管理」页承载入站好友申请的审批（该功能不受退役影响），导航入口
@@ -36,9 +37,11 @@ function graduatedFeatureState(c = state.config || {}) {
     slang: c.slangPilot?.graduated === true,
     incidents: c.incidentPilot?.graduated === true,
     'unified-memory': c.memory?.unifiedGraduated === true,
-    'living-memory': c.livingMemory?.graduated === true,
-    'character-life': c.characterLife?.graduated === true,
-    'personality-memory': c.personalityMemory?.graduated === true
+    memory: !unified,
+    hippocampus: !unified,
+    'living-memory': !unified && c.livingMemory?.graduated === true,
+    'character-life': !unified && c.characterLife?.graduated === true,
+    'personality-memory': !unified && c.personalityMemory?.graduated === true
   };
 }
 
