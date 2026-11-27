@@ -2099,6 +2099,42 @@ describe('Orchestrator', () => {
     }
   });
 
+  it('replays unified lifecycle inputs exactly and sends only memory changes', async (t) => {
+    const { cfg, runner, append } = fixture(t);
+    cfg.conversation.mode = 'lifecycle';
+    cfg.humanize.enabled = false;
+    cfg.memory.unifiedEnabled = true;
+    const { UnifiedMemoryStore } = await import('../src/unified-memory/store.js');
+    const db = new UnifiedMemoryStore(path.join(root, 'unified-memory.sqlite'));
+    t.after(() => db.close());
+    const record = (timestamp, summary) => db.record({ scope: 'group:1', subject: 'report',
+      kind: 'agreement', source: 'message:' + timestamp, timestamp, body: { topic: '报告', summary } });
+    record(1, 'FIRST_SCHEDULE');
+    const requests = [];
+    globalThis.fetch = async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return Response.json({ choices: [{ message: { tool_calls: [{ id: 'finish-' + requests.length,
+        type: 'function', function: { name: 'finish', arguments: '{"summary":"继续","threadDisposition":"active"}' } }] } }],
+        usage: { total_tokens: 10 } });
+    };
+    for (let round = 1; round <= 3; round++) {
+      if (round === 3) record(3, 'UPDATED_SCHEDULE');
+      append(round, '聊天第' + round + '条');
+      await runner.wake('group:1');
+      assert.equal(requests.length, round);
+      const { messages, tools } = requests.at(-1);
+      if (round > 1) {
+        const previous = requests.at(-2);
+        assert.deepEqual(messages.slice(0, previous.messages.length), previous.messages);
+        assert.deepEqual(tools, previous.tools);
+      }
+      const current = messages.at(-1).content;
+      if (round === 1) assert.match(current, /FIRST_SCHEDULE/);
+      else assert.doesNotMatch(current, /FIRST_SCHEDULE/);
+      if (round === 3) assert.match(current, /UPDATED_SCHEDULE/);
+    }
+  });
+
   it('injects scoped unified memory and keeps source history tools on the chat path', async (t) => {
     const { cfg, runner, memory, append } = fixture(t);
     cfg.memory.unifiedEnabled = true;

@@ -17,6 +17,17 @@ test('full memory is available only through a scoped read', t => {
   const find = name => turn.tools.find(tool => tool.name === name);
   assert.equal(find('record_memory').execute(ctx, { kind: 'agreement', topic: '课表', summary: '本学期课表',
     detail, messageId: '1' }).content, '已记录');
+  const snapshot = id => memoryTurn({ filename, scope, enabled: () => true,
+    entries: [{ id, senderId: '123' }] }).prompt;
+  const first = snapshot(2);
+  assert.ok(first.endsWith('本轮可引用的消息编号：2'));
+  assert.equal(first.slice(0, -1) + '3', snapshot(3));
+  const current = memoryTurn({ filename, scope, entries: [], enabled: () => true });
+  const initial = current.lifecyclePrompt(null);
+  assert.match(initial.text, /本学期课表/);
+  assert.equal(current.lifecyclePrompt(initial.state).text, '');
+  assert.match(current.lifecyclePrompt({ records: { ...initial.state.records, 999: 'older' } }).text,
+    /退出当前召回.*999/);
   const search = find('lookup_memory').execute(ctx, { query: 'A203' });
   assert.doesNotMatch(search.content, /A203/);
   const [{ id }] = JSON.parse(search.content);
@@ -100,4 +111,21 @@ test('corrections survive reopen and replay without crossing chat boundaries', t
     assert.equal(row.source, 'message:2');
     assert.deepEqual(db.history(scope, row.kind, row.subject).map(r => r.source), ['message:2', 'message:1']);
   } finally { db.close(); }
+});
+
+test('changing turn IDs and topic ranking preserves the prefix for the same selected memories', t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'memory-prefix-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const scope = 'private:123';
+  const turn = (id, text) => memoryTurn({ filename: path.join(directory, 'memory.sqlite'), scope,
+    enabled: () => true, entries: [{ id, ts: id, senderId: '123', text }] });
+  for (const [id, topic] of [[1, '午餐'], [2, '晚餐']]) {
+    turn(id, topic).tools[0].execute({ chatKey: scope },
+      { messageId: String(id), kind: 'agreement', topic, summary: topic });
+  }
+  const first = turn(3, '午餐').prompt;
+  assert.match(first, /午餐/);
+  assert.match(first, /晚餐/);
+  assert.ok(first.endsWith('本轮可引用的消息编号：3'));
+  assert.equal(first.slice(0, -1) + '4', turn(4, '晚餐').prompt);
 });
