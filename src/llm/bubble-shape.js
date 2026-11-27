@@ -53,8 +53,8 @@ function numberedBubbles(message) {
   return bubbles;
 }
 
-/** 把一条消息拆成待打包的片段。含代码/链接/颜文字的段落整段保留。 */
-function chunksOf(message, charLimit) {
+/** 按自然边界拆成待打包的片段。含代码/链接/颜文字的段落整段保留。 */
+function chunksOf(message) {
   const { text: guarded, parts } = protect(message);
   const out = [];
   const paragraphs = guarded.split(/\n+/).map((part) => part.trim()).filter(Boolean);
@@ -66,13 +66,7 @@ function chunksOf(message, charLimit) {
     }
     const sentences = paragraph.split(/(?<=[。！？!?；;…])\s*/).map((piece) => piece.trim()).filter(Boolean);
     for (const sentence of sentences) {
-      if (sentence.length <= charLimit) {
-        out.push({ text: sentence, keepAlone: false });
-      } else {
-        for (let at = 0; at < sentence.length; at += charLimit) {
-          out.push({ text: sentence.slice(at, at + charLimit).trim(), keepAlone: false });
-        }
-      }
+      out.push({ text: sentence, keepAlone: false });
     }
   }
   return out;
@@ -80,7 +74,7 @@ function chunksOf(message, charLimit) {
 
 /**
  * @param {string|string[]} messages 模型给的文本或数组
- * @param {{maxBubbles?: number, maxChars?: number, preserveCode?: boolean}} options
+ * @param {{maxBubbles?: number, maxChars?: number, preserveCode?: boolean}} options maxChars 是合并片段的目标长度
  * @returns {string[]} 普通回复最多 maxBubbles 条，单段编号回复最多 8 条
  */
 export function shapeBubbles(messages, { maxBubbles = 3, maxChars = 60 } = {}) {
@@ -101,7 +95,7 @@ export function shapeBubbles(messages, { maxBubbles = 3, maxChars = 60 } = {}) {
   }
 
   const chunks = [];
-  for (const message of list) chunks.push(...chunksOf(message, charLimit));
+  for (const message of list) chunks.push(...chunksOf(message));
   if (!chunks.length) return list.slice(0, bubbleLimit);
 
   const bubbles = [];

@@ -35,6 +35,15 @@ test('短句原样保留，不为了凑条数硬拆', () => {
   assert.deepEqual(shapeBubbles('', { maxBubbles: 3 }), []);
 });
 
+test('超过目标长度的完整句子保留时间范围，有句界时仍可分条', () => {
+  const invitation = '日历邀请已经通过 Gmail 发出去了，收件人是 example@example.com，时间定在明天下午 3:00 到 3:15';
+  const options = { maxBubbles: 3, maxChars: invitation.indexOf('3:15') };
+  assert.deepEqual(shapeBubbles([invitation], options), [invitation]);
+  assert.deepEqual(shapeBubbles([`${invitation}。地点稍后告诉你。`], options), [
+    `${invitation}。`, '地点稍后告诉你。'
+  ]);
+});
+
 test('编号回复可以发超过三条，保留各项的说明和代码', () => {
   const code = '~~~text\n9. 这是代码示例\n~~~';
   const items = ['开场白\n1. 第一项\n继续解释', `2. 第二项\n${code}`, '3、第三项', '4）第四项', '5. 第五项'];
