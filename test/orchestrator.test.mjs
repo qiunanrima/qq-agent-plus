@@ -2135,6 +2135,9 @@ describe('Orchestrator', () => {
     assert.match(messages, /周三提交新版周报/);
     assert.doesNotMatch(messages, /LEGACY_IMPRESSION_FIXTURE|PRIVATE_MEMORY_FIXTURE/);
     const tools = request.tools.map(tool => tool.function.name);
+    assert.ok(tools.includes('discover_tools'));
+    assert.ok(!tools.includes('expense_reconcile') && !tools.includes('personal_mail_search'));
+    assert.ok(!tools.includes('read_forward') && !tools.includes('translate_text'));
     assert.ok(tools.includes('lookup_memory'));
     assert.ok(tools.includes('search_history'));
     assert.ok(!tools.includes('memory_query'));

@@ -2100,7 +2100,16 @@ export class Orchestrator {
     const humanShare = manual && !paced;
     const lifeFeedUsable = cfg.lifeFeed?.enabled === true
       && (humanShare || (lifeFeed?.shareMode?.() !== 'manual' && lifeFeed?.isShareTarget?.(chatKey) !== false));
+    const ownerPrivate = chatKey === 'private:' + readOwnerUin(cfg);
+    const ownerTools = ['personal_mail_search', 'expense_reconcile', 'phone_calendar', 'phone_calendar_write', 'phone_notifications'];
+    const groupOnly = ['react_to_message', 'get_message_reactions', 'get_group_profile', 'group_sign', 'set_group_todo',
+      'send_qq_voice', 'list_group_files', 'group_file_url', 'send_group_file', 'list_group_album', 'like_album_photo',
+      'comment_album_photo', 'upload_to_group_album', 'set_group_card', 'set_group_ban', 'kick_group_member',
+      'set_group_admin', 'get_group_member_list', 'group_game'];
     const toolDefs = buildToolDefs().filter((d) => {
+      if (!ownerPrivate && ownerTools.includes(d.name)) return false;
+      if (!channel && kind === 'private' && groupOnly.includes(d.name)) return false;
+      if (kind === 'group' && d.name === 'send_private_file') return false;
       if (cfg.memory?.unifiedEnabled === true && ['memory_append', 'memory_query', 'memory_remove', 'person_memory_lookup'].includes(d.name)) return false;
       if (cfg.memory?.hippocampusEnabled === true && d.name === 'memory_append') return false;
       if (!viewMessageImages && d.name === 'get_message_images') return false;

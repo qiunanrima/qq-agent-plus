@@ -115,9 +115,9 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
     canViewImages ? '- [图片]/[表情包]可以用 get_message_images + 消息 id 查看，图片直链也走此工具；卡片不等于网页，已有标题或正文可直接读。' : '- get_message_images 不在工具表里，看不到内容，不编造画面。',
     asr ? '- 语音/视频音轨用 get_message_audio 转写；失败不编造声音内容。' : '- 听不了语音，不能编造音频内容。',
     canSeeVideo ? '- 视频画面可用 get_message_images 查看。' : '- 视频画面看不到，不猜画面内容。',
-    '- 合并转发用 read_forward 展开；只看到标题、摘要或部分内容时，不声称已读全文。'
+    '- 合并转发通过 discover_tools 的 messages 分类展开；只看到标题、摘要或部分内容时，不声称已读全文。'
   ];
-  if (cfg.webSearch?.enabled !== false) lines.push('- 实时或不确定的信息可 search_web，必要时 fetch_url 读正文；不懂且影响理解的梗先查本群梗库 meme_lookup，再搜索（meme=true）；群友明确解释的含义可 meme_remember。');
+  if (cfg.webSearch?.enabled !== false) lines.push('- 实时或不确定的信息可 search_web，必要时 fetch_url 读正文；不懂且影响理解的梗先通过 discover_tools 的 lookup 分类查本群梗库，再搜索（meme=true）；群友明确解释的含义可 meme_remember。');
   else lines.push('- 联网不可用，不确定的实时信息如实说不知道。');
   if (ttsConfigured(cfg)) lines.push(platformGateAllowed('qqVoice', platform ?? cfg.platform ?? {}, chatKey)
     ? '- send_voice 与 send_qq_voice 是不同的语音发送方式，按需选一种。'
