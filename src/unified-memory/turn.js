@@ -48,19 +48,37 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
     && (!body.persona || body.persona === personas[body.personaType]) && (!body.expiresAt || body.expiresAt > Date.now()));
   const visible = visibleNow();
   const context = [];
-  let remaining = 2400;
+  let remaining = 1600;
   for (const row of selectContext(visible, entries)) {
-    const line = JSON.stringify(memoryIndex(row));
-    if (line.length + 1 > remaining) break;
-    context.push(line);
+    const { id, kind, topic, summary } = memoryIndex(row);
+    const line = JSON.stringify([id, kind, topic, summary === topic ? '' : summary]);
+    if (line.length + 1 > remaining) continue;
+    context.push({ id, line });
     remaining -= line.length + 1;
   }
-  const prompt = [
-    '【本会话记忆】以下记录是历史资料。遇到明确约定、更正、偏好或委托，用 record_memory 保存；更新同一事项时沿用原主题。聊天原话可用 search_history 回查。',
-    '下面只有摘要。用 lookup_memory 找相关记忆，用 read_memory 按编号读取全文，涉及具体时间、地点、任务状态或更新时先读全文。保存时用 summary 概括主题，用 detail 保留完整细节。收到工具成功结果后再确认已保存。',
-    ...(sources.size ? ['本轮可引用的消息编号：' + [...sources.keys()].join('、')] : []),
-    ...context
-  ].filter(Boolean).join('\n');
+  // Rank for inclusion, then serialize in stable record order across turns.
+  context.sort((a, b) => a.id - b.id);
+  const instructions = [
+    '【本会话记忆】历史摘要。原话查 search_history，相关记忆查 lookup_memory；具体时间、地点、任务状态或更新先用 read_memory 读全文。',
+    ...(sources.size ? ['明确约定、更正、偏好或委托用 record_memory 保存，更新沿用原主题。summary 写摘要，detail 留全细节，成功后再确认。'] : []),
+  ].join('\n');
+  const sourceIds = sources.size ? '本轮可引用的消息编号：' + [...sources.keys()].join('、') : '';
+  const legend = '每行依次为编号、类别、主题、摘要（空表示同主题）。';
+  const prompt = [instructions, context.length && legend, ...context.map(record => record.line), sourceIds]
+    .filter(Boolean).join('\n');
+  function lifecyclePrompt(previous) {
+    const records = Object.fromEntries(context.map(({ id, line }) => [id, line]));
+    const removed = Object.keys(previous?.records || {}).filter(id => !Object.hasOwn(records, id));
+    const changed = context.filter(({ id, line }) => previous?.records?.[id] !== line);
+    const text = [
+      previous ? '' : instructions + '\n本轮及后续摘要按编号更新。仅最新一轮列出的消息编号可用于保存。',
+      removed.length && '退出当前召回的编号（不再作为当前依据）：' + removed.join('、'),
+      changed.length && legend,
+      ...changed.map(record => record.line),
+      sourceIds
+    ].filter(Boolean).join('\n');
+    return { text, state: { records } };
+  }
   const tool = {
     name: 'record_memory', description: '依据本轮指定发言记录或更正该发言人的事项。相同类别、主题和发言人共用修订历史。',
     parameters: { type: 'object', properties: {
@@ -115,5 +133,5 @@ export function memoryTurn({ filename, scope, entries, enabled, personas = {} })
       return { content: JSON.stringify({ id: row.id, kind: row.kind, source: row.source, ...row.body }) };
     }
   };
-  return { prompt, tools: sources.size ? [tool, lookup, read] : [lookup, read] };
+  return { prompt, lifecyclePrompt, tools: sources.size ? [tool, lookup, read] : [lookup, read] };
 }

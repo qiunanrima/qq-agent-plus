@@ -1266,7 +1266,7 @@ export class ChatStore {
     return decisions;
   }
 
-  appendThreadTurns(chatKey, threadId, runId, messages = []) {
+  appendThreadTurns(chatKey, threadId, runId, messages = [], memoryState = null) {
     if (!Array.isArray(messages) || !messages.length) return { added: 0, chars: 0 };
     return this.#transaction(() => {
       const row = this.db.prepare(`SELECT transcript_chars FROM conversation_threads
@@ -1280,8 +1280,10 @@ export class ChatStore {
         VALUES (?,?,?,?,?,?)`);
       let chars = 0;
       for (const message of messages) {
-        const json = JSON.stringify(message);
-        chars += json.length;
+        const content = JSON.stringify(message);
+        const json = memoryState && message === messages[0]
+          ? JSON.stringify({ ...message, unifiedMemoryState: memoryState }) : content;
+        chars += content.length;
         insert.run(threadId, chatKey, runId || null, ++sequence, json, Date.now());
       }
       const total = (Number(row.transcript_chars) || 0) + chars;
@@ -1293,16 +1295,22 @@ export class ChatStore {
   }
 
   getThreadTurns(threadId) {
+    return this.getThreadReplay(threadId).messages;
+  }
+
+  getThreadReplay(threadId) {
     const rows = this.db.prepare(`SELECT message_json FROM thread_turns
       WHERE thread_id=? ORDER BY sequence`).all(threadId);
     const messages = [];
+    let memoryState = null;
     for (const row of rows) {
       try {
-        const message = JSON.parse(row.message_json);
+        const { unifiedMemoryState, ...message } = JSON.parse(row.message_json);
+        if (message.role === 'user') memoryState = unifiedMemoryState || null;
         if (['user', 'assistant', 'tool'].includes(message?.role)) messages.push(message);
       } catch { /* skip corrupt turn */ }
     }
-    return messages;
+    return { messages, memoryState };
   }
 
   commitLifecycleRun({
@@ -1315,6 +1323,7 @@ export class ChatStore {
     checkpointState = {},
     sourceMessageIds = [],
     messages = [],
+    memoryState = null,
     maxTranscriptChars = 240000,
     forceRollover = '',
     rolloverArmedMs = 600000
@@ -1346,7 +1355,8 @@ export class ChatStore {
           chatKey,
           thread.threadId,
           runId,
-          messages
+          messages,
+          memoryState
         ).chars;
       }
       const maxChars = Math.min(1000000, Math.max(20000, Number(maxTranscriptChars) || 240000));
