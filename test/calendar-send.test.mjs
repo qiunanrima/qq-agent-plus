@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { runPersonalMailRequest } from '../src/personal-mail/index.js';
 import { sendGmailCalendarInvitation } from '../src/personal-mail/calendar-send.js';
 
 const start = Math.ceil(Date.now() / 1000) * 1000 + 86400000;
@@ -51,3 +52,28 @@ function temporaryState(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
   return dir;
 }
+
+test('personal mail invitation returns the original Gmail receipt on repeat submission', async t => {
+  const dataDir = temporaryState(t);
+  const env = {
+    QQ_AGENT_GMAIL_CLIENT_ID: 'test-client',
+    QQ_AGENT_GMAIL_CLIENT_SECRET: 'test-secret',
+    QQ_AGENT_GMAIL_SEND_REFRESH_TOKEN: 'test-send-grant'
+  };
+  let submissions = 0;
+  const fetchImpl = async (url, request) => {
+    if (new URL(url).hostname === 'oauth2.googleapis.com') {
+      assert.equal(request.body.get('refresh_token'), 'test-send-grant');
+      return Response.json({ access_token: 'test-access', scope: 'https://www.googleapis.com/auth/gmail.send' });
+    }
+    assert.match(url, /\/messages\/send$/);
+    submissions += 1;
+    return Response.json({ id: 'gmail-receipt' });
+  };
+  const args = { action: 'send_calendar_invitation', ...event };
+  const first = await runPersonalMailRequest(args, { dataDir, env, fetchImpl });
+  const repeated = await runPersonalMailRequest(args, { dataDir, env, fetchImpl });
+  assert.equal(first.status, 'sent');
+  assert.deepEqual(repeated, { ...first, alreadyAttempted: true });
+  assert.equal(submissions, 1);
+});
