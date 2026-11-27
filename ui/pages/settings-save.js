@@ -87,6 +87,7 @@ async function saveConfig({ quiet = false } = {}) {
     };
   }
   if (sec === 'mcp') {
+    const savedServers = new Map((c.mcp?.servers || []).map((server) => [server.id, server]));
     const servers = $$('#mcp-servers .mcp-server').map((row) => {
       const read = (sel) => String(row.querySelector(sel)?.value ?? '').trim();
       const args = parseJsonField(read('.mcp-args'), [], '参数');
@@ -94,6 +95,7 @@ async function saveConfig({ quiet = false } = {}) {
       if (!Array.isArray(args)) throw new Error('MCP 参数必须是 JSON 数组');
       if (!env || typeof env !== 'object' || Array.isArray(env)) throw new Error('MCP 环境变量必须是 JSON 对象');
       return {
+        ...savedServers.get(row.dataset.id),
         id: read('.mcp-id'),
         enabled: row.querySelector('.mcp-enabled')?.checked !== false,
         transport: 'stdio',

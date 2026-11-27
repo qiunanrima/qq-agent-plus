@@ -136,15 +136,15 @@ export function isFakeIpAddress(ip, cidrs = DEFAULT_FAKE_IP_CIDRS) {
 
 // ── 主机名校验（含 DNS） ────────────────────────────────────────────────
 
-async function lookupWithTimeout(hostname) {
+async function lookupWithTimeout(hostname, dnsTimeoutMs = 5000) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('DNS 解析超时')), 5000);
+    timer = setTimeout(() => reject(new Error('DNS 解析超时')), dnsTimeoutMs);
   });
   return Promise.race([dnsLookup(hostname, { all: true, verbatim: true }), timeout]).finally(() => clearTimeout(timer));
 }
 
-async function resolveSafeHost(hostname, { allowPrivate = false, allowFakeIpDns = true } = {}) {
+async function resolveSafeHost(hostname, { allowPrivate = false, allowFakeIpDns = true, dnsTimeoutMs } = {}) {
   const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!h) throw new Error('主机名为空');
   if (!allowPrivate && (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local'))) {
@@ -156,7 +156,7 @@ async function resolveSafeHost(hostname, { allowPrivate = false, allowFakeIpDns 
   }
   let addresses;
   try {
-    addresses = await lookupWithTimeout(h);
+    addresses = await lookupWithTimeout(h, dnsTimeoutMs);
   } catch (error) {
     throw new Error(`域名解析失败：${error?.message ?? error}`);
   }
@@ -179,7 +179,7 @@ async function resolveSafeHost(hostname, { allowPrivate = false, allowFakeIpDns 
 }
 
 /** 校验 URL 的 scheme 与主机（DNS 级）。返回 { url, ip }。 */
-export async function validateFetchUrl(raw, { allowPrivate = false, allowFakeIpDns = true } = {}) {
+export async function validateFetchUrl(raw, { allowPrivate = false, allowFakeIpDns = true, dnsTimeoutMs } = {}) {
   let url;
   try {
     url = new URL(String(raw ?? '').trim());
@@ -188,7 +188,7 @@ export async function validateFetchUrl(raw, { allowPrivate = false, allowFakeIpD
   }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('仅允许 http/https');
   if (url.username || url.password) throw new Error('URL 不能包含凭据');
-  const ip = await resolveSafeHost(url.hostname, { allowPrivate, allowFakeIpDns });
+  const ip = await resolveSafeHost(url.hostname, { allowPrivate, allowFakeIpDns, dnsTimeoutMs });
   return { url, ip };
 }
 
@@ -528,10 +528,10 @@ function assertAllowedHost(url, domains, label = '地址') {
  * `maxBytes` 只给"结构化文件"用（插件索引随条目增多会长过网页那份上限）；
  * 网页抓取保持默认值，避免把整页塞进上下文。
  */
-export async function safeFetch(urlString, { maxBytes = 50000, signal, headers, allowPrivate = false } = {}) {
+export async function safeFetch(urlString, { maxBytes = 50000, signal, headers, allowPrivate = false, dnsTimeoutMs } = {}) {
   const cap = Math.max(1, Math.floor(Number(maxBytes) || 50000));
   // allowPrivate 只给"管理员明确配置的内网价目表/自建服务"用；默认一律拦内网。
-  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate });
+  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate, dnsTimeoutMs });
   let hopHeaders = headers;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     // signal 用于"整次抓取的总截止时间"：默认的 timeout 是**空闲超时**，对端每隔十几秒吐一个
@@ -540,7 +540,7 @@ export async function safeFetch(urlString, { maxBytes = 50000, signal, headers, 
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
-      ({ url, ip } = await validateFetchUrl(next, { allowPrivate }));
+      ({ url, ip } = await validateFetchUrl(next, { allowPrivate, dnsTimeoutMs }));
       // 跨跳不携带凭据头（与 safeFetchRequest / safeFetchBinary 同口径）：
       // 不能让一个 302 把 Authorization/Cookie 带到别的站点，哪怕域名白名单放行了。
       hopHeaders = stripCredentialHeaders(hopHeaders);
@@ -647,11 +647,11 @@ function rejectedContentType(statusCode, contentType, acceptContentType) {
 }
 
 /** 下载二进制（图片，≤maxBytes 字节），返回 { buffer, contentType }。 */
-export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, signal, { allowPrivate = undefined, headers = null, allowedDomains = null, acceptContentType } = {}) {
+export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, signal, { allowPrivate = undefined, headers = null, allowedDomains = null, acceptContentType, dnsTimeoutMs } = {}) {
   // 插件媒体走这里时显式传 allowPrivate:false：图片那条隐私例外只属于管理员配的自建图床，
   // 不该被第三方插件继承（否则"允许内网图片"= 插件可以摸内网）。
   const allow = allowPrivate === undefined ? getConfig().security?.allowPrivateImageHosts === true : allowPrivate === true;
-  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate: allow });
+  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate: allow, dnsTimeoutMs });
   assertAllowedHost(url, allowedDomains, '下载');
   let currentHeaders = headers;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
@@ -666,7 +666,7 @@ export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, si
         && (nextUrl.protocol !== url.protocol || nextUrl.host !== url.host)) {
         currentHeaders = stripCredentialHeaders(currentHeaders);
       }
-      ({ url, ip } = await validateFetchUrl(next, { allowPrivate: allow }));
+      ({ url, ip } = await validateFetchUrl(next, { allowPrivate: allow, dnsTimeoutMs }));
       assertAllowedHost(url, allowedDomains, '重定向');
       continue;
     }

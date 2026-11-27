@@ -337,6 +337,11 @@ function renderPluginsPage() {
         </div>
         <!-- 索引拉取失败的告警留在顶部：它说明的是"你看到的整份目录不可信"，
              压到列表底部会被错过。正常状态的来源说明挪到列表尾部（见下面的 .plugin-index-foot）。 -->
+        <div class="gm-row">
+          <button type="button" class="btn btn-small" id="plugins-clawhub-search">用当前关键词搜索 ClawHub</button>
+          <a href="https://hub.openclaw.ai/" target="_blank" rel="noreferrer">打开 ClawHub</a>
+        </div>
+        <div id="plugins-clawhub-results" aria-live="polite"></div>
         <div class="plugin-index-warn" id="plugins-index-warn" hidden></div>
         <div id="plugins-index" class="plugin-grid"><div class="plugin-empty">正在读取…</div></div>
         <div class="plugin-index-foot" id="plugins-sources"></div>
@@ -362,9 +367,18 @@ function renderPluginsPage() {
       </div>
       <div class="hint" style="margin:11px 0 5px">或者直接给一个<b>文件</b>（别人发的包、你自己刚打的包）：</div>
       <div class="gm-row" id="plugins-file-drop">
-        <input type="file" id="plugins-file" accept=".tar.gz,.tgz,application/gzip,application/x-gzip" aria-label="选择插件包文件" />
+        <input type="file" id="plugins-file" accept=".tar.gz,.tgz,.zip,application/gzip,application/x-gzip,application/zip" aria-label="选择插件包文件" />
         <button class="btn btn-small" id="plugins-file-install" data-plugin-action="install-file" disabled>装这个文件</button>
         <span class="hint" id="plugins-file-name"></span>
+      </div>
+      <label><input type="checkbox" id="plugins-file-openclaw" /> 作为 OpenClaw 原生工具包安装</label>
+      <div class="plugin-publish-bridge">
+        <div class="hint">导入服务器上已准备好的 OpenClaw 插件所声明的独立 MCP 服务。导入后在「设置 → 平台 → MCP」启用。</div>
+        <div class="gm-row">
+          <input type="text" id="plugins-openclaw-directory" placeholder="服务器上的插件绝对路径" aria-label="OpenClaw 插件目录" />
+          <input type="text" id="plugins-openclaw-server" placeholder="MCP 服务名" aria-label="OpenClaw MCP 服务名" />
+          <button type="button" class="btn btn-small" data-plugin-action="install-openclaw">导入 OpenClaw</button>
+        </div>
       </div>
       <div class="plugin-publish-bridge">
         自己写了一个？<button type="button" class="plugin-linkbtn" data-plugin-pane="publish">看怎么打包、怎么上架 →</button>
@@ -653,7 +667,9 @@ function renderPluginDetail(item, installed, skipped) {
   const actions = [];
   // 撤回与"装没装"是两条线（撤回名单来自索引，装机状态在本机）：**已装 + 被撤回**是真实存在的
   // 组合 —— 那时说"不能安装"是错的，该说的是"它在你机器上，但不会被加载"（与台账同一口径）。
-  if (item.revoked && !own?.installed) {
+  if (item.mcpInstalled) {
+    actions.push('<span class="plugin-state-text off"><i></i>已安装 · 在 MCP 设置中管理</span>');
+  } else if (item.revoked && !own?.installed) {
     actions.push('<span class="plugin-state-text failed"><i></i>已被撤回，不能安装</span>');
   } else if (item.revoked) {
     actions.push('<span class="plugin-state-text failed"><i></i>已安装，但已被撤回：不会被加载</span>');
@@ -1114,7 +1130,7 @@ function renderIndex(index, installed) {
   const have = installedIds;
   box.innerHTML = pageList.map((item) => {
     const own = (installed?.plugins || []).find((row) => row.id === item.id);
-    const isInstalled = have.has(item.id);
+    const isInstalled = (item.openclawMcp || item.openclawNative) ? item.mcpInstalled === true : have.has(item.id);
     let action = '';
     if (isInstalled) action = '<span class="plugin-state-text off"><i></i>已安装</span>';
     else if (item.revoked) action = '<span class="plugin-state-text failed"><i></i>已撤回</span>';
@@ -1411,6 +1427,34 @@ function bindPluginsSection() {
   // 选文件：**每次渲染都要绑**（元素每次都换），并且每次进来先清掉上一次选的包
   const fileInput = $('#plugins-file');
   const fileNameBox = $('#plugins-file-name');
+  const clawHubSearch = $('#plugins-clawhub-search');
+  clawHubSearch?.addEventListener('click', async () => {
+    const box = $('#plugins-clawhub-results');
+    const query = String($('#plugins-search')?.value || '').trim();
+    if (!box) return;
+    if (!query) { box.textContent = '请先在上方输入关键词'; return; }
+    clawHubSearch.disabled = true;
+    box.textContent = '正在搜索 ClawHub…';
+    try {
+      const { results } = await api(`/api/plugins/clawhub?query=${encodeURIComponent(query)}`);
+      box.innerHTML = results.length ? `<ul>${results.map((item) => {
+        let action = item.installed
+          ? `<span class="plugin-state-text off">已安装 ${esc(item.installedVersion || '')}</span>` : '';
+        if (item.family === 'code-plugin' && item.version && (!item.installed || item.upgradeAvailable)) {
+          const upgrade = item.installed
+            ? ` data-clawhub-expected="${esc(item.installedVersion)}"` : '';
+          const disabled = item.installed && !item.upgradeReady
+            ? ' disabled title="请先在 MCP 设置中停用此工具"' : '';
+          action += `<button type="button" class="btn btn-small" data-plugin-action="install-clawhub" data-clawhub-name="${esc(item.name)}" data-clawhub-version="${esc(item.version)}"${upgrade}${disabled}>${item.installed ? '升级' : '安装'}</button>`;
+        }
+        return `<li><strong>${esc(item.title)}</strong> <code>${esc(item.name)}</code> ${esc(item.version)}<div>${esc(item.description)}</div>${action}</li>`;
+      }).join('')}</ul>` : 'ClawHub 没有匹配的插件';
+    } catch (error) {
+      box.textContent = `ClawHub 搜索失败：${error?.message || error}`;
+    } finally {
+      clawHubSearch.disabled = false;
+    }
+  });
   const fileButton = $('#plugins-file-install');
   const setPickedFile = (file) => {
     pendingPluginFile = file || null;
@@ -1728,7 +1772,12 @@ function bindPluginsSection() {
           }
         } else {
           setStatus(`正在安装 ${id}…`, { busy: true });
-          await post('/api/plugins/install', { id });
+          const result = await post('/api/plugins/install', { id });
+          if (result.openclawMcp) {
+            setStatus(`已安装 ${result.id}，请在 MCP 设置中检查并启用`, { tone: 'success' });
+            await refreshPlugins();
+            return;
+          }
         }
         setStatus(action === 'upgrade'
           ? `已升级 ${id}（旧版留在 plugins/.backup-* 里，确认没问题可以删）`
@@ -1740,6 +1789,13 @@ function bindPluginsSection() {
         setStatus(`正在读取 ${file.name}…`, { busy: true });
         const base64 = await fileToBase64(file);
         setStatus('正在校验并换入…', { busy: true });
+        if ($('#plugins-file-openclaw')?.checked) {
+          const result = await post('/api/plugins/install-file', { fileName: file.name, base64, openclawNative: true });
+          setStatus(`已安装 ${result.id}，请在 MCP 设置中检查并启用｜SHA-256 ${String(result.sha256 || '').slice(0, 16)}…`, { tone: 'success' });
+          if (fileInput) fileInput.value = '';
+          setPickedFile(null);
+          return;
+        }
         let result;
         try {
           result = await post('/api/plugins/install-file', { fileName: file.name, base64 });
@@ -1771,6 +1827,17 @@ function bindPluginsSection() {
         setStatus('正在下载并校验…', { busy: true });
         const result = await post('/api/plugins/install', { url, sha256 });
         setStatus(`已安装 ${result?.id || ''} —— 还要点「启用」才会跑（装上 ≠ 授权）`, { tone: 'success' });
+      } else if (action === 'install-clawhub') {
+        const { clawhubName: name, clawhubVersion: version, clawhubExpected: expectedVersion } = button.dataset;
+        const result = await post('/api/plugins/install-clawhub', { name, version, expectedVersion });
+        setStatus(`已${expectedVersion ? '升级' : '安装'} ${name} ${version}，请在 MCP 设置中检查并启用 ${result.id}`, { tone: 'success' });
+        button.textContent = expectedVersion ? '已升级' : '已安装';
+        button.removeAttribute('data-plugin-action');
+      } else if (action === 'install-openclaw') {
+        const directory = String($('#plugins-openclaw-directory')?.value || '').trim();
+        const serverName = String($('#plugins-openclaw-server')?.value || '').trim();
+        const result = await post('/api/plugins/install-openclaw', { directory, serverName });
+        setStatus(`已导入 ${result.id}，请在 MCP 设置中检查并启用`, { tone: 'success' });
       } else if (action === 'enable' || action === 'disable') {
         await post('/api/plugins/toggle', { id, enabled: action === 'enable' });
         setStatus(`${action === 'enable' ? '已启用' : '已停用'} ${id}`, { tone: 'success' });
@@ -1789,7 +1856,8 @@ function bindPluginsSection() {
       // 「安装 / 装这个文件」是**静态骨架**里的按钮，不会被 refreshPlugins 重画 ——
       // 不复位的话，装完一次（或失败一次）就永久变灰，连重试都点不了。
       // 文件那个按钮的语义是"选了文件才能点"，所以跟着 pendingPluginFile 走。
-      if (action === 'install-url') button.disabled = false;
+      if (action === 'install-url' || action === 'install-openclaw') button.disabled = false;
+      else if (action === 'install-clawhub' && button.hasAttribute('data-plugin-action')) button.disabled = false;
       else if (action === 'install-file') button.disabled = !pendingPluginFile;
     }
     await refreshPlugins();

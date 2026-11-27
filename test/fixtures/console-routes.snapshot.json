@@ -72,6 +72,36 @@
     "keyEndpoint": false
   },
   {
+    "method": "POST",
+    "path": "/api/phone-bridge/notifications",
+    "auth": false,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/phone-bridge/calendar",
+    "auth": false,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/personal-mail",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/personal-mail/:provider",
+    "auth": true,
+    "keyEndpoint": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/personal-mail/:provider/test",
+    "auth": true,
+    "keyEndpoint": true
+  },
+  {
     "method": "GET",
     "path": "/api/agent-wechat/contacts",
     "auth": true,
@@ -810,6 +840,18 @@
     "keyEndpoint": false
   },
   {
+    "method": "POST",
+    "path": "/api/plugins/install-clawhub",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/plugins/clawhub",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
     "method": "GET",
     "path": "/api/plugins/index",
     "auth": true,
@@ -836,6 +878,12 @@
   {
     "method": "POST",
     "path": "/api/plugins/upgrade-preview",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plugins/install-openclaw",
     "auth": true,
     "keyEndpoint": false
   },
@@ -968,6 +1016,18 @@
   {
     "method": "DELETE",
     "path": "/^\\/api\\/memory-files\\/(group|private)_(\\d+)\\/members\\/(\\d+)$/",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/unified-memory/status",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/unified-memory/records",
     "auth": true,
     "keyEndpoint": false
   },
@@ -1316,6 +1376,12 @@
   {
     "method": "POST",
     "path": "/api/test/api",
+    "auth": true,
+    "keyEndpoint": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/character-life/status",
     "auth": true,
     "keyEndpoint": false
   },

@@ -8,6 +8,12 @@ import {
   installPlugin, uninstallPlugin, sha256Of, MAX_PLUGIN_ARCHIVE_BYTES, rollbackPlugin
 } from '../../plugins/install.js';
 import { fetchBinaryWithMirrors } from '../../plugins/mirrors.js';
+import { clawHubPackageId, downloadClawHubPlugin, searchClawHubPlugins } from '../../plugins/clawhub.js';
+import { comparePluginVersions } from '../../plugins/manifest-diff.js';
+import {
+  BUILTIN_OPENCLAW_ENTRY, installOpenClawMarketPackage, openClawMarketId,
+  readBuiltinOpenClawPackage, readOpenClawMcp
+} from '../../plugins/openclaw-mcp.js';
 import { pluginSecretStatus, writePluginSecrets, secretFieldKeys, clearPluginSecrets } from '../../plugins/secrets.js';
 import {
   grantsStatus, listPendingApprovals, approvePendingApproval,
@@ -28,6 +34,16 @@ export function registerPluginRoutes(router, deps = {}) {
   const invalidateIndex = deps.invalidateIndex;
   const getMirrorConfig = deps.mirrorConfig;
   const pluginLog = deps.pluginLog;
+  const fetchPackage = deps.fetchPackage || ((url, maxBytes) => safeFetchBinary(url, maxBytes, undefined, { allowPrivate: false }));
+  const installOpenClaw = async (req, res, buffer, item, expectedVersion) => {
+    const id = await installOpenClawMarketPackage({ buffer, item, dataDir, getConfig, updateConfig, expectedVersion });
+    auditWrite(expectedVersion === undefined ? 'plugins.install-openclaw' : 'plugins.upgrade-openclaw',
+      `mcp:${id}`, { req, version: item.version });
+    return json(res, 200, {
+      ok: true, id, openclawMcp: true,
+      ...(item.fileName && { fileName: item.fileName, sha256: item.sha256 })
+    });
+  };
   if (!router || !json || !readBody || !getConfig || !updateConfig || !auditWrite || !log
     || !dataDir || !hostVersion || !pluginRegistry || !loadIndex || !invalidateIndex
     || !getMirrorConfig || !pluginLog) {
@@ -325,13 +341,53 @@ export function registerPluginRoutes(router, deps = {}) {
     return json(res, 200, { ok: true });
   });
 
+  router.add('POST', '/api/plugins/install-clawhub', async (req, res) => {
+    try {
+      const { name, version, expectedVersion } = await readBody(req) || {};
+      const { buffer, item } = await downloadClawHubPlugin(name, version, deps.clawHubTransport);
+      return await installOpenClaw(req, res, buffer, item, expectedVersion);
+    } catch (error) {
+      return pluginError(res, error, error.httpStatus || 400);
+    }
+  });
+
+  router.add('GET', '/api/plugins/clawhub', async (_req, res, _params, url) => {
+    const query = url?.searchParams.get('query');
+    if (!query?.trim() || query.trim().length > 120) {
+      return json(res, 400, { ok: false, error: '请输入 1–120 个字符的搜索词' });
+    }
+    try {
+      const results = await searchClawHubPlugins(query, deps.clawHubTransport?.fetchText);
+      const servers = new Map((getConfig().mcp?.servers || []).map((server) => [server.id, server]));
+      return json(res, 200, { ok: true, results: results.map((item) => {
+        const installed = servers.get(openClawMarketId(clawHubPackageId(item.name)));
+        const installedVersion = installed?.clawHub?.name === item.name ? installed.clawHub.version : '';
+        return {
+          ...item,
+          installed: Boolean(installed),
+          installedVersion,
+          upgradeAvailable: Boolean(installedVersion && comparePluginVersions(item.version, installedVersion) > 0),
+          upgradeReady: installed?.enabled === false
+        };
+      }) });
+    } catch (error) {
+      return pluginError(res, error, 502);
+    }
+  });
+
   router.add('GET', '/api/plugins/index', async (_req, res) => {
     try {
-      const index = await loadIndex();
+      const index = await loadIndex().catch((error) => ({
+        plugins: [], skipped: [], sources: [{ name: '远程插件索引', ok: false, error: String(error.message) }]
+      }));
+      const plugins = [...index.plugins.filter((item) => item.id !== BUILTIN_OPENCLAW_ENTRY.id), BUILTIN_OPENCLAW_ENTRY];
       return json(res, 200, {
         ok: true,
         // 条目分两类：compatible=true 能装；false 的照样列出来并带原因（"看得见但装不了"比"看不见"好排查）
-        plugins: index.plugins,
+        plugins: plugins.map((item) => item.openclawMcp || item.openclawNative ? {
+          ...item,
+          mcpInstalled: (getConfig().mcp?.servers || []).some((server) => server?.id === openClawMarketId(item.id))
+        } : item),
         // 跳过的条目与拉取失败的来源都如实回报，页面上能看见"少了一条/少了整个索引"
         skipped: index.skipped,
         sources: index.sources
@@ -418,6 +474,22 @@ export function registerPluginRoutes(router, deps = {}) {
     }
   });
 
+  router.add('POST', '/api/plugins/install-openclaw', async (req, res) => {
+    try {
+      const body = await readBody(req);
+      const server = readOpenClawMcp(body?.directory, body?.serverName);
+      const servers = getConfig().mcp?.servers || [];
+      if (servers.some((item) => String(item?.id || '').trim() === server.id)) {
+        return json(res, 409, { ok: false, error: '已有同名 MCP 服务，请先在 MCP 设置中处理' });
+      }
+      updateConfig({ mcp: { servers: [...servers, server] } });
+      auditWrite('plugins.install-openclaw', `mcp:${server.id}`, { req });
+      return json(res, 200, { ok: true, id: server.id });
+    } catch (error) {
+      return pluginError(res, error);
+    }
+  });
+
   router.add('POST', '/api/plugins/install', async (req, res) => {
     const body = await readBody(req).catch(() => ({}));
     // 在 try 的第一句声明：catch 里要用它，而 let 在 TDZ 里连 typeof 都会抛
@@ -431,6 +503,10 @@ export function registerPluginRoutes(router, deps = {}) {
       let signature = '';
       let hitMirrors = [];
       let hitMeta = null;
+      if (!url && id === BUILTIN_OPENCLAW_ENTRY.id) {
+        const { buffer, item } = readBuiltinOpenClawPackage();
+        return await installOpenClaw(req, res, buffer, item);
+      }
       if (!url) {
         if (!id) return json(res, 400, { ok: false, error: '要么给索引里的 id，要么给 url + sha256' });
         const hit = (await loadIndex()).plugins.find((item) => item.id === id);
@@ -454,7 +530,7 @@ export function registerPluginRoutes(router, deps = {}) {
       const download = async (target, maxBytes) => {
         const picked = await fetchBinaryWithMirrors({
           url: target, mirrors: hitMirrors, prefixes: mirrorConfig.prefixes,
-          maxBytes, fetchImpl: (u, mb) => safeFetchBinary(u, mb, undefined, { allowPrivate: false }), log: pluginLog,
+          maxBytes, fetchImpl: fetchPackage, log: pluginLog,
           // sha256 校验放进候选循环：镜像回 200 + 错误页/旧包时，只有这里能继续试下一条；
           // 拖到换入前才校验的话，坏候选已经被记成"这条通"，之后每次都先走它
           verify: (buffer) => sha256Of(buffer) === String(sha256 || '').toLowerCase()
@@ -462,6 +538,10 @@ export function registerPluginRoutes(router, deps = {}) {
         if (!picked.ok) throw Object.assign(new Error(picked.error), { code: 'E_DOWNLOAD' });
         return { buffer: picked.buffer };
       };
+      if (hitMeta?.openclawMcp || hitMeta?.openclawNative) {
+        const { buffer } = await download(url, MAX_PLUGIN_ARCHIVE_BYTES);
+        return await installOpenClaw(req, res, buffer, hitMeta);
+      }
       // 只有真的走到"换入前"才代表旧进程被停过；下载/验签/解包失败时不必重排（重排会停掉
       // 其它插件的进程、打断它们正在进行的工具调用）
       const result = await installPlugin({
@@ -545,6 +625,17 @@ export function registerPluginRoutes(router, deps = {}) {
       const buffer = Buffer.from(encoded, 'base64');
       if (!buffer.length) return json(res, 400, { ok: false, error: '文件内容解不出来（不是合法的 base64？）' });
       const fileName = path.basename(String(body.fileName || 'package.tar.gz')).slice(0, 120) || 'package.tar.gz';
+      if (body.openclawNative === true) {
+        if (buffer.length > MAX_PLUGIN_ARCHIVE_BYTES) {
+          return json(res, 413, { ok: false, error: '插件包超过 5MB 上限' });
+        }
+        const sha256 = sha256Of(buffer);
+        const zip = buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+        return await installOpenClaw(req, res, buffer, {
+          id: `upload-${sha256.slice(0, 20)}`, sha256, fileName, openclawNative: true,
+          artifactKind: zip ? 'legacy-zip' : 'npm-pack'
+        });
+      }
       const result = await installPlugin({
         tarball: buffer, dataDir: dataDir, hostVersion: hostVersion,
         source: `本地文件：${fileName}`,

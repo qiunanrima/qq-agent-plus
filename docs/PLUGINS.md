@@ -658,3 +658,32 @@ v1 的四段已经落地（宿主、能力与门控、控制台安装、示例�
 | 网络（仅 Node 权限模型） | **通**（Node 权限模型里没有网络这一项） |
 | 网络（Linux + 网络命名空间） | **不通**：connect / fetch 都是 `ENETUNREACH`（2026-10-16 实测，内核 5.15 + `unprivileged_userns_clone=1`，不需要 root，在 `setpriv --no-new-privs` 的加固环境里同样可用） |
 | `process.env` | 可见 → 由宿主剥掉（白名单只留 PATH/TZ 等） |
+## 导入 OpenClaw 插件的 MCP 工具
+
+「插件市场 → 目录」的「用当前关键词搜索 ClawHub」可以查询 OpenClaw 官方市场。结果显示包名、版本和简介。原生代码包结果可点击「安装」，服务端对确切版本核对 ClawHub 下载策略及 SHA-256，再按原生工具包流程导入。支持带 SHA-256 的 npm-pack 和旧版 ZIP 归档，安装后在 MCP 设置中启用。依赖 OpenClaw 通道、模型提供商或 Gateway 运行时的包仍需适配。
+
+默认市场随程序提供「OpenClaw 时区换算」。在「插件市场 → 目录」搜索名称并点击「安装」，即可从随程序分发的包安装。工具接收带 UTC 偏移的 ISO 8601 时间和目标 IANA 时区，返回换算后的当地时间。远程索引不可用时也可安装。
+
+重新搜索 ClawHub 时，结果会显示已安装版本。发现更高版本时，先在 MCP 设置中停用工具，再在搜索结果点「升级」。升级保留环境变量和旧包文件，新版仍为停用状态。
+
+插件索引可以用 `openclawMcp` 标记可安装条目。值是包内 `openclaw.plugin.json` 声明的 MCP 服务名。索引同时填写普通市场字段 `id`、`version`、`url` 和 `sha256`。发布包须包含可独立启动的 MCP 服务及所需依赖，清单可位于归档根目录或一层包目录。
+
+配置了该索引的控制台可以在「插件市场 → 目录」直接点安装。后台校验 SHA-256，已登记公钥的发布者还会验签，随后解包到数据目录的 `openclaw-packages`，以 `openclaw-<索引 ID>` 登记为停用的服务。启用及移除配置在「设置 → 平台 → MCP」完成。安装期间只下载、校验及解包。更新需要先移除旧 MCP 配置，再安装索引中的新版。
+
+原生静态工具包可以在索引中改用 `"openclawNative": true`。包内提供 `openclaw.plugin.json` 和 `package.json`，用 `openclaw.runtimeExtensions`（或 `openclaw.extensions`）声明单个 JavaScript 或 TypeScript 入口。TypeScript 使用 Node 的原生类型擦除，源码须使用可擦除语法和显式文件扩展名。依赖编译转换或路径别名的包须提供编译后的 JavaScript。运行依赖须随包提供，安装时不会执行 npm 安装。适配器支持 `openclaw/plugin-sdk/plugin-entry` 的 `definePluginEntry`、静态必选 `api.registerTool`、`api.pluginConfig` 和日志接口。工具参数使用 JSON Schema，执行结果使用 OpenClaw 的 `content` 数组。宿主通过现有 MCP 工具接口调用它们，并默认启用 Node 文件权限隔离。
+
+兼容层也支持通过 `api.registerTool(factory, { name })` 或 `{ names }` 注册的工厂。每个 MCP 进程首次列出工具时解析一次，工厂收到空上下文，可返回单个工具、工具数组或空值。可选工具默认省略。依赖会话上下文、其他 SDK 入口、通道、提供商或事件钩子的插件仍需专门适配。
+
+声明式工具可使用 `openclaw/plugin-sdk/tool-plugin` 的 `defineToolPlugin`，内置时区换算使用这一入口。适配器支持 `tools(tool)`、`execute(args, config, context)` 和具名 `factory({ api, toolContext })`。执行结果可以是文本或 JSON 值，执行上下文提供工具调用 ID。
+
+旧版 `openclaw/plugin-sdk` 和 `openclaw/plugin-sdk/compat` 入口可以导入 `definePluginEntry` 与 `emptyPluginConfigSchema`。入口显式提供 `configSchema.safeParse` 时，注册前会调用它，并将通过校验的值传给插件。
+
+在「设置 → 平台 → MCP」编辑该服务的「环境变量」可传入插件配置。将 `QQ_AGENT_OPENCLAW_PLUGIN_CONFIG` 的值设为 JSON 对象字符串，例如 `{"QQ_AGENT_OPENCLAW_PLUGIN_CONFIG":"{\"prefix\":\"hello\"}"}`，保存后生效。值留空时提供空对象。配置沿用 MCP 环境变量的掩码和保存规则，具体字段由插件处理。
+
+将可信的插件及其依赖放到控制台服务所在机器。打开「插件市场 → 手动安装」，填写插件目录的绝对路径，以及 `openclaw.plugin.json` 中 `mcpServers` 的服务名，点击「导入 OpenClaw」。
+
+也可以在「手动安装」选取原生工具包的 `.tgz`、`.tar.gz` 或 `.zip` 文件，勾选「作为 OpenClaw 原生工具包安装」，再点击「装这个文件」。同一份归档使用相同的内容指纹，重复上传会提示该服务已存在。
+
+支持 `transport: "stdio"`、`command: "node"` 和单个插件内相对 JS 入口，例如 `args: ["./mcp-server.mjs"]`。导入只写入停用的 MCP 配置。进入「设置 → 平台 → MCP」确认启动命令和路径后启用。要移除导入，删除该 MCP 配置即可。
+
+命令行也可用 `node scripts/openclaw-mcp.mjs <插件目录> <MCP 服务名>` 查看生成的配置。当前导入范围限于服务器上已有的独立 MCP 服务，OpenClaw 原生 SDK 入口、通道和钩子需要另外适配。

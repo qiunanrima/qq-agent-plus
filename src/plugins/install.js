@@ -148,7 +148,7 @@ export function parseTarGz(buffer) {
 }
 
 /** 跨平台路径段校验：Windows 会吃掉段末尾的点和空格，必须按“归一化后”的名字判。 */
-function unsafePathSegment(segment) {
+export function unsafePathSegment(segment) {
   if (!segment || segment === '.' || segment === '..') return true;
   // 控制字符、Windows 非法字符与 ADS 冒号：插件包不应包含这些文件名。
   if (/[<>:"|?*\x00-\x1f]/.test(segment)) return true;
@@ -178,7 +178,7 @@ export function extractEntries(entries, targetDir) {
  * 常见的打包形状是"外层套一个目录"（`tar -czf x.tar.gz myplugin/`）：
  * 里面只有一层目录、且根下没有 plugin.json 时，把这一层剥掉再按根处理。
  */
-function unwrapSingleRoot(entries) {
+export function unwrapSingleRoot(entries) {
   if (entries.some((entry) => entry.name === 'plugin.json')) return entries;
   const tops = new Set(entries.map((entry) => entry.name.split('/')[0]));
   if (tops.size !== 1) return entries;
@@ -874,10 +874,20 @@ export function normalizePluginIndexEntry(item, { apiVersion = PLUGIN_API_VERSIO
   }
   const sha = String(item.sha256 ?? '').trim().toLowerCase();
   if (!isSha256(sha)) return { ok: false, id, reason: 'sha256 必须是 64 位十六进制（没有内容锚点就不许安装）' };
+  const openclawMcp = item.openclawMcp;
+  const openclawNative = item.openclawNative === true;
+  if (openclawNative && openclawMcp !== undefined) {
+    return { ok: false, id, reason: 'openclawNative 与 openclawMcp 只能声明一种' };
+  }
+  if (openclawMcp !== undefined && (typeof openclawMcp !== 'string' || !/^[a-zA-Z0-9_-]{1,40}$/.test(openclawMcp))) {
+    return { ok: false, id, reason: 'openclawMcp 必须是清单中的 MCP 服务名' };
+  }
   const declaredApi = item.apiVersion === undefined || item.apiVersion === null ? null : Number(item.apiVersion);
   const minVersion = String(item.minVersion ?? '').trim();
   const entry = {
     id,
+    ...(openclawMcp && { openclawMcp }),
+    ...(openclawNative && { openclawNative }),
     name: String(item.name ?? id).slice(0, 100),
     version: safeVersionText(item.version),
     description: String(item.description ?? '').slice(0, 300),

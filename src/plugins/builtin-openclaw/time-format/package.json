@@ -1,0 +1,7 @@
+{
+  "name": "qq-agent-openclaw-time-format",
+  "version": "1.0.0",
+  "openclaw": {
+    "runtimeExtensions": ["./index.mjs"]
+  }
+}

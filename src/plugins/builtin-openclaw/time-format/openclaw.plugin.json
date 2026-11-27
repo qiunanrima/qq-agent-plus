@@ -1,0 +1,6 @@
+{
+  "id": "openclaw-time-format",
+  "name": "OpenClaw 时区换算",
+  "description": "将带时区的 ISO 8601 时间转换到指定时区。",
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

@@ -99,7 +99,16 @@ export function mcpPermissionSpec({
   if (unsafe.length) {
     return { ok: false, error: `permissionIsolation 不允许在 args 里传权限/加载器参数：${unsafe.join(', ')}` };
   }
-  const resolvedAllow = mcpReadDir({ args: userArgs, cwd });
+  const dataDir = realPathOf(DATA_DIR);
+  const managedRoot = path.join(dataDir, 'openclaw-packages');
+  const runnerDir = path.dirname(userArgs[0] || '');
+  const managedPackage = userArgs.length === 3
+    && path.basename(userArgs[0]) === '.qq-agent-openclaw-runner.mjs'
+    && path.dirname(runnerDir) === managedRoot
+    && /^openclaw-[a-z0-9-]+-[a-zA-Z0-9]{6}$/.test(path.basename(runnerDir))
+    && realPathOf(runnerDir) === runnerDir
+    && isInsideOrEqual(runnerDir, path.resolve(userArgs[1]));
+  const resolvedAllow = managedPackage ? runnerDir : mcpReadDir({ args: userArgs, cwd });
   let allowDir;
   try {
     if (!fs.statSync(resolvedAllow).isDirectory()) {
@@ -110,10 +119,10 @@ export function mcpPermissionSpec({
   } catch {
     return { ok: false, error: `允许读取的目录不存在：${resolvedAllow}` };
   }
-  const dataDir = realPathOf(DATA_DIR);
   // 只读白名单是"整个目录"：如果它落在数据目录里，或者把数据目录包了进去，
   // 权限模型等于没开 —— 配置写错时宁可不启动。
-  if (isInsideOrEqual(dataDir, allowDir) || isInsideOrEqual(allowDir, dataDir)) {
+  // 市场解包仅产生普通文件。只放行单个原生工具包，仍拒绝包内软链指向数据目录。
+  if (!managedPackage && (isInsideOrEqual(dataDir, allowDir) || isInsideOrEqual(allowDir, dataDir))) {
     return { ok: false, error: `允许读取的目录 ${allowDir} 与数据目录 ${dataDir} 重叠` };
   }
   if (allowDir === path.parse(allowDir).root) {
