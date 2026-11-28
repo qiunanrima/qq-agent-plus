@@ -164,6 +164,8 @@ test('私聊快照变化并追加历史时，已有的历史仍是共同前缀',
     const newNext = sample(true, '交接：换个话题', '今天去哪里');
     assert.ok(newNext.indexOf('A 又说了一句') < newNext.indexOf('交接：换个话题'));
     assert.ok(newNext.indexOf('交接：换个话题') < newNext.indexOf('今天去哪里'));
+    assert.match(newNext, /已经劝过、对方已经报平安或转了话题/);
+    assert.match(newNext, /先按角色的真实态度把误会说清楚/);
     assert.equal(newNext.split('交接：换个话题').length, 2);
     assert.ok(prefix(newFirst, newNext) > prefix(oldFirst, oldNext));
     console.log('私聊动态输入共同前缀字符', prefix(oldFirst, oldNext), '→', prefix(newFirst, newNext));

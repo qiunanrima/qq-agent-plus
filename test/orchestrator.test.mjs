@@ -3128,6 +3128,8 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     assert.equal(bodies.length, 1);
     const wake = bodies[0].messages.at(-1).content;
     assert.match(wake, /私聊里已经安静了一会儿/);
+    assert.match(wake, /普通回复里已经问过、劝过什么/);
+    assert.doesNotMatch(wake, /群友最近提过的事/);
     assert.match(wake, /不该打扰就安静结束/);
     assert.doesNotMatch(wake, /群里已经安静了一会儿/, '私聊里不该套群聊的开场白');
   });

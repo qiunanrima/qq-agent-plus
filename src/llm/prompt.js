@@ -851,6 +851,10 @@ export function buildUserPrompt(ctx) {
   else if (checkpointText) snapshotParts.push(stalePrefix + checkpointText);
 
   if (ctx.historyFirst && ctx.snapshotParts) parts.push(...ctx.snapshotParts);
+  if (ctx.kind === 'private' && ctx.triggerEntries?.length) {
+    parts.push('接对方这次说的具体事情。看看本会话里自己刚说过什么：已经劝过、对方已经报平安或转了话题，就让那句关心停在那里；有新情况或对方再问时再接。如果上一句玩笑让对方当真、受伤或反复确认你的意思，先按角色的真实态度把误会说清楚，让对方听得懂，再看对方还想不想玩笑。');
+  }
+
   parts.push(`【当前时间】${formatFullTime(now)}`);
 
   // 最新消息始终位于动态输入末端，兼顾注意力与前缀缓存。
