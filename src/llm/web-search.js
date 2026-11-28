@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { getConfig } from '../core/config.js';
 import { safeFetch } from './safe-fetch.js';
 import { tryStartWebFetchBrowser } from '../web-fetch-browser/config.js';
+import { renderChromiumDocument } from '../web-fetch-browser/chromium-client.js';
 import { fetchBrowserPage } from '../web-fetch-browser/index.js';
 import { withTimeWindow } from '../core/time-gate.js';
 import { readJsonBounded, readTextBounded } from '../core/http-body.js';
@@ -711,20 +712,26 @@ async function deepSeekResponsesSearch({ query, cfg, apiKey, signal }) {
 }
 
 /** 抓取网页正文（走 safe-fetch 的 SSRF 全防护）。 */
-export async function webFetch(url, { signal, maxBytes, headers, render = false } = {}) {
+export async function webFetch(url, { signal, maxBytes, headers, steps, owner, resume, render = false } = {}) {
   // safeFetch 的 `timeout` 只是空闲超时；慢速响应（每隔十几秒吐一个字节）能把请求吊很久。
   // 这里再叠一个整次抓取的总截止时间，并保留调用方（本轮运行）的中止信号。
   const total = AbortSignal.timeout(20_000);
   const combined = signal ? AbortSignal.any([signal, total]) : total;
   const binary = process.env.QQ_AGENT_OBSCURA_BIN;
   const socketPath = process.env.QQ_AGENT_CHROMIUM_SOCKET;
-  const slot = render === true && (socketPath || binary) && maxBytes === undefined && headers === undefined
+  const slot = (steps !== undefined || render === true) && (socketPath || binary) && maxBytes === undefined && headers === undefined
     ? tryStartWebFetchBrowser(getConfig()) : null;
   if (!slot) {
+    if (steps !== undefined) throw new Error("Browser unavailable or busy");
     const result = await safeFetch(url, { signal: combined, maxBytes, headers });
     return render === true ? { ...result, rendered: false } : result;
   }
   try {
+    if (steps !== undefined) {
+      if (!socketPath || !Array.isArray(steps) || steps.length > 8) throw new Error('Expected Chromium and at most eight steps');
+      const result = await renderChromiumDocument(url, { steps, owner, resume, socketPath, signal: AbortSignal.any([combined, slot.signal]) });
+      return { ...result, rendered: true, truncated: result.body.length > 20000 };
+    }
     return await fetchBrowserPage(url, { signal: combined, renderSignal: slot.signal, binary, socketPath });
   } finally {
     slot.release();

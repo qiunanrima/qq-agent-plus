@@ -3446,13 +3446,24 @@ export function buildToolDefs() {
         type: 'object',
         properties: {
           url: { type: 'string', description: '要抓取的 http(s) URL' },
+          ...(browserFetchEnabled && process.env.QQ_AGENT_CHROMIUM_SOCKET ? {
+            resume: { type: 'boolean', description: 'Continue the current task on its open browser page. Pass steps with the last observed URL.' },
+            steps: { type: 'array', maxItems: 8,
+              description: 'Pass [] to inspect page controls. Set resume:true to act on the previous snapshot within 60 seconds. Use exact accessible names for navigation and search. Never replay a submission with unknown outcome.',
+              items: { type: 'object', required: ['action', 'role', 'name'], properties: {
+                action: { type: 'string', enum: ['click', 'fill', 'enter'] },
+                role: { type: 'string', enum: ['link', 'button', 'textbox', 'searchbox', 'tab'] },
+                name: { type: 'string' }, value: { type: 'string' }
+              } }
+            }
+          } : {}),
           ...(browserFetchEnabled ? { render: { type: 'boolean', description: '仅在需要 JavaScript 渲染正文时传 true' } } : {})
         },
         required: ['url']
       },
       async execute(ctx, args) {
         try {
-          const result = await webFetch(String(args.url ?? ''), { signal: ctx.signal, render: args.render === true });
+          const result = await webFetch(String(args.url ?? ''), { signal: ctx.signal, steps: args.steps, resume: args.resume === true, owner: ctx.session?.leaseId && ctx.chatKey ? JSON.stringify([ctx.chatKey, ctx.session.leaseId]) : undefined, render: args.render === true });
           const body = String(result.body || '');
           return ok({
             url: result.url,
